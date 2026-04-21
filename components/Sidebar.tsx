@@ -4,10 +4,12 @@ import NextLink from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
-  Search, Moon, Send, LogOut, ChevronRight,
+  Search, Send, LogOut, ChevronRight, Shield, Moon,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+
+const ADMIN_EMAIL = "goncalvescristian0508@gmail.com";
 
 const navItems = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -111,7 +113,7 @@ export default function Sidebar() {
         }}>
           Menu
         </p>
-        {navItems.map((item) => {
+        {[...navItems, ...(userEmail === ADMIN_EMAIL ? [{ name: "Admin", href: "/admin", icon: Shield }] : [])].map((item) => {
           const isActive = pathname === item.href;
           return (
             <NextLink
