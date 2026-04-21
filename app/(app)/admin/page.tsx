@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Instagram, Film, CheckCircle2, XCircle, Clock, Shield, TrendingUp, Loader2 } from "lucide-react";
+import { Users, Share2, Film, CheckCircle2, XCircle, Clock, Shield, TrendingUp, Loader2 } from "lucide-react";
 
 interface OAuthAccount {
   id: string; username: string; profilePictureUrl?: string;
@@ -83,7 +83,7 @@ export default function AdminPage() {
 
   const statCards = [
     { label: "Usuários", value: stats.totalUsers, icon: Users, color: "#c9a227" },
-    { label: "Contas OAuth", value: stats.totalOAuthAccounts, icon: Instagram, color: "#a855f7" },
+    { label: "Contas OAuth", value: stats.totalOAuthAccounts, icon: Share2, color: "#a855f7" },
     { label: "Vídeos na biblioteca", value: stats.totalVideos, icon: Film, color: "#3b82f6" },
     { label: "Posts publicados", value: stats.totalPostsDone, icon: TrendingUp, color: "#22c55e" },
   ];
@@ -156,7 +156,7 @@ export default function AdminPage() {
                       }}>
                         {acc.profilePictureUrl
                           ? <img src={acc.profilePictureUrl} alt="" style={{ width: 16, height: 16, borderRadius: "50%", objectFit: "cover" }} />
-                          : <Instagram size={11} />}
+                          : <Share2 size={11} />}
                         @{acc.username}
                         {acc.lastError && <XCircle size={11} />}
                       </div>
@@ -257,7 +257,7 @@ export default function AdminPage() {
                 background: a.lastError ? "rgba(239,68,68,.07)" : "rgba(255,255,255,.04)",
                 border: `1px solid ${a.lastError ? "rgba(239,68,68,.2)" : "rgba(255,255,255,.08)"}`,
               }}>
-                <Instagram size={13} color={a.lastError ? "#f87171" : "var(--text-secondary)"} />
+                <Share2 size={13} color={a.lastError ? "#f87171" : "var(--text-secondary)"} />
                 <span>@{a.username}</span>
                 {a.lastError && <XCircle size={12} color="#f87171" />}
               </div>
