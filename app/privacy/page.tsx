@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 export const metadata = { title: "Política de Privacidade – Wayne Automations" };
 
 const APP_NAME = "Wayne Automations";
@@ -108,14 +110,14 @@ export default function PrivacyPage() {
   );
 }
 
-const h2: React.CSSProperties = {
+const h2: CSSProperties = {
   fontSize: "1.1rem", fontWeight: 700, color: "#c9a227",
   marginBottom: ".75rem", borderBottom: "1px solid rgba(201,162,39,0.15)",
   paddingBottom: ".4rem",
 };
-const ul: React.CSSProperties = {
+const ul: CSSProperties = {
   paddingLeft: "1.4rem", display: "flex", flexDirection: "column", gap: ".4rem",
 };
-const link: React.CSSProperties = {
+const link: CSSProperties = {
   color: "#c9a227", textDecoration: "none",
 };
