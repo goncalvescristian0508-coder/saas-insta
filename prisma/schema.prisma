@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model PrivateInstagramAccount {
+  id          String   @id @default(cuid())
+  username    String   @unique
+  passwordEnc String
+  sessionJson String?
+  lastError   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model InstagramOAuthAccount {
+  id                String         @id @default(cuid())
+  userId            String
+  instagramUserId   String
+  username          String
+  profilePictureUrl String?
+  accessTokenEnc    String
+  tokenExpiresAt    DateTime?
+  lastError         String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  scheduledPosts    ScheduledPost[]
+
+  @@unique([userId, instagramUserId])
+  @@index([userId, createdAt])
+}
+
+model LibraryVideo {
+  id             String         @id @default(cuid())
+  userId         String
+  filename       String
+  originalName   String
+  storagePath    String
+  publicUrl      String
+  sizeBytes      Int
+  durationSecs   Float?
+  mimeType       String         @default("video/mp4")
+  createdAt      DateTime       @default(now())
+  scheduledPosts ScheduledPost[]
+
+  @@index([userId, createdAt])
+}
+
+model ScheduledPost {
+  id          String                @id @default(cuid())
+  userId      String
+  accountId   String
+  videoId     String
+  caption     String                @db.Text
+  scheduledAt DateTime
+  status      ScheduledPostStatus   @default(PENDING)
+  errorMsg    String?
+  postedAt    DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  account InstagramOAuthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  video   LibraryVideo          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+
+  @@index([userId, scheduledAt])
+  @@index([status, scheduledAt])
+}
+
+enum ScheduledPostStatus {
+  PENDING
+  RUNNING
+  DONE
+  FAILED
+}
