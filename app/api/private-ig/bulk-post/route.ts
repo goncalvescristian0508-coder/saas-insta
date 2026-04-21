@@ -83,7 +83,7 @@ export async function POST(request: Request) {
         await Promise.all(
           accountIds.map(async (id) => {
             try {
-              const r = await postarReelBuffer(prisma, id, videoBuffer, caption);
+              const r = await postarReelBuffer(prisma, id, videoBuffer, caption, libraryVideo.publicUrl);
               push({ accountId: id, username: r.username, success: r.success, error: r.error });
             } catch (err: unknown) {
               push({ accountId: id, username: "", success: false, error: mapInstagramError(err) });

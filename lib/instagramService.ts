@@ -157,6 +157,7 @@ export async function postarReelBuffer(
   accountId: string,
   videoBuffer: Buffer,
   caption: string,
+  videoUrl?: string,
 ): Promise<{ success: boolean; username: string; error?: string }> {
   const oauthRow = await prisma.instagramOAuthAccount.findUnique({
     where: { id: accountId },
@@ -164,6 +165,29 @@ export async function postarReelBuffer(
   if (oauthRow) {
     try {
       const accessToken = decryptAccountPassword(oauthRow.accessTokenEnc);
+
+      // Use the public URL directly (Supabase Storage) — no disk write needed
+      if (videoUrl) {
+        const result = await publishReelFromVideoUrl({
+          igUserId: oauthRow.instagramUserId,
+          accessToken,
+          videoUrl,
+          caption,
+        });
+        if (!result.ok) {
+          await prisma.instagramOAuthAccount.update({
+            where: { id: accountId },
+            data: { lastError: result.error ?? null },
+          });
+          return { success: false, username: oauthRow.username, error: result.error };
+        }
+        await prisma.instagramOAuthAccount.update({
+          where: { id: accountId },
+          data: { lastError: null },
+        });
+        return { success: true, username: oauthRow.username };
+      }
+
       const { publicBaseUrl } = getMetaOAuthConfig();
       const base =
         publicBaseUrl ||
