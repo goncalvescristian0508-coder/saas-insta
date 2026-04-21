@@ -14,7 +14,7 @@ import {
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { extractVideoCoverJpeg } from "@/lib/videoCover";
 import { getMetaOAuthConfig } from "@/lib/metaInstagramEnv";
-import { publishReelFromBuffer } from "@/lib/instagramGraphPublish";
+import { publishReelFromBuffer, publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
 import type { PrismaClient } from "@prisma/client";
 
 export function mapInstagramError(err: unknown): string {
