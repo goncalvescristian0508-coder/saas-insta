@@ -42,10 +42,11 @@ export async function GET(request: Request) {
 
       await publishReelFromBuffer({
         accessToken,
-        instagramUserId: post.account.instagramUserId,
+        igUserId: post.account.instagramUserId,
         videoBuffer,
         caption: post.caption,
-        appUrl: process.env.NEXT_PUBLIC_APP_URL!,
+        publicBaseUrl: process.env.NEXT_PUBLIC_APP_URL!,
+        username: post.account.username,
       });
 
       await prisma.scheduledPost.update({

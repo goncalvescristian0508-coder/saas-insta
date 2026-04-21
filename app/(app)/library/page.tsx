@@ -51,31 +51,71 @@ export default function LibraryPage() {
   useEffect(() => { fetchVideos(); }, [fetchVideos]);
 
   async function uploadFile(file: File) {
+    const allowed = ["video/mp4", "video/quicktime", "video/mov", "video/x-msvideo"];
+    if (!allowed.includes(file.type)) {
+      showToast("error", "Formato inválido. Use MP4 ou MOV.");
+      return;
+    }
+    if (file.size > 200 * 1024 * 1024) {
+      showToast("error", "Arquivo muito grande. Máximo 200MB.");
+      return;
+    }
+
     setUploading(true);
     setUploadProgress(0);
 
-    const formData = new FormData();
-    formData.append("file", file);
-
-    const interval = setInterval(() => {
-      setUploadProgress((p) => Math.min(p + 8, 85));
-    }, 200);
-
     try {
-      const res = await fetch("/api/media/upload", { method: "POST", body: formData });
-      clearInterval(interval);
+      // Step 1: get a signed upload URL (no file sent to Vercel)
+      const signRes = await fetch(`/api/media/sign-upload?filename=${encodeURIComponent(file.name)}`);
+      if (!signRes.ok) {
+        const d = await signRes.json();
+        showToast("error", d.error ?? "Erro ao preparar upload");
+        return;
+      }
+      const { signedUrl, storagePath, publicUrl } = await signRes.json() as {
+        signedUrl: string; storagePath: string; publicUrl: string;
+      };
+
+      setUploadProgress(5);
+
+      // Step 2: upload directly to Supabase Storage (bypasses Vercel body limit)
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            setUploadProgress(5 + Math.floor((e.loaded / e.total) * 85));
+          }
+        });
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`Upload falhou: ${xhr.status}`));
+        });
+        xhr.addEventListener("error", () => reject(new Error("Erro de rede")));
+        xhr.open("PUT", signedUrl);
+        xhr.setRequestHeader("Content-Type", file.type);
+        xhr.send(file);
+      });
+
+      setUploadProgress(95);
+
+      // Step 3: register metadata in DB
+      const metaRes = await fetch("/api/media/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storagePath, originalName: file.name, sizeBytes: file.size, mimeType: file.type, publicUrl }),
+      });
+
       setUploadProgress(100);
 
-      if (!res.ok) {
-        const data = await res.json();
-        showToast("error", data.error ?? "Erro no upload");
+      if (!metaRes.ok) {
+        const d = await metaRes.json();
+        showToast("error", d.error ?? "Erro ao registrar vídeo");
       } else {
         showToast("success", "Vídeo enviado com sucesso!");
         await fetchVideos();
       }
-    } catch {
-      clearInterval(interval);
-      showToast("error", "Erro de conexão no upload");
+    } catch (err: unknown) {
+      showToast("error", err instanceof Error ? err.message : "Erro de conexão no upload");
     } finally {
       setTimeout(() => {
         setUploading(false);
