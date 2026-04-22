@@ -26,7 +26,7 @@ export default function BulkPostPage() {
   const load = useCallback(async () => {
     try {
       const [accRes, vidRes] = await Promise.all([
-        fetch("/api/auth/instagram/accounts"),
+        fetch("/api/private-ig/accounts"),
         fetch("/api/media/upload"),
       ]);
       const [accData, vidData] = await Promise.all([accRes.json(), vidRes.json()]);
