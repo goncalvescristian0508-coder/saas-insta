@@ -28,18 +28,25 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Falha ao decriptar token: " + String(e) }, { status: 500 });
   }
 
-  // content_publishing_limit requer instagram_business_content_publish
-  const u = new URL(`${GRAPH}/${account.instagramUserId}/content_publishing_limit`);
-  u.searchParams.set("fields", "config,quota_usage");
-  u.searchParams.set("access_token", accessToken);
+  // GET content_publishing_limit (usa instagram_business_content_publish)
+  const limitUrl = new URL(`${GRAPH}/${account.instagramUserId}/content_publishing_limit`);
+  limitUrl.searchParams.set("fields", "config,quota_usage");
+  limitUrl.searchParams.set("access_token", accessToken);
+  const limitRes = await fetch(limitUrl.toString());
+  const limitData = await limitRes.json();
 
-  const res = await fetch(u.toString());
-  const data = await res.json();
+  // GET media list (usa instagram_business_basic + content_publish)
+  const mediaUrl = new URL(`${GRAPH}/${account.instagramUserId}/media`);
+  mediaUrl.searchParams.set("fields", "id,media_type,timestamp");
+  mediaUrl.searchParams.set("access_token", accessToken);
+  const mediaRes = await fetch(mediaUrl.toString());
+  const mediaData = await mediaRes.json();
 
   return NextResponse.json({
     igUserId: account.instagramUserId,
     username: account.username,
-    apiStatus: res.status,
-    apiResponse: data,
+    token: accessToken,
+    contentPublishLimit: { status: limitRes.status, data: limitData },
+    mediaList: { status: mediaRes.status, data: mediaData },
   });
 }
