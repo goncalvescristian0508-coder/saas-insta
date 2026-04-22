@@ -3,13 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   CalendarClock, Plus, Trash2, Clock, CheckCircle,
-  XCircle, Loader2, Calendar, Share2, Film, AlertCircle
+  XCircle, Loader2, Calendar, Share2, AlertCircle
 } from "lucide-react";
 
 interface Account {
   id: string;
   username: string;
-  profilePictureUrl: string | null;
+  source?: "oauth" | "private";
+  profilePicUrl?: string | null;
 }
 
 interface Video {
@@ -57,13 +58,8 @@ export default function SchedulePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
-  const [form, setForm] = useState({
-    accountId: "",
-    videoId: "",
-    caption: "",
-    date: "",
-    time: "",
-  });
+  const [selectedAccounts, setSelectedAccounts] = useState<Record<string, boolean>>({});
+  const [form, setForm] = useState({ videoId: "", caption: "", date: "", time: "" });
 
   const showToast = (type: "success" | "error", msg: string) => {
     setToast({ type, msg });
@@ -73,14 +69,20 @@ export default function SchedulePage() {
   const loadData = useCallback(async () => {
     setLoadingPage(true);
     const [accRes, vidRes, schRes] = await Promise.all([
-      fetch("/api/auth/instagram/accounts"),
+      fetch("/api/private-ig/accounts"),
       fetch("/api/media/upload"),
       fetch("/api/schedule"),
     ]);
     const [accData, vidData, schData] = await Promise.all([
       accRes.json(), vidRes.json(), schRes.json(),
     ]);
-    setAccounts(accData.accounts ?? []);
+    const accs = (accData.accounts ?? []) as Account[];
+    // Only OAuth accounts support scheduling (DB foreign key)
+    const oauthAccs = accs.filter((a) => a.source === "oauth");
+    setAccounts(oauthAccs);
+    const sel: Record<string, boolean> = {};
+    oauthAccs.forEach((a) => { sel[a.id] = true; });
+    setSelectedAccounts(sel);
     setVideos(vidData.videos ?? []);
     setSchedules(schData.schedules ?? []);
     setLoadingPage(false);
@@ -90,8 +92,9 @@ export default function SchedulePage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.accountId || !form.videoId || !form.caption || !form.date || !form.time) {
-      showToast("error", "Preencha todos os campos");
+    const accountIds = Object.entries(selectedAccounts).filter(([, v]) => v).map(([k]) => k);
+    if (accountIds.length === 0 || !form.videoId || !form.caption || !form.date || !form.time) {
+      showToast("error", "Preencha todos os campos e selecione ao menos uma conta");
       return;
     }
 
@@ -105,12 +108,14 @@ export default function SchedulePage() {
     const res = await fetch("/api/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, scheduledAt }),
+      body: JSON.stringify({ accountIds, ...form, scheduledAt }),
     });
 
     if (res.ok) {
-      showToast("success", "Post agendado com sucesso!");
-      setForm({ accountId: "", videoId: "", caption: "", date: "", time: "" });
+      const data = await res.json();
+      const count = Array.isArray(data.schedules) ? data.schedules.length : 1;
+      showToast("success", `${count} post(s) agendado(s) com sucesso!`);
+      setForm({ videoId: "", caption: "", date: "", time: "" });
       await loadData();
     } else {
       const data = await res.json();
@@ -142,7 +147,6 @@ export default function SchedulePage() {
 
   return (
     <div style={{ position: "relative" }}>
-      {/* Toast */}
       {toast && (
         <div style={{
           position: "fixed", top: "1.5rem", right: "1.5rem", zIndex: 100,
@@ -162,16 +166,9 @@ export default function SchedulePage() {
           <h1 className="page-title">Agendamento</h1>
           <p className="page-subtitle">Programme posts para datas e horas específicas</p>
         </div>
-        {schedules.length > 0 && (
-          <div style={{
-            padding: "0.5rem 1rem",
-            background: "rgba(201,162,39,0.08)",
-            border: "1px solid rgba(201,162,39,0.15)",
-            borderRadius: "8px",
-            fontSize: "0.8rem",
-            color: "var(--text-secondary)",
-          }}>
-            {schedules.filter(s => s.status === "PENDING").length} pendente{schedules.filter(s => s.status === "PENDING").length !== 1 ? "s" : ""}
+        {schedules.filter(s => s.status === "PENDING").length > 0 && (
+          <div style={{ padding: "0.5rem 1rem", background: "rgba(201,162,39,0.08)", border: "1px solid rgba(201,162,39,0.15)", borderRadius: "8px", fontSize: "0.8rem", color: "var(--text-secondary)" }}>
+            {schedules.filter(s => s.status === "PENDING").length} pendente(s)
           </div>
         )}
       </div>
@@ -180,60 +177,66 @@ export default function SchedulePage() {
         {/* Form */}
         <div className="glass-panel" style={{ padding: "1.75rem", borderRadius: "14px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1.5rem" }}>
-            <div style={{
-              width: "32px", height: "32px", borderRadius: "8px",
-              background: "rgba(201,162,39,0.12)", border: "1px solid rgba(201,162,39,0.2)",
-              display: "flex", alignItems: "center", justifyContent: "center",
-            }}>
+            <div style={{ width: "32px", height: "32px", borderRadius: "8px", background: "rgba(201,162,39,0.12)", border: "1px solid rgba(201,162,39,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <Plus size={16} color="var(--accent-gold)" />
             </div>
             <h2 style={{ fontSize: "1rem", fontWeight: 700 }}>Novo Agendamento</h2>
           </div>
 
           {accounts.length === 0 ? (
-            <div style={{
-              padding: "1.25rem",
-              background: "rgba(201,162,39,0.06)",
-              border: "1px solid rgba(201,162,39,0.15)",
-              borderRadius: "10px",
-              display: "flex", gap: "0.6rem",
-            }}>
+            <div style={{ padding: "1.25rem", background: "rgba(201,162,39,0.06)", border: "1px solid rgba(201,162,39,0.15)", borderRadius: "10px", display: "flex", gap: "0.6rem" }}>
               <AlertCircle size={16} color="var(--accent-gold)" style={{ flexShrink: 0, marginTop: "2px" }} />
               <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                Conecte pelo menos uma conta Instagram em <strong style={{ color: "#fff" }}>Contas</strong> para agendar posts.
+                Conecte uma conta Instagram via OAuth em <strong style={{ color: "#fff" }}>Contas</strong> para agendar posts.
               </p>
             </div>
           ) : videos.length === 0 ? (
-            <div style={{
-              padding: "1.25rem",
-              background: "rgba(201,162,39,0.06)",
-              border: "1px solid rgba(201,162,39,0.15)",
-              borderRadius: "10px",
-              display: "flex", gap: "0.6rem",
-            }}>
+            <div style={{ padding: "1.25rem", background: "rgba(201,162,39,0.06)", border: "1px solid rgba(201,162,39,0.15)", borderRadius: "10px", display: "flex", gap: "0.6rem" }}>
               <AlertCircle size={16} color="var(--accent-gold)" style={{ flexShrink: 0, marginTop: "2px" }} />
               <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", lineHeight: 1.5 }}>
-                Adicione vídeos à sua <strong style={{ color: "#fff" }}>Biblioteca</strong> para agendar posts.
+                Adicione vídeos à <strong style={{ color: "#fff" }}>Biblioteca</strong> para agendar posts.
               </p>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1.1rem" }}>
-              {/* Account */}
+            <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: "1.1rem" }}>
+              {/* Accounts multi-select */}
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Conta Instagram
+                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  Contas ({Object.values(selectedAccounts).filter(Boolean).length} selecionada(s))
                 </label>
-                <select
-                  value={form.accountId}
-                  onChange={(e) => setForm(f => ({ ...f, accountId: e.target.value }))}
-                  className="input-field"
-                  style={{ width: "100%" }}
-                >
-                  <option value="">Selecione uma conta...</option>
-                  {accounts.map(a => (
-                    <option key={a.id} value={a.id}>@{a.username}</option>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", background: "rgba(201,162,39,0.05)", cursor: "pointer", fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+                    <input
+                      type="checkbox"
+                      checked={accounts.every((a) => selectedAccounts[a.id])}
+                      onChange={(e) => {
+                        const val = e.target.checked;
+                        const s: Record<string, boolean> = {};
+                        accounts.forEach((a) => { s[a.id] = val; });
+                        setSelectedAccounts(s);
+                      }}
+                      style={{ accentColor: "var(--accent-gold)" }}
+                    />
+                    Selecionar todas
+                  </label>
+                  {accounts.map((a) => (
+                    <label key={a.id} style={{
+                      display: "flex", alignItems: "center", gap: "0.5rem",
+                      padding: "0.5rem 0.6rem", borderRadius: "6px", cursor: "pointer",
+                      background: selectedAccounts[a.id] ? "rgba(201,162,39,0.07)" : "rgba(255,255,255,0.02)",
+                      border: `1px solid ${selectedAccounts[a.id] ? "rgba(201,162,39,0.2)" : "transparent"}`,
+                      transition: "all 0.15s",
+                    }}>
+                      <input
+                        type="checkbox"
+                        checked={Boolean(selectedAccounts[a.id])}
+                        onChange={() => setSelectedAccounts((s) => ({ ...s, [a.id]: !s[a.id] }))}
+                        style={{ accentColor: "var(--accent-gold)" }}
+                      />
+                      <span style={{ fontSize: "0.85rem" }}>@{a.username}</span>
+                    </label>
                   ))}
-                </select>
+                </div>
               </div>
 
               {/* Video */}
@@ -241,12 +244,7 @@ export default function SchedulePage() {
                 <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
                   Vídeo da Biblioteca
                 </label>
-                <select
-                  value={form.videoId}
-                  onChange={(e) => setForm(f => ({ ...f, videoId: e.target.value }))}
-                  className="input-field"
-                  style={{ width: "100%" }}
-                >
+                <select value={form.videoId} onChange={(e) => setForm(f => ({ ...f, videoId: e.target.value }))} className="input-field" style={{ width: "100%" }}>
                   <option value="">Selecione um vídeo...</option>
                   {videos.map(v => (
                     <option key={v.id} value={v.id}>{v.originalName} ({formatBytes(v.sizeBytes)})</option>
@@ -259,51 +257,22 @@ export default function SchedulePage() {
                 <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
                   Legenda
                 </label>
-                <textarea
-                  value={form.caption}
-                  onChange={(e) => setForm(f => ({ ...f, caption: e.target.value }))}
-                  className="input-field"
-                  rows={3}
-                  placeholder="Escreva a legenda..."
-                  style={{ resize: "vertical", width: "100%" }}
-                />
+                <textarea value={form.caption} onChange={(e) => setForm(f => ({ ...f, caption: e.target.value }))} className="input-field" rows={3} placeholder="Escreva a legenda..." style={{ resize: "vertical", width: "100%" }} />
               </div>
 
               {/* Date + Time */}
               <div style={{ display: "flex", gap: "0.75rem" }}>
                 <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    Data
-                  </label>
-                  <input
-                    type="date"
-                    value={form.date}
-                    onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))}
-                    className="input-field"
-                    min={new Date().toISOString().split("T")[0]}
-                    style={{ width: "100%" }}
-                  />
+                  <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Data</label>
+                  <input type="date" value={form.date} onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))} className="input-field" min={new Date().toISOString().split("T")[0]} style={{ width: "100%" }} />
                 </div>
                 <div style={{ flex: 1 }}>
-                  <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                    Hora
-                  </label>
-                  <input
-                    type="time"
-                    value={form.time}
-                    onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))}
-                    className="input-field"
-                    style={{ width: "100%" }}
-                  />
+                  <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Hora</label>
+                  <input type="time" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} className="input-field" style={{ width: "100%" }} />
                 </div>
               </div>
 
-              <button
-                type="submit"
-                disabled={submitting}
-                className="btn btn-primary"
-                style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", marginTop: "0.25rem" }}
-              >
+              <button type="submit" disabled={submitting} className="btn btn-primary" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", marginTop: "0.25rem" }}>
                 {submitting
                   ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Agendando...</>
                   : <><CalendarClock size={16} /> Agendar Post</>}
@@ -314,41 +283,21 @@ export default function SchedulePage() {
 
         {/* Schedule List */}
         <div>
-          <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "1rem" }}>
-            Posts Agendados
-          </h2>
-
+          <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "1rem" }}>Posts Agendados</h2>
           {schedules.length === 0 ? (
-            <div style={{
-              textAlign: "center", padding: "3rem",
-              background: "rgba(12,16,24,0.5)",
-              borderRadius: "14px", border: "1px solid var(--border-color)",
-            }}>
+            <div style={{ textAlign: "center", padding: "3rem", background: "rgba(12,16,24,0.5)", borderRadius: "14px", border: "1px solid var(--border-color)" }}>
               <Calendar size={36} color="var(--text-muted)" style={{ margin: "0 auto 0.85rem" }} />
-              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
-                Nenhum post agendado ainda
-              </p>
+              <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>Nenhum post agendado ainda</p>
             </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
               {schedules.map((s) => {
                 const cfg = statusConfig[s.status];
                 return (
-                  <div key={s.id} className="glass-panel" style={{
-                    padding: "1.1rem 1.25rem",
-                    borderRadius: "12px",
-                    display: "flex",
-                    gap: "1rem",
-                    alignItems: "flex-start",
-                  }}>
-                    {/* Video thumbnail */}
-                    <div style={{
-                      width: "56px", height: "56px", borderRadius: "8px",
-                      background: "#0a0c14", overflow: "hidden", flexShrink: 0,
-                    }}>
+                  <div key={s.id} className="glass-panel" style={{ padding: "1.1rem 1.25rem", borderRadius: "12px", display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+                    <div style={{ width: "56px", height: "56px", borderRadius: "8px", background: "#0a0c14", overflow: "hidden", flexShrink: 0 }}>
                       <video src={s.video.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
                     </div>
-
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
                         <div style={{ minWidth: 0 }}>
@@ -356,65 +305,29 @@ export default function SchedulePage() {
                             <Share2 size={13} color="var(--accent-gold)" />
                             <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>@{s.account.username}</span>
                           </div>
-                          <p style={{
-                            fontSize: "0.78rem", color: "var(--text-secondary)",
-                            whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                          }}>
-                            {s.video.originalName}
-                          </p>
+                          <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.video.originalName}</p>
                         </div>
-                        <span style={{
-                          padding: "3px 8px", borderRadius: "6px", fontSize: "0.72rem", fontWeight: 600,
-                          color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`,
-                          flexShrink: 0,
-                        }}>
+                        <span style={{ padding: "3px 8px", borderRadius: "6px", fontSize: "0.72rem", fontWeight: 600, color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`, flexShrink: 0 }}>
                           {cfg.label}
                         </span>
                       </div>
-
-                      <p style={{
-                        fontSize: "0.78rem", color: "var(--text-muted)",
-                        marginTop: "0.45rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
-                      }}>
-                        {s.caption}
-                      </p>
-
+                      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.45rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.caption}</p>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.6rem" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
                           <Clock size={12} color="var(--text-muted)" />
                           <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                            {s.status === "DONE" && s.postedAt
-                              ? `Postado em ${formatDateTime(s.postedAt)}`
-                              : formatDateTime(s.scheduledAt)}
+                            {s.status === "DONE" && s.postedAt ? `Postado em ${formatDateTime(s.postedAt)}` : formatDateTime(s.scheduledAt)}
                           </span>
                         </div>
                         {s.status === "PENDING" && (
-                          <button
-                            onClick={() => deleteSchedule(s.id)}
-                            disabled={deletingId === s.id}
-                            style={{
-                              display: "flex", alignItems: "center", gap: "0.3rem",
-                              padding: "3px 8px", borderRadius: "6px",
-                              background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)",
-                              color: "#f87171", fontSize: "0.72rem", cursor: "pointer",
-                            }}
-                          >
-                            {deletingId === s.id
-                              ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
-                              : <Trash2 size={11} />}
+                          <button onClick={() => void deleteSchedule(s.id)} disabled={deletingId === s.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", borderRadius: "6px", background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)", color: "#f87171", fontSize: "0.72rem", cursor: "pointer" }}>
+                            {deletingId === s.id ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={11} />}
                             Cancelar
                           </button>
                         )}
                       </div>
-
                       {s.status === "FAILED" && s.errorMsg && (
-                        <div style={{
-                          marginTop: "0.5rem", padding: "0.4rem 0.6rem",
-                          background: "rgba(239,68,68,0.07)", borderRadius: "6px",
-                          fontSize: "0.72rem", color: "#f87171",
-                        }}>
-                          {s.errorMsg}
-                        </div>
+                        <div style={{ marginTop: "0.5rem", padding: "0.4rem 0.6rem", background: "rgba(239,68,68,0.07)", borderRadius: "6px", fontSize: "0.72rem", color: "#f87171" }}>{s.errorMsg}</div>
                       )}
                     </div>
                   </div>
@@ -424,7 +337,6 @@ export default function SchedulePage() {
           )}
         </div>
       </div>
-
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );

@@ -27,35 +27,34 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
   const body = await request.json();
-  const { accountId, videoId, caption, scheduledAt } = body;
+  const { accountIds, videoId, caption, scheduledAt } = body;
 
-  if (!accountId || !videoId || !caption || !scheduledAt) {
+  if (!accountIds || !videoId || !caption || !scheduledAt) {
     return NextResponse.json({ error: "Campos obrigatórios faltando" }, { status: 400 });
   }
 
-  const account = await prisma.instagramOAuthAccount.findFirst({
-    where: { id: accountId, userId: user.id },
-  });
-  if (!account) return NextResponse.json({ error: "Conta não encontrada" }, { status: 404 });
+  const ids: string[] = Array.isArray(accountIds) ? accountIds : [accountIds];
+  if (ids.length === 0) return NextResponse.json({ error: "Selecione ao menos uma conta" }, { status: 400 });
 
-  const video = await prisma.libraryVideo.findFirst({
-    where: { id: videoId, userId: user.id },
-  });
+  const video = await prisma.libraryVideo.findFirst({ where: { id: videoId, userId: user.id } });
   if (!video) return NextResponse.json({ error: "Vídeo não encontrado" }, { status: 404 });
 
-  const schedule = await prisma.scheduledPost.create({
-    data: {
-      userId: user.id,
-      accountId,
-      videoId,
-      caption,
-      scheduledAt: new Date(scheduledAt),
-    },
-    include: {
-      account: { select: { username: true } },
-      video: { select: { originalName: true } },
-    },
+  const accounts = await prisma.instagramOAuthAccount.findMany({
+    where: { id: { in: ids }, userId: user.id },
   });
+  if (accounts.length === 0) return NextResponse.json({ error: "Nenhuma conta válida encontrada" }, { status: 404 });
 
-  return NextResponse.json({ schedule });
+  const schedules = await Promise.all(
+    accounts.map((account) =>
+      prisma.scheduledPost.create({
+        data: { userId: user.id, accountId: account.id, videoId, caption, scheduledAt: new Date(scheduledAt) },
+        include: {
+          account: { select: { username: true } },
+          video: { select: { originalName: true } },
+        },
+      })
+    )
+  );
+
+  return NextResponse.json({ schedules });
 }

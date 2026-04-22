@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
-import { publishReelFromBuffer } from "@/lib/instagramGraphPublish";
+import { publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -14,14 +14,8 @@ export async function GET(request: Request) {
 
   const now = new Date();
   const pending = await prisma.scheduledPost.findMany({
-    where: {
-      status: "PENDING",
-      scheduledAt: { lte: now },
-    },
-    include: {
-      account: true,
-      video: true,
-    },
+    where: { status: "PENDING", scheduledAt: { lte: now } },
+    include: { account: true, video: true },
     take: 10,
   });
 
@@ -36,18 +30,14 @@ export async function GET(request: Request) {
     try {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
 
-      const videoRes = await fetch(post.video.publicUrl);
-      if (!videoRes.ok) throw new Error("Falha ao baixar vídeo da biblioteca");
-      const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-
-      await publishReelFromBuffer({
+      const result = await publishReelFromVideoUrl({
         accessToken,
         igUserId: post.account.instagramUserId,
-        videoBuffer,
+        videoUrl: post.video.publicUrl,
         caption: post.caption,
-        publicBaseUrl: process.env.NEXT_PUBLIC_APP_URL!,
-        username: post.account.username,
       });
+
+      if (!result.ok) throw new Error(result.error);
 
       await prisma.scheduledPost.update({
         where: { id: post.id },
@@ -55,12 +45,13 @@ export async function GET(request: Request) {
       });
 
       results.push({ id: post.id, status: "done" });
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro desconhecido";
       await prisma.scheduledPost.update({
         where: { id: post.id },
-        data: { status: "FAILED", errorMsg: err?.message ?? "Erro desconhecido" },
+        data: { status: "FAILED", errorMsg: msg },
       });
-      results.push({ id: post.id, status: "failed", error: err?.message });
+      results.push({ id: post.id, status: "failed", error: msg });
     }
   }
 
