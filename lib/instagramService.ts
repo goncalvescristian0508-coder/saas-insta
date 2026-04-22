@@ -44,9 +44,12 @@ export function mapInstagramError(err: unknown): string {
     if (/feedback_required|login_required/i.test(m)) {
       return "Sessão expirada ou conta com restrição. Faça login de novo nas configurações da conta.";
     }
-    return m;
+    if (/challenge_required/i.test(m)) {
+      return "Instagram pediu verificação de segurança. Abra o app no celular, confirme o login suspeito e tente novamente.";
+    }
+    return `Erro Instagram: ${m}`;
   }
-  if (err instanceof Error) return err.message;
+  if (err instanceof Error) return `Erro: ${err.message}`;
   return "Erro desconhecido ao falar com o Instagram.";
 }
 
@@ -101,9 +104,15 @@ export async function validateLoginAndSerialize(
 ): Promise<string> {
   const ig = new IgApiClient();
   ig.state.generateDevice(username);
-  await ig.simulate.preLoginFlow();
-  await ig.account.login(username, password);
-  await ig.simulate.postLoginFlow();
+  try {
+    await ig.account.login(username, password);
+  } catch (err) {
+    // retry with simulation flow if direct login fails
+    ig.state.generateDevice(username + "_retry");
+    await ig.simulate.preLoginFlow();
+    await ig.account.login(username, password);
+    await ig.simulate.postLoginFlow();
+  }
   const serialized = await ig.state.serialize();
   return JSON.stringify(serialized);
 }
