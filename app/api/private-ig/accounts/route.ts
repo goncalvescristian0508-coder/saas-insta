@@ -101,8 +101,10 @@ export async function POST(request: Request) {
       username: acc.username,
     });
   } catch (error: unknown) {
+    const raw = error instanceof Error ? `[${error.constructor.name}] ${error.message}` : String(error);
+    console.error("[private-ig/accounts POST]", raw);
     return NextResponse.json(
-      { error: mapInstagramError(error) },
+      { error: mapInstagramError(error), debug: raw },
       { status: 400 },
     );
   }

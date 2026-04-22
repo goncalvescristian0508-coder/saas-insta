@@ -96,7 +96,7 @@ function AccountsPageInner() {
         body: JSON.stringify({ username: privUsername, password: privPassword }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Erro ao conectar.");
+      if (!res.ok) throw new Error(data.debug || data.error || "Erro ao conectar.");
       setPrivSuccess(`@${data.username} conectada com sucesso!`);
       setPrivUsername("");
       setPrivPassword("");
