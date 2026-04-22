@@ -1,18 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
-import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
 const GRAPH = "https://graph.instagram.com/v21.0";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "goncalvescristian0508@gmail.com";
+const SECRET = "autopost-meta-test-2025";
 
-export async function POST() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-
-  if (!user || user.email !== ADMIN_EMAIL) {
+export async function POST(request: Request) {
+  const { secret } = await request.json().catch(() => ({ secret: "" }));
+  if (secret !== SECRET) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
