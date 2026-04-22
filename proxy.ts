@@ -39,7 +39,8 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/api/auth/instagram") ||
     request.nextUrl.pathname.startsWith("/api/instagram/oauth") ||
     request.nextUrl.pathname.startsWith("/api/instagram/deauth") ||
-    request.nextUrl.pathname.startsWith("/api/instagram/deletion");
+    request.nextUrl.pathname.startsWith("/api/instagram/deletion") ||
+    request.nextUrl.pathname.startsWith("/api/admin/meta-test");
 
   if (!user && !isAuthPage && !isPublicPage && !isPublicApi) {
     const url = request.nextUrl.clone();
