@@ -4,7 +4,7 @@ import GothamBackdrop from "@/components/GothamBackdrop";
 import GothamAtmosphere from "@/components/GothamAtmosphere";
 
 export const metadata: Metadata = {
-  title: "Wayne Automations — Acesso",
+  title: "AutoPost — Acesso",
 };
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {

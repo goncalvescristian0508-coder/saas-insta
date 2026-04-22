@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
-  Search, Send, LogOut, ChevronRight, Shield, Moon,
+  Search, Send, LogOut, ChevronRight, Shield,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -67,36 +67,22 @@ export default function Sidebar() {
     }}>
       {/* Logo */}
       <div style={{ marginBottom: "2rem", paddingLeft: "0.75rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.2rem" }}>
-          <div style={{
-            width: "34px", height: "34px", borderRadius: "9px",
-            background: "rgba(201, 162, 39, 0.13)",
-            border: "1px solid rgba(201, 162, 39, 0.25)",
-            display: "flex", alignItems: "center", justifyContent: "center",
+        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <img
+            src="/logo.png"
+            alt="AutoPost"
+            style={{ width: "36px", height: "36px", borderRadius: "9px", objectFit: "cover" }}
+          />
+          <h1 style={{
+            fontFamily: "var(--font-sans)",
+            fontSize: "1.2rem",
+            fontWeight: 800,
+            color: "#fff",
+            letterSpacing: "-0.02em",
+            lineHeight: 1,
           }}>
-            <Moon size={18} color="var(--accent-gold)" strokeWidth={1.75} />
-          </div>
-          <div>
-            <h1 style={{
-              fontFamily: "var(--font-sans)",
-              fontSize: "1.15rem",
-              fontWeight: 800,
-              color: "#fff",
-              letterSpacing: "-0.02em",
-              lineHeight: 1.2,
-            }}>
-              <span style={{ color: "var(--accent-gold)" }}>Wayne</span>
-            </h1>
-            <p style={{
-              fontSize: "0.65rem",
-              fontWeight: 700,
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-              color: "var(--text-muted)",
-            }}>
-              Automations
-            </p>
-          </div>
+            <span style={{ color: "var(--accent-gold)" }}>Auto</span>Post
+          </h1>
         </div>
       </div>
 

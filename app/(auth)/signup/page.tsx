@@ -109,11 +109,10 @@ export default function SignupPage() {
             width: "56px",
             height: "56px",
             borderRadius: "16px",
-            background: "rgba(201, 162, 39, 0.12)",
-            border: "1px solid rgba(201, 162, 39, 0.25)",
             marginBottom: "1rem",
+            overflow: "hidden",
           }}>
-            <Moon size={26} color="var(--accent-gold)" strokeWidth={1.75} />
+            <img src="/logo.png" alt="AutoPost" style={{ width: "56px", height: "56px", objectFit: "cover" }} />
           </div>
           <h1 style={{
             fontSize: "1.75rem",

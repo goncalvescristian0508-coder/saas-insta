@@ -47,19 +47,7 @@ export default function LoginPage() {
       }}>
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: "2.5rem" }}>
-          <div style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "56px",
-            height: "56px",
-            borderRadius: "16px",
-            background: "rgba(201, 162, 39, 0.12)",
-            border: "1px solid rgba(201, 162, 39, 0.25)",
-            marginBottom: "1rem",
-          }}>
-            <Moon size={26} color="var(--accent-gold)" strokeWidth={1.75} />
-          </div>
+          <img src="/logo.png" alt="AutoPost" style={{ width: "64px", height: "64px", borderRadius: "16px", objectFit: "cover", marginBottom: "1rem" }} />
           <h1 style={{
             fontSize: "1.75rem",
             fontWeight: 800,
@@ -67,7 +55,7 @@ export default function LoginPage() {
             letterSpacing: "-0.03em",
             marginBottom: "0.4rem",
           }}>
-            <span style={{ color: "var(--accent-gold)" }}>Wayne</span> Automations
+            <span style={{ color: "var(--accent-gold)" }}>Auto</span>Post
           </h1>
           <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>
             Acesse sua conta para continuar

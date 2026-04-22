@@ -1,6 +1,6 @@
-export const metadata = { title: "Política de Privacidade – Wayne Automations" };
+export const metadata = { title: "Política de Privacidade – AutoPost" };
 
-const APP = "Wayne Automations";
+const APP = "AutoPost";
 const URL = "https://saas-insta.vercel.app";
 const EMAIL = "goncalvescristian0508@gmail.com";
 

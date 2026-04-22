@@ -1,6 +1,6 @@
-export const metadata = { title: "Termos de Serviço – Wayne Automations" };
+export const metadata = { title: "Termos de Serviço – AutoPost" };
 
-const APP = "Wayne Automations";
+const APP = "AutoPost";
 const URL = "https://saas-insta.vercel.app";
 const EMAIL = "goncalvescristian0508@gmail.com";
 
