@@ -8,9 +8,14 @@ interface OAuthAccount {
   lastError?: string; createdAt: string;
 }
 
+interface PrivateAccount {
+  id: string; username: string; lastError?: string;
+}
+
 interface UserRow {
   id: string; email: string; createdAt: string;
   oauthAccounts: OAuthAccount[];
+  privateAccounts: PrivateAccount[];
   videoCount: number;
   postsTotal: number; postsDone: number; postsFailed: number;
   lastActivity: string | null;
@@ -144,7 +149,7 @@ export default function AdminPage() {
                 </div>
 
                 {/* Instagram accounts */}
-                {u.oauthAccounts.length > 0 && (
+                {(u.oauthAccounts.length > 0 || u.privateAccounts.length > 0) ? (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: ".4rem" }}>
                     {u.oauthAccounts.map((acc) => (
                       <div key={acc.id} style={{
@@ -161,10 +166,21 @@ export default function AdminPage() {
                         {acc.lastError && <XCircle size={11} />}
                       </div>
                     ))}
+                    {u.privateAccounts.map((acc) => (
+                      <div key={acc.id} style={{
+                        display: "flex", alignItems: "center", gap: ".35rem",
+                        padding: "3px 8px", borderRadius: 99, fontSize: ".75rem",
+                        background: acc.lastError ? "rgba(239,68,68,.1)" : "rgba(201,162,39,.1)",
+                        border: `1px solid ${acc.lastError ? "rgba(239,68,68,.2)" : "rgba(201,162,39,.2)"}`,
+                        color: acc.lastError ? "#f87171" : "var(--accent-gold)",
+                      }}>
+                        <Users size={11} />
+                        @{acc.username}
+                        {acc.lastError && <XCircle size={11} />}
+                      </div>
+                    ))}
                   </div>
-                )}
-
-                {u.oauthAccounts.length === 0 && (
+                ) : (
                   <p style={{ fontSize: ".75rem", color: "var(--text-muted)" }}>Nenhuma conta conectada</p>
                 )}
 

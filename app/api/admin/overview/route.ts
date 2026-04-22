@@ -45,6 +45,7 @@ export async function GET() {
   const userMap: Record<string, {
     id: string; email: string; createdAt: string;
     oauthAccounts: typeof oauthAccounts;
+    privateAccounts: typeof privateAccounts;
     videoCount: number;
     postsTotal: number; postsDone: number; postsFailed: number;
     lastActivity: string | null;
@@ -56,6 +57,7 @@ export async function GET() {
       email: u.email ?? "(sem email)",
       createdAt: u.created_at,
       oauthAccounts: [],
+      privateAccounts: [],
       videoCount: 0,
       postsTotal: 0,
       postsDone: 0,
@@ -68,10 +70,21 @@ export async function GET() {
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
         id: acc.userId, email: "(desconhecido)", createdAt: acc.createdAt.toISOString(),
-        oauthAccounts: [], videoCount: 0, postsTotal: 0, postsDone: 0, postsFailed: 0, lastActivity: null,
+        oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0, postsDone: 0, postsFailed: 0, lastActivity: null,
       };
     }
     userMap[acc.userId].oauthAccounts.push(acc);
+  }
+
+  for (const acc of privateAccounts) {
+    if (!acc.userId) continue;
+    if (!userMap[acc.userId]) {
+      userMap[acc.userId] = {
+        id: acc.userId, email: "(desconhecido)", createdAt: acc.createdAt.toISOString(),
+        oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0, postsDone: 0, postsFailed: 0, lastActivity: null,
+      };
+    }
+    userMap[acc.userId].privateAccounts.push(acc);
   }
 
   for (const v of videos) {
@@ -99,7 +112,11 @@ export async function GET() {
 
   return NextResponse.json({
     stats,
-    users: Object.values(userMap),
+    users: Object.values(userMap).map(u => ({
+      ...u,
+      privateAccounts: u.privateAccounts.map(a => ({ id: a.id, username: a.username, lastError: a.lastError })),
+      oauthAccounts: u.oauthAccounts.map(a => ({ id: a.id, username: a.username, profilePictureUrl: a.profilePictureUrl, lastError: a.lastError, createdAt: a.createdAt })),
+    })),
     recentPosts: recentPosts.slice(0, 30).map(p => ({
       id: p.id,
       userId: p.userId,

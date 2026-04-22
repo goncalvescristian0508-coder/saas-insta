@@ -10,12 +10,15 @@ datasource db {
 
 model PrivateInstagramAccount {
   id          String   @id @default(cuid())
+  userId      String?
   username    String   @unique
   passwordEnc String
   sessionJson String?
   lastError   String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model InstagramOAuthAccount {

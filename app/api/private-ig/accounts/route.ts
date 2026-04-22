@@ -16,6 +16,7 @@ export async function GET() {
   const { userId, created } = await getOrCreateRequestUserId();
   const [privateRows, oauthRows] = await Promise.all([
     prisma.privateInstagramAccount.findMany({
+      where: { userId },
       orderBy: { createdAt: "desc" },
       select: {
         id: true,
@@ -87,10 +88,11 @@ export async function POST(request: Request) {
     const sessionJson = await validateLoginAndSerialize(u, String(password));
     const passwordEnc = encryptAccountPassword(String(password));
 
+    const { userId } = await getOrCreateRequestUserId();
     const acc = await prisma.privateInstagramAccount.upsert({
       where: { username: u },
-      create: { username: u, passwordEnc, sessionJson },
-      update: { passwordEnc, sessionJson, lastError: null },
+      create: { userId, username: u, passwordEnc, sessionJson },
+      update: { userId, passwordEnc, sessionJson, lastError: null },
     });
 
     return NextResponse.json({
