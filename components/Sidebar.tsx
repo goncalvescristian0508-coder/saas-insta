@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
-  Search, Send, LogOut, ChevronRight, Shield,
+  Search, Send, LogOut, ChevronRight, Shield, Copy, Menu, X,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -16,6 +16,7 @@ const navItems = [
   { name: "Contas", href: "/accounts", icon: Users },
   { name: "Postagem em massa", href: "/postagem-massa", icon: Send },
   { name: "Inspirações", href: "/inspiracoes", icon: Search },
+  { name: "Clonar Perfil", href: "/clonar", icon: Copy },
   { name: "Biblioteca", href: "/library", icon: Clapperboard },
   { name: "Agendamento", href: "/schedule", icon: CalendarClock },
 ];
@@ -26,6 +27,7 @@ export default function Sidebar() {
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userName, setUserName] = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -50,7 +52,49 @@ export default function Sidebar() {
     : userEmail?.[0]?.toUpperCase() ?? "W";
 
   return (
-    <aside style={{
+    <>
+      {/* Mobile top bar */}
+      <div style={{
+        display: "none",
+        position: "fixed",
+        top: 0, left: 0, right: 0,
+        height: "56px",
+        background: "rgba(8,10,16,0.96)",
+        backdropFilter: "blur(20px)",
+        borderBottom: "1px solid var(--border-color)",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "0 1rem",
+        zIndex: 20,
+        // shown via CSS media query
+      }} className="mobile-topbar">
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <img src="/logo.png" alt="AutoPost" style={{ width: "28px", height: "28px", borderRadius: "7px" }} />
+          <span style={{ fontWeight: 800, fontSize: "1rem", color: "#fff" }}>
+            <span style={{ color: "var(--accent-gold)" }}>Auto</span>Post
+          </span>
+        </div>
+        <button
+          onClick={() => setMobileOpen((v) => !v)}
+          style={{ background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer", padding: "0.4rem" }}
+        >
+          {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+        </button>
+      </div>
+
+      {/* Overlay */}
+      {mobileOpen && (
+        <div
+          onClick={() => setMobileOpen(false)}
+          style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+            zIndex: 18, display: "none",
+          }}
+          className="mobile-overlay"
+        />
+      )}
+
+    <aside className={mobileOpen ? "sidebar-open" : ""} style={{
       width: "260px",
       background: "linear-gradient(180deg, rgba(8, 10, 16, 0.96) 0%, rgba(6, 8, 14, 0.92) 100%)",
       backdropFilter: "blur(24px)",
@@ -63,7 +107,7 @@ export default function Sidebar() {
       display: "flex",
       flexDirection: "column",
       padding: "1.75rem 0.875rem",
-      zIndex: 10,
+      zIndex: 19,
     }}>
       {/* Logo */}
       <div style={{ marginBottom: "2rem", paddingLeft: "0.75rem" }}>
@@ -105,6 +149,7 @@ export default function Sidebar() {
             <NextLink
               key={item.name}
               href={item.href}
+              onClick={() => setMobileOpen(false)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -219,5 +264,6 @@ export default function Sidebar() {
         </button>
       </div>
     </aside>
+    </>
   );
 }

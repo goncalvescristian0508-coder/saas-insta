@@ -97,7 +97,7 @@ export default async function Dashboard() {
                       </td>
                       <td style={{ padding: "0.9rem 1rem" }}>
                         <span style={{ fontSize: "0.82rem", color: "var(--text-secondary)", maxWidth: "180px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
-                          {s.video.originalName}
+                          {s.video?.originalName ?? s.rawVideoUrl ? "Reel clonado" : "—"}
                         </span>
                       </td>
                       <td style={{ padding: "0.9rem 1rem" }}>

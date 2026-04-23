@@ -104,12 +104,13 @@ export async function exchangeForLongLivedToken(
   return { access_token, expires_in };
 }
 
-export async function fetchInstagramProfile(accessToken: string): Promise<{
+export async function fetchInstagramProfile(accessToken: string, userId?: string): Promise<{
   id: string;
   username: string;
   profile_picture_url?: string;
 }> {
-  const u = new URL(`${GRAPH}/me`);
+  const node = userId || "me";
+  const u = new URL(`${GRAPH}/${node}`);
   u.searchParams.set("fields", "id,username,profile_picture_url");
   u.searchParams.set("access_token", accessToken);
 
@@ -131,7 +132,7 @@ async function pollContainerReady(
   containerId: string,
   accessToken: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  for (let i = 0; i < 45; i++) {
+  for (let i = 0; i < 90; i++) {
     const u = new URL(`${GRAPH}/${containerId}`);
     u.searchParams.set("fields", "status_code");
     u.searchParams.set("access_token", accessToken);
@@ -151,7 +152,7 @@ async function pollContainerReady(
     if (code === "ERROR" || code === "EXPIRED") {
       return { ok: false, error: `Container status: ${code}` };
     }
-    await sleep(2000);
+    await sleep(1000);
   }
   return { ok: false, error: "Timeout aguardando processamento do vídeo." };
 }

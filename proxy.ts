@@ -40,11 +40,15 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/api/instagram/oauth") ||
     request.nextUrl.pathname.startsWith("/api/instagram/deauth") ||
     request.nextUrl.pathname.startsWith("/api/instagram/deletion") ||
-    request.nextUrl.pathname.startsWith("/api/admin/meta-test");
+    request.nextUrl.pathname.startsWith("/api/admin/meta-test") ||
+    request.nextUrl.pathname.startsWith("/api/cron/") ||
+    request.nextUrl.pathname.startsWith("/connect/") ||
+    request.nextUrl.pathname.startsWith("/connect-error");
 
   if (!user && !isAuthPage && !isPublicPage && !isPublicApi) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    url.search = "";
     return NextResponse.redirect(url);
   }
 

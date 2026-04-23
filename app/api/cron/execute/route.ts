@@ -2,6 +2,30 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
+import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
+
+function storageAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  );
+}
+
+async function rehostVideo(rawUrl: string): Promise<{ publicUrl: string; storagePath: string }> {
+  const res = await fetch(rawUrl, { signal: AbortSignal.timeout(90_000) });
+  if (!res.ok) throw new Error(`Falha ao baixar vídeo clonado: HTTP ${res.status}`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const storagePath = `_cloned/${randomUUID()}.mp4`;
+  const admin = storageAdmin();
+  const { error } = await admin.storage.from("library-videos").upload(storagePath, buffer, {
+    contentType: "video/mp4",
+    upsert: false,
+  });
+  if (error) throw new Error(`Falha ao salvar vídeo: ${error.message}`);
+  const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
+  return { publicUrl: pub.publicUrl, storagePath };
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -13,10 +37,23 @@ export async function GET(request: Request) {
   }
 
   const now = new Date();
+
+  // Reset posts that failed due to rate limit so they're retried
+  await prisma.scheduledPost.updateMany({
+    where: {
+      status: "FAILED",
+      errorMsg: { contains: "Application request limit" },
+      scheduledAt: { lte: now },
+    },
+    data: { status: "PENDING", errorMsg: null },
+  });
+
+  // Process 1 post per cron run (cron runs every 5 min = 1 post per account per 5 min)
   const pending = await prisma.scheduledPost.findMany({
     where: { status: "PENDING", scheduledAt: { lte: now } },
     include: { account: true, video: true },
-    take: 10,
+    orderBy: { scheduledAt: "asc" },
+    take: 1,
   });
 
   const results = [];
@@ -27,15 +64,32 @@ export async function GET(request: Request) {
       data: { status: "RUNNING" },
     });
 
+    let rehostPath: string | null = null;
     try {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
+
+      let videoUrl: string;
+      if (post.rawVideoUrl) {
+        const rehosted = await rehostVideo(post.rawVideoUrl);
+        videoUrl = rehosted.publicUrl;
+        rehostPath = rehosted.storagePath;
+      } else if (post.video?.publicUrl) {
+        videoUrl = post.video.publicUrl;
+      } else {
+        throw new Error("Nenhuma URL de vídeo disponível para este post.");
+      }
 
       const result = await publishReelFromVideoUrl({
         accessToken,
         igUserId: post.account.instagramUserId,
-        videoUrl: post.video.publicUrl,
+        videoUrl,
         caption: post.caption,
       });
+
+      if (rehostPath) {
+        await storageAdmin().storage.from("library-videos").remove([rehostPath]);
+        rehostPath = null;
+      }
 
       if (!result.ok) throw new Error(result.error);
 
@@ -52,6 +106,10 @@ export async function GET(request: Request) {
         data: { status: "FAILED", errorMsg: msg },
       });
       results.push({ id: post.id, status: "failed", error: msg });
+    } finally {
+      if (rehostPath) {
+        await storageAdmin().storage.from("library-videos").remove([rehostPath]).catch(() => null);
+      }
     }
   }
 

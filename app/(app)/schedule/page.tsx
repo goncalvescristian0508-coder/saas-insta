@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   CalendarClock, Plus, Trash2, Clock, CheckCircle,
-  XCircle, Loader2, Calendar, Share2, AlertCircle
+  XCircle, Loader2, Calendar, Share2, AlertCircle, Copy
 } from "lucide-react";
 
 interface Account {
@@ -49,6 +49,197 @@ function formatDateTime(iso: string) {
   });
 }
 
+function PostCard({ s, deletingId, onDelete }: { s: ScheduledPost; deletingId: string | null; onDelete: (id: string) => void }) {
+  const cfg = statusConfig[s.status];
+  return (
+    <div className="glass-panel" style={{ padding: "1.1rem 1.25rem", borderRadius: "12px", display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+      <div style={{ width: "56px", height: "56px", borderRadius: "8px", background: "#0a0c14", overflow: "hidden", flexShrink: 0 }}>
+        {s.video?.publicUrl
+          ? <video src={s.video.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
+          : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Copy size={18} color="var(--text-muted)" /></div>}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.2rem" }}>
+              <Share2 size={13} color="var(--accent-gold)" />
+              <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>@{s.account.username}</span>
+            </div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.video?.originalName ?? "Reel clonado"}</p>
+          </div>
+          <span style={{ padding: "3px 8px", borderRadius: "6px", fontSize: "0.72rem", fontWeight: 600, color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`, flexShrink: 0 }}>
+            {cfg.label}
+          </span>
+        </div>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.45rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.caption}</p>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.6rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+            <Clock size={12} color="var(--text-muted)" />
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+              {s.status === "DONE" && s.postedAt ? `Postado em ${formatDateTime(s.postedAt)}` : formatDateTime(s.scheduledAt)}
+            </span>
+          </div>
+          {s.status === "PENDING" && (
+            <button onClick={() => onDelete(s.id)} disabled={deletingId === s.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", borderRadius: "6px", background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)", color: "#f87171", fontSize: "0.72rem", cursor: "pointer" }}>
+              {deletingId === s.id ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={11} />}
+              Cancelar
+            </button>
+          )}
+        </div>
+        {s.status === "FAILED" && s.errorMsg && (
+          <div style={{ marginTop: "0.5rem", padding: "0.4rem 0.6rem", background: "rgba(239,68,68,0.07)", borderRadius: "6px", fontSize: "0.72rem", color: "#f87171" }}>{s.errorMsg}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+function CalendarView({
+  schedules, calMonth, setCalMonth, calSelected, setCalSelected, deletingId, onDelete,
+}: {
+  schedules: ScheduledPost[];
+  calMonth: { year: number; month: number };
+  setCalMonth: React.Dispatch<React.SetStateAction<{ year: number; month: number }>>;
+  calSelected: string | null;
+  setCalSelected: React.Dispatch<React.SetStateAction<string | null>>;
+  deletingId: string | null;
+  onDelete: (id: string) => void;
+}) {
+  const { year, month } = calMonth;
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Build a map: "YYYY-MM-DD" -> { pending, done, failed }
+  const dayMap: Record<string, { pending: boolean; done: boolean; failed: boolean }> = {};
+  schedules.forEach((s) => {
+    const d = new Date(s.scheduledAt);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    if (!dayMap[key]) dayMap[key] = { pending: false, done: false, failed: false };
+    if (s.status === "PENDING" || s.status === "RUNNING") dayMap[key].pending = true;
+    if (s.status === "DONE") dayMap[key].done = true;
+    if (s.status === "FAILED") dayMap[key].failed = true;
+  });
+
+  // Build grid cells (nulls = empty leading cells)
+  const cells: (number | null)[] = [...Array(firstDay).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  // Pad to full weeks
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+  const selectedPosts = calSelected
+    ? schedules.filter((s) => {
+        const d = new Date(s.scheduledAt);
+        const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        return key === calSelected;
+      })
+    : [];
+
+  const goMonth = (delta: number) => {
+    setCalSelected(null);
+    setCalMonth(({ year: y, month: m }) => {
+      let nm = m + delta;
+      let ny = y;
+      if (nm < 0) { nm = 11; ny--; }
+      if (nm > 11) { nm = 0; ny++; }
+      return { year: ny, month: nm };
+    });
+  };
+
+  return (
+    <div>
+      {/* Month navigation */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+        <button onClick={() => goMonth(-1)} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "var(--text-secondary)", borderRadius: "8px", width: "32px", height: "32px", cursor: "pointer", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+        <span style={{ fontWeight: 700, fontSize: "0.95rem" }}>{MONTHS[month]} {year}</span>
+        <button onClick={() => goMonth(1)} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "var(--text-secondary)", borderRadius: "8px", width: "32px", height: "32px", cursor: "pointer", fontSize: "1rem", display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+      </div>
+
+      {/* Calendar grid */}
+      <div style={{ background: "rgba(12,16,24,0.5)", borderRadius: "14px", border: "1px solid var(--border-color)", overflow: "hidden" }}>
+        {/* Weekday headers */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: "1px solid var(--border-color)" }}>
+          {WEEKDAYS.map((w) => (
+            <div key={w} style={{ padding: "0.5rem 0", textAlign: "center", fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", letterSpacing: "0.05em" }}>{w}</div>
+          ))}
+        </div>
+
+        {/* Days grid */}
+        {Array.from({ length: cells.length / 7 }, (_, row) => (
+          <div key={row} style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: row < cells.length / 7 - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+            {cells.slice(row * 7, row * 7 + 7).map((day, col) => {
+              if (!day) return <div key={col} style={{ minHeight: "52px" }} />;
+              const key = `${year}-${String(month + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              const info = dayMap[key];
+              const isToday = key === todayKey;
+              const isSelected = key === calSelected;
+              return (
+                <div
+                  key={col}
+                  onClick={() => setCalSelected(isSelected ? null : key)}
+                  style={{
+                    minHeight: "52px", padding: "0.4rem 0.5rem", cursor: info ? "pointer" : "default",
+                    background: isSelected ? "rgba(201,162,39,0.1)" : "transparent",
+                    borderLeft: col > 0 ? "1px solid rgba(255,255,255,0.04)" : "none",
+                    transition: "background 0.15s",
+                    position: "relative",
+                  }}
+                  onMouseEnter={(e) => { if (info && !isSelected) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+                  onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                >
+                  <span style={{
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    width: "24px", height: "24px", borderRadius: "50%", fontSize: "0.78rem", fontWeight: isToday ? 700 : 400,
+                    color: isToday ? "#000" : isSelected ? "var(--accent-gold)" : "var(--text-secondary)",
+                    background: isToday ? "var(--accent-gold)" : "transparent",
+                  }}>{day}</span>
+                  {info && (
+                    <div style={{ display: "flex", gap: "3px", marginTop: "4px", flexWrap: "wrap" }}>
+                      {info.pending && <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#c9a227", display: "inline-block" }} />}
+                      {info.done && <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#4ade80", display: "inline-block" }} />}
+                      {info.failed && <span style={{ width: "7px", height: "7px", borderRadius: "50%", background: "#f87171", display: "inline-block" }} />}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+
+      {/* Legend */}
+      <div style={{ display: "flex", gap: "1rem", marginTop: "0.6rem", justifyContent: "flex-end" }}>
+        {[{ color: "#c9a227", label: "Pendente" }, { color: "#4ade80", label: "Publicado" }, { color: "#f87171", label: "Falhou" }].map(({ color, label }) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: "5px", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: color, display: "inline-block" }} />
+            {label}
+          </div>
+        ))}
+      </div>
+
+      {/* Posts for selected day */}
+      {calSelected && (
+        <div style={{ marginTop: "1rem" }}>
+          <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.6rem" }}>
+            {selectedPosts.length} post(s) em {calSelected.split("-").reverse().join("/")}
+          </p>
+          {selectedPosts.length === 0 ? (
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", textAlign: "center", padding: "1rem" }}>Nenhum post neste dia</p>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+              {selectedPosts.map((s) => <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={onDelete} />)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SchedulePage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [videos, setVideos] = useState<Video[]>([]);
@@ -56,10 +247,24 @@ export default function SchedulePage() {
   const [loadingPage, setLoadingPage] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
+  const [confirmClear, setConfirmClear] = useState<null | "pending" | "done" | "failed" | "all">(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [calSelected, setCalSelected] = useState<string | null>(null);
 
   const [selectedAccounts, setSelectedAccounts] = useState<Record<string, boolean>>({});
-  const [form, setForm] = useState({ videoId: "", caption: "", date: "", time: "" });
+
+  function getDefaultDateTime() {
+    const d = new Date(Date.now() + 10 * 60 * 1000);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    return { date, time };
+  }
+
+  const [form, setForm] = useState({ videoId: "", caption: "", ...getDefaultDateTime() });
 
   const showToast = (type: "success" | "error", msg: string) => {
     setToast({ type, msg });
@@ -115,13 +320,31 @@ export default function SchedulePage() {
       const data = await res.json();
       const count = Array.isArray(data.schedules) ? data.schedules.length : 1;
       showToast("success", `${count} post(s) agendado(s) com sucesso!`);
-      setForm({ videoId: "", caption: "", date: "", time: "" });
+      setForm({ videoId: "", caption: "", ...getDefaultDateTime() });
       await loadData();
     } else {
       const data = await res.json();
       showToast("error", data.error ?? "Erro ao agendar");
     }
     setSubmitting(false);
+  }
+
+  async function clearSchedules(filter: "pending" | "done" | "failed" | "all") {
+    setClearing(true);
+    setConfirmClear(null);
+    const res = await fetch("/api/schedule", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filter }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      showToast("success", `${data.deleted} agendamento(s) removido(s)`);
+      await loadData();
+    } else {
+      showToast("error", "Erro ao limpar agendamentos");
+    }
+    setClearing(false);
   }
 
   async function deleteSchedule(id: string) {
@@ -158,6 +381,28 @@ export default function SchedulePage() {
         }}>
           {toast.type === "success" ? <CheckCircle size={16} color="#4ade80" /> : <XCircle size={16} color="#f87171" />}
           <span style={{ fontSize: "0.875rem", color: toast.type === "success" ? "#4ade80" : "#f87171" }}>{toast.msg}</span>
+        </div>
+      )}
+
+      {/* Confirm clear modal */}
+      {confirmClear && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="glass-panel" style={{ padding: "2rem", borderRadius: "16px", maxWidth: "400px", width: "90%", textAlign: "center" }}>
+            <Trash2 size={32} color="#f87171" style={{ margin: "0 auto 1rem" }} />
+            <h3 style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Confirmar limpeza</h3>
+            <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", marginBottom: "1.5rem" }}>
+              {confirmClear === "all" && "Isso vai remover TODOS os agendamentos (pendentes, publicados e falhos)."}
+              {confirmClear === "pending" && "Isso vai remover todos os agendamentos pendentes."}
+              {confirmClear === "done" && "Isso vai remover todos os posts já publicados."}
+              {confirmClear === "failed" && "Isso vai remover todos os agendamentos que falharam."}
+            </p>
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "center" }}>
+              <button onClick={() => setConfirmClear(null)} style={{ padding: "0.6rem 1.25rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.875rem" }}>Cancelar</button>
+              <button onClick={() => void clearSchedules(confirmClear)} disabled={clearing} style={{ padding: "0.6rem 1.25rem", borderRadius: "8px", border: "none", background: "rgba(239,68,68,0.15)", color: "#f87171", cursor: "pointer", fontSize: "0.875rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                {clearing ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={14} />} Confirmar
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -281,58 +526,62 @@ export default function SchedulePage() {
           )}
         </div>
 
-        {/* Schedule List */}
+        {/* Schedule List / Calendar */}
         <div>
-          <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "1rem" }}>Posts Agendados</h2>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+              <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-secondary)" }}>Posts Agendados</h2>
+              <div style={{ display: "flex", borderRadius: "8px", overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+                {(["list", "calendar"] as const).map((m) => (
+                  <button key={m} onClick={() => setViewMode(m)} style={{ padding: "0.3rem 0.75rem", background: viewMode === m ? "rgba(201,162,39,0.15)" : "transparent", border: "none", color: viewMode === m ? "var(--accent-gold)" : "var(--text-muted)", fontSize: "0.75rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s" }}>
+                    {m === "list" ? "Lista" : "Calendário"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {schedules.length > 0 && (
+              <div style={{ display: "flex", gap: "0.4rem" }}>
+                {schedules.some(s => s.status === "PENDING") && (
+                  <button onClick={() => setConfirmClear("pending")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(201,162,39,0.2)", background: "rgba(201,162,39,0.06)", color: "var(--accent-gold)", fontSize: "0.75rem", cursor: "pointer" }}>
+                    <Trash2 size={11} /> Limpar pendentes
+                  </button>
+                )}
+                {schedules.some(s => s.status === "DONE") && (
+                  <button onClick={() => setConfirmClear("done")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(74,222,128,0.2)", background: "rgba(74,222,128,0.05)", color: "#4ade80", fontSize: "0.75rem", cursor: "pointer" }}>
+                    <Trash2 size={11} /> Limpar publicados
+                  </button>
+                )}
+                {schedules.some(s => s.status === "FAILED") && (
+                  <button onClick={() => setConfirmClear("failed")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.06)", color: "#f87171", fontSize: "0.75rem", cursor: "pointer" }}>
+                    <Trash2 size={11} /> Limpar falhos
+                  </button>
+                )}
+                <button onClick={() => setConfirmClear("all")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.08)", color: "#f87171", fontSize: "0.75rem", cursor: "pointer", fontWeight: 600 }}>
+                  <Trash2 size={11} /> Limpar tudo
+                </button>
+              </div>
+            )}
+          </div>
           {schedules.length === 0 ? (
             <div style={{ textAlign: "center", padding: "3rem", background: "rgba(12,16,24,0.5)", borderRadius: "14px", border: "1px solid var(--border-color)" }}>
               <Calendar size={36} color="var(--text-muted)" style={{ margin: "0 auto 0.85rem" }} />
               <p style={{ color: "var(--text-secondary)", fontSize: "0.9rem" }}>Nenhum post agendado ainda</p>
             </div>
+          ) : viewMode === "calendar" ? (
+            <CalendarView
+              schedules={schedules}
+              calMonth={calMonth}
+              setCalMonth={setCalMonth}
+              calSelected={calSelected}
+              setCalSelected={setCalSelected}
+              deletingId={deletingId}
+              onDelete={(id) => void deleteSchedule(id)}
+            />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-              {schedules.map((s) => {
-                const cfg = statusConfig[s.status];
-                return (
-                  <div key={s.id} className="glass-panel" style={{ padding: "1.1rem 1.25rem", borderRadius: "12px", display: "flex", gap: "1rem", alignItems: "flex-start" }}>
-                    <div style={{ width: "56px", height: "56px", borderRadius: "8px", background: "#0a0c14", overflow: "hidden", flexShrink: 0 }}>
-                      <video src={s.video.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
-                        <div style={{ minWidth: 0 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.2rem" }}>
-                            <Share2 size={13} color="var(--accent-gold)" />
-                            <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>@{s.account.username}</span>
-                          </div>
-                          <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.video.originalName}</p>
-                        </div>
-                        <span style={{ padding: "3px 8px", borderRadius: "6px", fontSize: "0.72rem", fontWeight: 600, color: cfg.color, background: cfg.bg, border: `1px solid ${cfg.border}`, flexShrink: 0 }}>
-                          {cfg.label}
-                        </span>
-                      </div>
-                      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.45rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{s.caption}</p>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "0.6rem" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                          <Clock size={12} color="var(--text-muted)" />
-                          <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
-                            {s.status === "DONE" && s.postedAt ? `Postado em ${formatDateTime(s.postedAt)}` : formatDateTime(s.scheduledAt)}
-                          </span>
-                        </div>
-                        {s.status === "PENDING" && (
-                          <button onClick={() => void deleteSchedule(s.id)} disabled={deletingId === s.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", borderRadius: "6px", background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)", color: "#f87171", fontSize: "0.72rem", cursor: "pointer" }}>
-                            {deletingId === s.id ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={11} />}
-                            Cancelar
-                          </button>
-                        )}
-                      </div>
-                      {s.status === "FAILED" && s.errorMsg && (
-                        <div style={{ marginTop: "0.5rem", padding: "0.4rem 0.6rem", background: "rgba(239,68,68,0.07)", borderRadius: "6px", fontSize: "0.72rem", color: "#f87171" }}>{s.errorMsg}</div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+              {schedules.map((s) => (
+                <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={(id) => void deleteSchedule(id)} />
+              ))}
             </div>
           )}
         </div>

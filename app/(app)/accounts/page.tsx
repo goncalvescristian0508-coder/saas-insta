@@ -1,6 +1,6 @@
 "use client";
 
-import { Camera, Plus, Wifi, Trash2, AlertTriangle, Loader2, Lock, User, CheckCircle } from "lucide-react";
+import { Camera, Plus, Wifi, Trash2, AlertTriangle, Loader2, Lock, User, CheckCircle, Link, Copy } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -35,6 +35,8 @@ function AccountsPageInner() {
 
   // OAuth
   const [isConnecting, setIsConnecting] = useState(false);
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const searchParams = useSearchParams();
 
   const loadAccounts = async () => {
@@ -60,10 +62,10 @@ function AccountsPageInner() {
     if (errorParam) {
       const msgs: Record<string, string> = {
         auth_denied: "Autorização negada pelo usuário.",
-        token_failed: "Falha ao obter token.",
         oauth_config: "Configure META_APP_ID e META_REDIRECT_URI no .env.local.",
       };
-      setError(msgs[errorParam] || "Erro OAuth: " + errorParam);
+      const detail = searchParams.get("detail");
+      setError(msgs[errorParam] || `Erro OAuth: ${errorParam}${detail ? ` — ${detail}` : ""}`);
     }
     if (success || errorParam) window.history.replaceState({}, "", "/accounts");
   }, [searchParams]);
@@ -108,6 +110,21 @@ function AccountsPageInner() {
     }
   };
 
+  const handleGenerateLink = async () => {
+    setGeneratingLink(true);
+    try {
+      const res = await fetch("/api/connect/generate", { method: "POST" });
+      const data = await res.json();
+      if (res.ok && data.url) {
+        await navigator.clipboard.writeText(data.url);
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 3000);
+      }
+    } finally {
+      setGeneratingLink(false);
+    }
+  };
+
   const privateAccounts = accounts.filter((a) => a.source === "private");
   const oauthAccounts = accounts.filter((a) => a.source === "oauth");
 
@@ -139,152 +156,7 @@ function AccountsPageInner() {
         </div>
       )}
 
-      {/* Private account section */}
-      <div style={{ marginBottom: "2.5rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1.25rem" }}>
-          <Lock size={14} color="var(--accent-gold)" />
-          <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--accent-gold)", letterSpacing: "0.05em", textTransform: "uppercase" }}>
-            Conectar conta ({privateAccounts.length})
-          </span>
-        </div>
-
-        <div className="glass-panel" style={{ padding: "1.5rem", borderRadius: "14px", marginBottom: "1rem" }}>
-          <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
-            Conecte qualquer conta do Instagram com usuário e senha. Funciona sem aprovação da Meta.
-          </p>
-
-          {privSuccess && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: "0.5rem",
-              padding: "0.75rem 1rem", borderRadius: "8px",
-              background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)",
-              marginBottom: "1rem", color: "#4ade80", fontSize: "0.875rem",
-            }}>
-              <CheckCircle size={15} />
-              {privSuccess}
-            </div>
-          )}
-
-          {privError && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: "0.5rem",
-              padding: "0.75rem 1rem", borderRadius: "8px",
-              background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)",
-              marginBottom: "1rem", color: "#f87171", fontSize: "0.875rem",
-            }}>
-              <AlertTriangle size={15} />
-              {privError}
-            </div>
-          )}
-
-          <form onSubmit={(e) => void handleAddPrivate(e)} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Usuário Instagram
-                </label>
-                <div style={{ position: "relative" }}>
-                  <User size={15} color="var(--text-muted)" style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)" }} />
-                  <input
-                    type="text"
-                    value={privUsername}
-                    onChange={(e) => setPrivUsername(e.target.value)}
-                    required
-                    placeholder="@usuario"
-                    disabled={privLoading}
-                    style={{
-                      width: "100%", padding: "0.7rem 0.75rem 0.7rem 2.25rem",
-                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(201,162,39,0.15)",
-                      borderRadius: "8px", color: "#fff", fontSize: "0.875rem", outline: "none",
-                    }}
-                    onFocus={(e) => e.target.style.borderColor = "rgba(201,162,39,0.45)"}
-                    onBlur={(e) => e.target.style.borderColor = "rgba(201,162,39,0.15)"}
-                  />
-                </div>
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "0.75rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Senha
-                </label>
-                <div style={{ position: "relative" }}>
-                  <Lock size={15} color="var(--text-muted)" style={{ position: "absolute", left: "0.75rem", top: "50%", transform: "translateY(-50%)" }} />
-                  <input
-                    type="password"
-                    value={privPassword}
-                    onChange={(e) => setPrivPassword(e.target.value)}
-                    required
-                    placeholder="••••••••"
-                    disabled={privLoading}
-                    style={{
-                      width: "100%", padding: "0.7rem 0.75rem 0.7rem 2.25rem",
-                      background: "rgba(255,255,255,0.04)", border: "1px solid rgba(201,162,39,0.15)",
-                      borderRadius: "8px", color: "#fff", fontSize: "0.875rem", outline: "none",
-                    }}
-                    onFocus={(e) => e.target.style.borderColor = "rgba(201,162,39,0.45)"}
-                    onBlur={(e) => e.target.style.borderColor = "rgba(201,162,39,0.15)"}
-                  />
-                </div>
-              </div>
-            </div>
-            <button
-              type="submit"
-              disabled={privLoading}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
-                padding: "0.75rem", borderRadius: "8px",
-                background: privLoading ? "rgba(201,162,39,0.3)" : "linear-gradient(135deg, #c9a227, #a8851f)",
-                border: "none", color: privLoading ? "rgba(255,255,255,0.5)" : "#0a0c12",
-                fontSize: "0.875rem", fontWeight: 700, cursor: privLoading ? "not-allowed" : "pointer",
-              }}
-            >
-              {privLoading ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Conectando…</> : <><Plus size={15} /> Conectar conta</>}
-            </button>
-          </form>
-        </div>
-
-        {loading ? (
-          <p style={{ color: "var(--text-secondary)" }}>Carregando…</p>
-        ) : privateAccounts.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-            {privateAccounts.map((account) => (
-              <div key={account.id} className="glass-panel" style={{ padding: "1rem 1.25rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                  <div style={{
-                    width: "40px", height: "40px", borderRadius: "50%",
-                    background: "linear-gradient(135deg, #833ab4, #fd1d1d, #fcb045)",
-                    display: "flex", justifyContent: "center", alignItems: "center",
-                    fontSize: "0.9rem", fontWeight: 600, color: "#fff",
-                  }}>
-                    {account.username.charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <p style={{ fontWeight: 600 }}>@{account.username}</p>
-                    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.1rem" }}>
-                      {account.lastError ? (
-                        <span style={{ fontSize: "0.75rem", color: "#f87171" }}>{account.lastError}</span>
-                      ) : (
-                        <>
-                          <Wifi size={12} color="#22c55e" />
-                          <span style={{ fontSize: "0.75rem", color: "#22c55e" }}>Conectada</span>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void handleRemove(account.id, "private")}
-                  style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "0.5rem", borderRadius: "8px", transition: "all 0.2s" }}
-                  onMouseEnter={(e) => { e.currentTarget.style.color = "#ef4444"; e.currentTarget.style.backgroundColor = "rgba(239,68,68,0.1)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; e.currentTarget.style.backgroundColor = "transparent"; }}
-                >
-                  <Trash2 size={17} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {/* Private account section — hidden (not functional) */}
 
       {/* OAuth section */}
       <div>
@@ -329,23 +201,49 @@ function AccountsPageInner() {
           </div>
         )}
 
-        <div
-          role="button"
-          tabIndex={0}
-          onClick={!isConnecting ? () => { setIsConnecting(true); window.location.assign("/api/auth/instagram"); } : undefined}
-          onKeyDown={(e) => { if (!isConnecting && (e.key === "Enter" || e.key === " ")) { setIsConnecting(true); window.location.assign("/api/auth/instagram"); } }}
-          style={{
-            textAlign: "center", padding: "2rem", borderRadius: "16px",
-            border: "1px dashed var(--border-color)", cursor: isConnecting ? "default" : "pointer",
-            transition: "all 0.3s", opacity: isConnecting ? 0.7 : 1,
-          }}
-          onMouseEnter={(e) => { if (!isConnecting) { e.currentTarget.style.borderColor = "var(--border-highlight)"; e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.02)"; } }}
-          onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-color)"; e.currentTarget.style.backgroundColor = "transparent"; }}
-        >
-          {isConnecting
-            ? <><Loader2 size={22} color="var(--text-secondary)" style={{ margin: "0 auto 0.5rem", animation: "spin 1s linear infinite" }} /><p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>Redirecionando…</p></>
-            : <><Plus size={22} color="var(--text-secondary)" style={{ margin: "0 auto 0.5rem" }} /><p style={{ fontWeight: 500, marginBottom: "0.25rem" }}>Conectar via OAuth</p><p style={{ color: "var(--text-secondary)", fontSize: "0.8rem" }}>Requer aprovação da Meta (em análise)</p></>
-          }
+        <div style={{ display: "flex", gap: "0.75rem" }}>
+          {/* Conectar direto no navegador atual */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={!isConnecting ? () => { setIsConnecting(true); window.location.assign("/api/auth/instagram"); } : undefined}
+            onKeyDown={(e) => { if (!isConnecting && (e.key === "Enter" || e.key === " ")) { setIsConnecting(true); window.location.assign("/api/auth/instagram"); } }}
+            style={{
+              flex: 1, textAlign: "center", padding: "1.5rem 1rem", borderRadius: "16px",
+              border: "1px dashed var(--border-color)", cursor: isConnecting ? "default" : "pointer",
+              transition: "all 0.3s", opacity: isConnecting ? 0.7 : 1,
+            }}
+            onMouseEnter={(e) => { if (!isConnecting) { e.currentTarget.style.borderColor = "var(--border-highlight)"; e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.02)"; } }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "var(--border-color)"; e.currentTarget.style.backgroundColor = "transparent"; }}
+          >
+            {isConnecting
+              ? <><Loader2 size={20} color="var(--text-secondary)" style={{ margin: "0 auto 0.4rem", animation: "spin 1s linear infinite" }} /><p style={{ color: "var(--text-secondary)", fontSize: "0.82rem" }}>Redirecionando…</p></>
+              : <><Plus size={20} color="var(--text-secondary)" style={{ margin: "0 auto 0.4rem" }} /><p style={{ fontWeight: 600, marginBottom: "0.2rem", fontSize: "0.9rem" }}>Conectar aqui</p><p style={{ color: "var(--text-secondary)", fontSize: "0.76rem" }}>Neste navegador</p></>
+            }
+          </div>
+
+          {/* Gerar link compartilhável */}
+          <div
+            role="button"
+            tabIndex={0}
+            onClick={!generatingLink ? () => void handleGenerateLink() : undefined}
+            onKeyDown={(e) => { if (!generatingLink && (e.key === "Enter" || e.key === " ")) void handleGenerateLink(); }}
+            style={{
+              flex: 1, textAlign: "center", padding: "1.5rem 1rem", borderRadius: "16px",
+              border: `1px dashed ${copiedLink ? "rgba(74,222,128,0.4)" : "rgba(96,165,250,0.3)"}`,
+              cursor: generatingLink ? "default" : "pointer", transition: "all 0.3s",
+              background: copiedLink ? "rgba(74,222,128,0.05)" : "transparent",
+            }}
+            onMouseEnter={(e) => { if (!generatingLink) e.currentTarget.style.backgroundColor = "rgba(96,165,250,0.04)"; }}
+            onMouseLeave={(e) => { if (!copiedLink) e.currentTarget.style.backgroundColor = "transparent"; }}
+          >
+            {generatingLink
+              ? <><Loader2 size={20} color="#60a5fa" style={{ margin: "0 auto 0.4rem", animation: "spin 1s linear infinite" }} /><p style={{ color: "#60a5fa", fontSize: "0.82rem" }}>Gerando…</p></>
+              : copiedLink
+              ? <><CheckCircle size={20} color="#4ade80" style={{ margin: "0 auto 0.4rem" }} /><p style={{ fontWeight: 600, marginBottom: "0.2rem", fontSize: "0.9rem", color: "#4ade80" }}>Link copiado!</p><p style={{ color: "var(--text-secondary)", fontSize: "0.76rem" }}>Válido por 24h</p></>
+              : <><Link size={20} color="#60a5fa" style={{ margin: "0 auto 0.4rem" }} /><p style={{ fontWeight: 600, marginBottom: "0.2rem", fontSize: "0.9rem" }}>Copiar link</p><p style={{ color: "var(--text-secondary)", fontSize: "0.76rem" }}>Abrir em outro dispositivo</p></>
+            }
+          </div>
         </div>
       </div>
 

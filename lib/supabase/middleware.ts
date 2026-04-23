@@ -35,7 +35,8 @@ export async function updateSession(request: NextRequest) {
 
   const isApiAuthCallback =
     request.nextUrl.pathname.startsWith("/api/auth/callback") ||
-    request.nextUrl.pathname.startsWith("/api/auth/instagram");
+    request.nextUrl.pathname.startsWith("/api/auth/instagram") ||
+    request.nextUrl.pathname.startsWith("/connect/");
 
   if (!user && !isAuthPage && !isApiAuthCallback) {
     const url = request.nextUrl.clone();
