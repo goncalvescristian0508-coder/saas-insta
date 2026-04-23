@@ -38,28 +38,15 @@ export async function GET(request: Request) {
 
   const now = new Date();
 
-  // Reset posts that failed due to transient errors so they're retried
-  const transientPatterns = [
-    "Application request limit",
-    "unexpected error",
-    "Please retry",
-    "service unavailable",
-    "temporarily",
-    "try again",
-    "rate limit",
-    "ETIMEDOUT",
-    "ECONNRESET",
-  ];
-  for (const pattern of transientPatterns) {
-    await prisma.scheduledPost.updateMany({
-      where: {
-        status: "FAILED",
-        errorMsg: { contains: pattern, mode: "insensitive" },
-        scheduledAt: { lte: now },
-      },
-      data: { status: "PENDING", errorMsg: null },
-    });
-  }
+  // Reset ALL failed posts to PENDING so they're retried automatically on next run
+  // Permanent failures (bad video, disconnected account) will keep failing and can be manually deleted
+  await prisma.scheduledPost.updateMany({
+    where: {
+      status: "FAILED",
+      scheduledAt: { lte: now },
+    },
+    data: { status: "PENDING", errorMsg: null },
+  });
 
   // Process up to 5 posts per cron run
   const pending = await prisma.scheduledPost.findMany({
