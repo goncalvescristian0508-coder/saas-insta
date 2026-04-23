@@ -5,7 +5,7 @@ import { getMetaOAuthConfig } from "@/lib/metaInstagramEnv";
  * Inicia o Instagram Login em api.instagram.com (não graph.facebook.com).
  */
 export async function GET() {
-  const appId = "1469118798006060";
+  const appId = "1990801641474298";
   const redirectUri = "https://saas-insta.vercel.app/api/instagram/oauth/callback";
   const base = "https://saas-insta.vercel.app";
 

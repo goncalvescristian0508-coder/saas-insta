@@ -19,7 +19,7 @@ export async function exchangeCodeForShortLivedToken(
   code: string,
 ): Promise<{ access_token: string; user_id: string }> {
   const { appSecret } = getMetaOAuthConfig();
-  const appId = "1469118798006060";
+  const appId = "1990801641474298";
   const redirectUri = "https://saas-insta.vercel.app/api/instagram/oauth/callback";
   if (!appSecret) {
     throw new Error("META_APP_SECRET ausente.");
