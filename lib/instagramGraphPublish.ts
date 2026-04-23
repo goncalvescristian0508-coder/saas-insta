@@ -32,6 +32,8 @@ export async function exchangeCodeForShortLivedToken(
   body.append("redirect_uri", redirectUri);
   body.append("code", code);
 
+  console.log("TOKEN EXCHANGE →", { appId, redirectUri, codeLength: code?.length, secretPrefix: appSecret?.slice(0, 6) });
+
   const res = await fetch("https://api.instagram.com/oauth/access_token", {
     method: "POST",
     headers: {
