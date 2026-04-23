@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   CalendarClock, Plus, Trash2, Clock, CheckCircle,
-  XCircle, Loader2, Calendar, Share2, AlertCircle, Copy
+  XCircle, Loader2, Calendar, Share2, AlertCircle, Copy, RefreshCw
 } from "lucide-react";
 
 interface Account {
@@ -49,7 +49,13 @@ function formatDateTime(iso: string) {
   });
 }
 
-function PostCard({ s, deletingId, onDelete }: { s: ScheduledPost; deletingId: string | null; onDelete: (id: string) => void }) {
+function PostCard({ s, deletingId, onDelete, onRetry, retryingId }: {
+  s: ScheduledPost;
+  deletingId: string | null;
+  onDelete: (id: string) => void;
+  onRetry?: (id: string) => void;
+  retryingId?: string | null;
+}) {
   const cfg = statusConfig[s.status];
   return (
     <div className="glass-panel" style={{ padding: "1.1rem 1.25rem", borderRadius: "12px", display: "flex", gap: "1rem", alignItems: "flex-start" }}>
@@ -79,12 +85,20 @@ function PostCard({ s, deletingId, onDelete }: { s: ScheduledPost; deletingId: s
               {s.status === "DONE" && s.postedAt ? `Postado em ${formatDateTime(s.postedAt)}` : formatDateTime(s.scheduledAt)}
             </span>
           </div>
-          {s.status === "PENDING" && (
-            <button onClick={() => onDelete(s.id)} disabled={deletingId === s.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", borderRadius: "6px", background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)", color: "#f87171", fontSize: "0.72rem", cursor: "pointer" }}>
-              {deletingId === s.id ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={11} />}
-              Cancelar
-            </button>
-          )}
+          <div style={{ display: "flex", gap: "0.4rem" }}>
+            {s.status === "FAILED" && onRetry && (
+              <button onClick={() => onRetry(s.id)} disabled={retryingId === s.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", borderRadius: "6px", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.2)", color: "#60a5fa", fontSize: "0.72rem", cursor: "pointer" }}>
+                {retryingId === s.id ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={11} />}
+                Tentar novamente
+              </button>
+            )}
+            {s.status === "PENDING" && (
+              <button onClick={() => onDelete(s.id)} disabled={deletingId === s.id} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "3px 8px", borderRadius: "6px", background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.15)", color: "#f87171", fontSize: "0.72rem", cursor: "pointer" }}>
+                {deletingId === s.id ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={11} />}
+                Cancelar
+              </button>
+            )}
+          </div>
         </div>
         {s.status === "FAILED" && s.errorMsg && (
           <div style={{ marginTop: "0.5rem", padding: "0.4rem 0.6rem", background: "rgba(239,68,68,0.07)", borderRadius: "6px", fontSize: "0.72rem", color: "#f87171" }}>{s.errorMsg}</div>
@@ -98,7 +112,7 @@ const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const MONTHS = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
 function CalendarView({
-  schedules, calMonth, setCalMonth, calSelected, setCalSelected, deletingId, onDelete,
+  schedules, calMonth, setCalMonth, calSelected, setCalSelected, deletingId, onDelete, onRetry, retryingId,
 }: {
   schedules: ScheduledPost[];
   calMonth: { year: number; month: number };
@@ -107,6 +121,8 @@ function CalendarView({
   setCalSelected: React.Dispatch<React.SetStateAction<string | null>>;
   deletingId: string | null;
   onDelete: (id: string) => void;
+  onRetry?: (id: string) => void;
+  retryingId?: string | null;
 }) {
   const { year, month } = calMonth;
   const firstDay = new Date(year, month, 1).getDay();
@@ -231,7 +247,7 @@ function CalendarView({
             <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", textAlign: "center", padding: "1rem" }}>Nenhum post neste dia</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
-              {selectedPosts.map((s) => <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={onDelete} />)}
+              {selectedPosts.map((s) => <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={onDelete} onRetry={onRetry} retryingId={retryingId} />)}
             </div>
           )}
         </div>
@@ -247,6 +263,7 @@ export default function SchedulePage() {
   const [loadingPage, setLoadingPage] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
   const [confirmClear, setConfirmClear] = useState<null | "pending" | "done" | "failed" | "all">(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
@@ -345,6 +362,18 @@ export default function SchedulePage() {
       showToast("error", "Erro ao limpar agendamentos");
     }
     setClearing(false);
+  }
+
+  async function handleRetry(id: string) {
+    setRetryingId(id);
+    const res = await fetch(`/api/schedule/${id}`, { method: "POST" });
+    if (res.ok) {
+      setSchedules((s) => s.map((p) => p.id === id ? { ...p, status: "PENDING", errorMsg: null } : p));
+      showToast("success", "Post reenfileirado para retry");
+    } else {
+      showToast("error", "Erro ao retentar post");
+    }
+    setRetryingId(null);
   }
 
   async function deleteSchedule(id: string) {
@@ -576,11 +605,13 @@ export default function SchedulePage() {
               setCalSelected={setCalSelected}
               deletingId={deletingId}
               onDelete={(id) => void deleteSchedule(id)}
+              onRetry={(id) => void handleRetry(id)}
+              retryingId={retryingId}
             />
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
               {schedules.map((s) => (
-                <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={(id) => void deleteSchedule(id)} />
+                <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={(id) => void deleteSchedule(id)} onRetry={(id) => void handleRetry(id)} retryingId={retryingId} />
               ))}
             </div>
           )}

@@ -4,6 +4,27 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
+export async function POST(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const schedule = await prisma.scheduledPost.findFirst({
+    where: { id, userId: user.id, status: "FAILED" },
+  });
+  if (!schedule) return NextResponse.json({ error: "Post não encontrado ou não está com falha" }, { status: 404 });
+
+  await prisma.scheduledPost.update({
+    where: { id },
+    data: { status: "PENDING", errorMsg: null },
+  });
+  return NextResponse.json({ success: true });
+}
+
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
