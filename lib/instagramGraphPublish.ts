@@ -109,23 +109,32 @@ export async function fetchInstagramProfile(accessToken: string, userId?: string
   username: string;
   profile_picture_url?: string;
 }> {
-  const node = userId || "me";
-  const u = new URL(`${GRAPH}/${node}`);
-  u.searchParams.set("fields", "id,username,profile_picture_url");
-  u.searchParams.set("access_token", accessToken);
-
-  const res = await fetch(u.toString());
-  const data = (await res.json()) as Record<string, unknown>;
-  if (!res.ok) {
-    const err = data.error as { message?: string } | undefined;
-    throw new Error(err?.message || JSON.stringify(data));
+  async function tryNode(node: string) {
+    const u = new URL(`${GRAPH}/${node}`);
+    u.searchParams.set("fields", "id,username,profile_picture_url");
+    u.searchParams.set("access_token", accessToken);
+    const res = await fetch(u.toString());
+    const data = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = data.error as { message?: string; code?: number } | undefined;
+      throw new Error(err?.message || JSON.stringify(data));
+    }
+    return { id: String(data.id ?? ""), username: String(data.username ?? ""), profile_picture_url: data.profile_picture_url as string | undefined };
   }
 
-  return {
-    id: String(data.id ?? ""),
-    username: String(data.username ?? ""),
-    profile_picture_url: data.profile_picture_url as string | undefined,
-  };
+  // Try user_id first; if it fails (e.g. Facebook ID instead of IG ID), fall back to /me
+  if (userId) {
+    try {
+      return await tryNode(userId);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "";
+      const isIdError = msg.includes("does not exist") || msg.includes("missing permissions") || msg.includes("Unsupported");
+      if (!isIdError) throw e;
+      // fall through to /me
+    }
+  }
+
+  return tryNode("me");
 }
 
 async function pollContainerReady(

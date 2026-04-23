@@ -58,6 +58,22 @@ export default function AdminPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  const [retrying, setRetrying] = useState(false);
+  const [retryResult, setRetryResult] = useState<string | null>(null);
+
+  const handleRetryFailed = async () => {
+    setRetrying(true);
+    setRetryResult(null);
+    try {
+      const res = await fetch("/api/admin/retry-failed", { method: "POST" });
+      const d = await res.json();
+      setRetryResult(`${d.reset} posts resetados para PENDING`);
+    } catch {
+      setRetryResult("Erro ao resetar posts");
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   useEffect(() => {
     fetch("/api/admin/overview")
@@ -108,6 +124,13 @@ export default function AdminPage() {
         <div>
           <h1 className="page-title" style={{ marginBottom: 0 }}>Painel Admin</h1>
           <p className="page-subtitle" style={{ marginBottom: 0 }}>Visão geral de todos os usuários e contas</p>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: "0.6rem", alignItems: "center" }}>
+          {retryResult && <span style={{ fontSize: "0.78rem", color: "#4ade80" }}>{retryResult}</span>}
+          <button onClick={() => void handleRetryFailed()} disabled={retrying} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", borderRadius: "8px", border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.08)", color: "#f87171", fontSize: "0.82rem", cursor: retrying ? "not-allowed" : "pointer", fontWeight: 600 }}>
+            {retrying ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <XCircle size={13} />}
+            Retry todos os falhos
+          </button>
         </div>
       </div>
 
