@@ -18,10 +18,11 @@ export type GraphPublishResult = {
 export async function exchangeCodeForShortLivedToken(
   code: string,
 ): Promise<{ access_token: string; user_id: string }> {
-  const { appId, appSecret } = getMetaOAuthConfig();
+  const { appSecret } = getMetaOAuthConfig();
+  const appId = "1469118798006060";
   const redirectUri = "https://saas-insta.vercel.app/api/instagram/oauth/callback";
-  if (!appId || !appSecret) {
-    throw new Error("META_APP_ID ou META_APP_SECRET ausentes.");
+  if (!appSecret) {
+    throw new Error("META_APP_SECRET ausente.");
   }
 
   const body = new URLSearchParams();
