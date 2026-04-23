@@ -122,15 +122,12 @@ export async function fetchInstagramProfile(accessToken: string, userId?: string
     return { id: String(data.id ?? ""), username: String(data.username ?? ""), profile_picture_url: data.profile_picture_url as string | undefined };
   }
 
-  // Try user_id first; if it fails (e.g. Facebook ID instead of IG ID), fall back to /me
+  // Try user_id first; if it fails for any object/permission reason, fall back to /me
   if (userId) {
     try {
       return await tryNode(userId);
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "";
-      const isIdError = msg.includes("does not exist") || msg.includes("missing permissions") || msg.includes("Unsupported");
-      if (!isIdError) throw e;
-      // fall through to /me
+    } catch {
+      // Always fall back to /me — if the token itself is invalid, /me will also fail and surface the real error
     }
   }
 
