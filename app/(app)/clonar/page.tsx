@@ -469,6 +469,54 @@ export default function ClonarPage() {
               </div>
             </div>
           )}
+
+          {/* Saved Profiles */}
+          <div className="glass-panel" style={{ padding: "1.25rem", borderRadius: "14px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.85rem" }}>
+              <BookmarkCheck size={15} color="var(--accent-gold)" />
+              <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>Perfis Salvos</span>
+              {savedProfiles.length > 0 && <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: "auto" }}>{savedProfiles.length} salvo(s)</span>}
+            </div>
+
+            {savedProfiles.length === 0 ? (
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", textAlign: "center", padding: "0.75rem 0" }}>
+                Busque um perfil e clique em <strong style={{ color: "var(--accent-gold)" }}>Salvar</strong> para guardar a análise aqui.
+              </p>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                {savedProfiles.map((saved) => {
+                  const top3 = [...(saved.hourlyData ?? []).map((s: number, h: number) => ({ h, s }))]
+                    .sort((a, b) => b.s - a.s).filter(x => x.s > 0).slice(0, 3);
+                  const isCurrentProfile = profile?.username === saved.username;
+                  return (
+                    <div
+                      key={saved.username}
+                      onClick={() => loadSavedProfile(saved)}
+                      style={{ padding: "0.65rem 0.75rem", borderRadius: "9px", cursor: "pointer", background: isCurrentProfile ? "rgba(201,162,39,0.08)" : "rgba(255,255,255,0.03)", border: `1px solid ${isCurrentProfile ? "rgba(201,162,39,0.25)" : "rgba(255,255,255,0.06)"}`, display: "flex", alignItems: "center", gap: "0.6rem", transition: "all 0.15s" }}
+                      onMouseEnter={(e) => { if (!isCurrentProfile) e.currentTarget.style.background = "rgba(255,255,255,0.06)"; }}
+                      onMouseLeave={(e) => { if (!isCurrentProfile) e.currentTarget.style.background = "rgba(255,255,255,0.03)"; }}
+                    >
+                      {saved.profilePicUrl ? (
+                        <img src={`/api/media/proxy?url=${encodeURIComponent(saved.profilePicUrl)}`} alt={saved.username} style={{ width: "32px", height: "32px", borderRadius: "50%", objectFit: "cover", flexShrink: 0 }} />
+                      ) : (
+                        <div style={{ width: "32px", height: "32px", borderRadius: "50%", background: "rgba(139,92,246,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.9rem", fontWeight: 700, color: "#a78bfa", flexShrink: 0 }}>{saved.username[0].toUpperCase()}</div>
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontWeight: 600, fontSize: "0.82rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{saved.username}</p>
+                        <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.1rem" }}>
+                          <span style={{ fontSize: "0.68rem", color: saved.engagementRate >= 3 ? "#4ade80" : saved.engagementRate >= 1 ? "#f59e0b" : "#f87171" }}>{saved.engagementRate}% eng.</span>
+                          {top3[0] !== undefined && <span style={{ fontSize: "0.68rem", color: "var(--accent-gold)" }}>🥇{String(top3[0].h).padStart(2,"0")}h</span>}
+                        </div>
+                      </div>
+                      <button onClick={(e) => { e.stopPropagation(); removeSavedProfile(saved.username); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.2rem", flexShrink: 0 }} onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; }} onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}>
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Right — Config */}
@@ -695,111 +743,6 @@ export default function ClonarPage() {
           </div>
         )}
       </div>
-
-      {/* Saved Profiles */}
-      <div style={{ marginTop: "2.5rem" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "1.25rem" }}>
-            <BookmarkCheck size={16} color="var(--accent-gold)" />
-            <h2 style={{ fontSize: "1.1rem", fontWeight: 700 }}>Perfis Salvos</h2>
-            {savedProfiles.length > 0 && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginLeft: "0.25rem" }}>({savedProfiles.length})</span>}
-          </div>
-          {savedProfiles.length === 0 && (
-            <div className="glass-panel" style={{ padding: "2rem", borderRadius: "14px", textAlign: "center", color: "var(--text-secondary)", fontSize: "0.9rem", border: "1px dashed rgba(201,162,39,0.15)" }}>
-              <Bookmark size={28} color="var(--text-muted)" style={{ margin: "0 auto 0.6rem" }} />
-              <p style={{ marginBottom: "0.3rem" }}>Nenhum perfil salvo ainda</p>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Busque um perfil acima e clique em <strong style={{ color: "var(--accent-gold)" }}>Salvar</strong> para guardar a análise</p>
-            </div>
-          )}
-
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: "1rem" }}>
-            {savedProfiles.map((saved) => {
-              const maxScore = Math.max(...saved.hourlyData, 1);
-              const top3 = [...saved.hourlyData.map((s, h) => ({ h, s }))]
-                .sort((a, b) => b.s - a.s)
-                .filter(x => x.s > 0)
-                .slice(0, 3);
-              const isCurrentProfile = profile?.username === saved.username;
-
-              return (
-                <div
-                  key={saved.username}
-                  className="glass-panel"
-                  style={{ padding: "1.25rem", borderRadius: "14px", border: isCurrentProfile ? "1px solid rgba(201,162,39,0.3)" : undefined, cursor: "pointer", transition: "border-color 0.15s" }}
-                  onClick={() => loadSavedProfile(saved)}
-                  onMouseEnter={(e) => { if (!isCurrentProfile) e.currentTarget.style.borderColor = "rgba(139,92,246,0.3)"; }}
-                  onMouseLeave={(e) => { if (!isCurrentProfile) e.currentTarget.style.borderColor = ""; }}
-                >
-                  {/* Header */}
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.85rem" }}>
-                    {saved.profilePicUrl ? (
-                      <img src={`/api/media/proxy?url=${encodeURIComponent(saved.profilePicUrl)}`} alt={saved.username} style={{ width: "40px", height: "40px", borderRadius: "50%", objectFit: "cover", border: "2px solid rgba(139,92,246,0.25)", flexShrink: 0 }} />
-                    ) : (
-                      <div style={{ width: "40px", height: "40px", borderRadius: "50%", background: "rgba(139,92,246,0.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.1rem", fontWeight: 700, color: "#a78bfa", flexShrink: 0 }}>{saved.username[0].toUpperCase()}</div>
-                    )}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: 700, fontSize: "0.9rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{saved.username}</p>
-                      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                        {saved.followersCount >= 1000 ? `${(saved.followersCount / 1000).toFixed(1)}K` : saved.followersCount} seguidores · {new Date(saved.savedAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
-                      </p>
-                    </div>
-                    <button
-                      onClick={(e) => { e.stopPropagation(); removeSavedProfile(saved.username); }}
-                      title="Remover"
-                      style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.2rem", borderRadius: "5px", flexShrink: 0 }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-
-                  {/* Mini stats */}
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.4rem", marginBottom: "0.85rem" }}>
-                    {[
-                      { label: "Eng.", value: `${saved.engagementRate}%`, color: saved.engagementRate >= 3 ? "#4ade80" : saved.engagementRate >= 1 ? "#f59e0b" : "#f87171" },
-                      { label: "Likes", value: saved.avgLikes >= 1000 ? `${(saved.avgLikes / 1000).toFixed(1)}K` : String(saved.avgLikes), color: "#f472b6" },
-                      { label: "Posts/mês", value: String(saved.postsPerMonth), color: "#60a5fa" },
-                    ].map(({ label, value, color }) => (
-                      <div key={label} style={{ padding: "0.4rem 0.5rem", background: "rgba(255,255,255,0.03)", borderRadius: "7px", textAlign: "center" }}>
-                        <div style={{ fontWeight: 700, fontSize: "0.85rem", color }}>{value}</div>
-                        <div style={{ fontSize: "0.65rem", color: "var(--text-muted)" }}>{label}</div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Mini heatmap */}
-                  {saved.hourlyData.some(v => v > 0) && (
-                    <div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: "2px", marginBottom: "0.4rem" }}>
-                        {saved.hourlyData.map((score, h) => {
-                          const intensity = score / maxScore;
-                          const isTop = top3.some(t => t.h === h);
-                          return (
-                            <div key={h} style={{ height: "18px", borderRadius: "3px", background: isTop ? `rgba(201,162,39,${0.4 + intensity * 0.6})` : score === 0 ? "rgba(255,255,255,0.04)" : `rgba(139,92,246,${0.1 + intensity * 0.6})`, border: isTop ? "1px solid rgba(201,162,39,0.5)" : "none" }} title={`${String(h).padStart(2,"0")}:00`} />
-                          );
-                        })}
-                      </div>
-                      <div style={{ display: "flex", gap: "0.35rem" }}>
-                        {top3.map((t, i) => (
-                          <span key={t.h} style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--accent-gold)" }}>
-                            {["🥇", "🥈", "🥉"][i]}{String(t.h).padStart(2, "0")}h
-                          </span>
-                        ))}
-                        <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginLeft: "auto", alignSelf: "center" }}>UTC</span>
-                      </div>
-                    </div>
-                  )}
-
-                  {isCurrentProfile && (
-                    <div style={{ marginTop: "0.6rem", fontSize: "0.7rem", color: "var(--accent-gold)", fontWeight: 600, textAlign: "center" }}>
-                      ✓ Perfil carregado
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
 
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
