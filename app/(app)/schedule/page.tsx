@@ -272,6 +272,7 @@ export default function SchedulePage() {
   const [calSelected, setCalSelected] = useState<string | null>(null);
 
   const [selectedAccounts, setSelectedAccounts] = useState<Record<string, boolean>>({});
+  const [selectedVideoIds, setSelectedVideoIds] = useState<string[]>([]);
 
   function getDefaultDateTime() {
     const d = new Date(Date.now() + 10 * 60 * 1000);
@@ -281,7 +282,10 @@ export default function SchedulePage() {
     return { date, time };
   }
 
-  const [form, setForm] = useState({ videoId: "", caption: "", ...getDefaultDateTime() });
+  const [form, setForm] = useState({
+    caption: "", ...getDefaultDateTime(),
+    intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2,
+  });
 
   const showToast = (type: "success" | "error", msg: string) => {
     setToast({ type, msg });
@@ -315,8 +319,8 @@ export default function SchedulePage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const accountIds = Object.entries(selectedAccounts).filter(([, v]) => v).map(([k]) => k);
-    if (accountIds.length === 0 || !form.videoId || !form.caption || !form.date || !form.time) {
-      showToast("error", "Preencha todos os campos e selecione ao menos uma conta");
+    if (accountIds.length === 0 || selectedVideoIds.length === 0 || !form.caption || !form.date || !form.time) {
+      showToast("error", "Preencha todos os campos, selecione ao menos uma conta e um vídeo");
       return;
     }
 
@@ -330,14 +334,22 @@ export default function SchedulePage() {
     const res = await fetch("/api/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accountIds, ...form, scheduledAt }),
+      body: JSON.stringify({
+        accountIds,
+        videoIds: selectedVideoIds,
+        caption: form.caption,
+        scheduledAt,
+        intervalSeconds: form.intervalSeconds,
+        ...(form.batchMode ? { batchSize: form.batchSize, batchIntervalHours: form.batchIntervalHours } : {}),
+      }),
     });
 
     if (res.ok) {
       const data = await res.json();
       const count = Array.isArray(data.schedules) ? data.schedules.length : 1;
       showToast("success", `${count} post(s) agendado(s) com sucesso!`);
-      setForm({ videoId: "", caption: "", ...getDefaultDateTime() });
+      setSelectedVideoIds([]);
+      setForm({ caption: "", ...getDefaultDateTime(), intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2 });
       await loadData();
     } else {
       const data = await res.json();
@@ -513,17 +525,25 @@ export default function SchedulePage() {
                 </div>
               </div>
 
-              {/* Video */}
+              {/* Videos multi-select */}
               <div>
                 <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Vídeo da Biblioteca
+                  Vídeos da Biblioteca ({selectedVideoIds.length} selecionado{selectedVideoIds.length !== 1 ? "s" : ""})
                 </label>
-                <select value={form.videoId} onChange={(e) => setForm(f => ({ ...f, videoId: e.target.value }))} className="input-field" style={{ width: "100%" }}>
-                  <option value="">Selecione um vídeo...</option>
-                  {videos.map(v => (
-                    <option key={v.id} value={v.id}>{v.originalName} ({formatBytes(v.sizeBytes)})</option>
-                  ))}
-                </select>
+                <div style={{ maxHeight: "170px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.25rem", padding: "0.35rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                  {videos.map((v) => {
+                    const checked = selectedVideoIds.includes(v.id);
+                    return (
+                      <label key={v.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.5rem", borderRadius: "6px", cursor: "pointer", background: checked ? "rgba(201,162,39,0.07)" : "transparent", border: `1px solid ${checked ? "rgba(201,162,39,0.2)" : "transparent"}`, transition: "all 0.15s" }}>
+                        <input type="checkbox" checked={checked}
+                          onChange={() => setSelectedVideoIds((prev) => prev.includes(v.id) ? prev.filter((id) => id !== v.id) : [...prev, v.id])}
+                          style={{ accentColor: "var(--accent-gold)", flexShrink: 0 }} />
+                        <span style={{ fontSize: "0.82rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.originalName}</span>
+                        <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", flexShrink: 0 }}>{formatBytes(v.sizeBytes)}</span>
+                      </label>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Caption */}
@@ -544,6 +564,51 @@ export default function SchedulePage() {
                   <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Hora</label>
                   <input type="time" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} className="input-field" style={{ width: "100%" }} />
                 </div>
+              </div>
+
+              {/* Interval + batch mode */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", padding: "0.85rem", background: "rgba(255,255,255,0.02)", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <div style={{ flex: 1 }}>
+                    <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.3rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                      Intervalo entre vídeos (s)
+                    </label>
+                    <input type="number" min={10} max={3600} value={form.intervalSeconds}
+                      onChange={(e) => setForm((f) => ({ ...f, intervalSeconds: Math.max(10, Number(e.target.value)) }))}
+                      className="input-field" style={{ width: "100%" }} />
+                  </div>
+                  <div style={{ paddingTop: "1.4rem" }}>
+                    <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer", fontSize: "0.82rem", fontWeight: 600, whiteSpace: "nowrap" }}>
+                      <input type="checkbox" checked={form.batchMode}
+                        onChange={(e) => setForm((f) => ({ ...f, batchMode: e.target.checked }))}
+                        style={{ accentColor: "var(--accent-gold)" }} />
+                      Modo Lote
+                    </label>
+                  </div>
+                </div>
+                {form.batchMode && (
+                  <div style={{ display: "flex", gap: "0.6rem" }}>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.3rem" }}>Vídeos por lote</label>
+                      <input type="number" min={1} max={50} value={form.batchSize}
+                        onChange={(e) => setForm((f) => ({ ...f, batchSize: Math.max(1, Number(e.target.value)) }))}
+                        className="input-field" style={{ width: "100%" }} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <label style={{ display: "block", fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.3rem" }}>Intervalo entre lotes (h)</label>
+                      <input type="number" min={1} max={48} value={form.batchIntervalHours}
+                        onChange={(e) => setForm((f) => ({ ...f, batchIntervalHours: Math.max(1, Number(e.target.value)) }))}
+                        className="input-field" style={{ width: "100%" }} />
+                    </div>
+                  </div>
+                )}
+                {selectedVideoIds.length > 1 && (
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: 0 }}>
+                    {form.batchMode
+                      ? `${selectedVideoIds.length} vídeos em lotes de ${form.batchSize} · a cada ${form.batchIntervalHours}h`
+                      : `${selectedVideoIds.length} vídeos · ${form.intervalSeconds}s de intervalo`}
+                  </p>
+                )}
               </div>
 
               <button type="submit" disabled={submitting} className="btn btn-primary" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", marginTop: "0.25rem" }}>

@@ -7,6 +7,7 @@ import {
   exchangeForLongLivedToken,
   fetchInstagramProfile,
 } from "@/lib/instagramGraphPublish";
+import { getMetaAppByKey } from "@/lib/metaInstagramEnv";
 
 const ACCOUNTS_URL = `${process.env.NEXT_PUBLIC_APP_URL}/accounts`;
 
@@ -14,7 +15,27 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   let code = searchParams.get("code");
   const error = searchParams.get("error");
-  const state = searchParams.get("state"); // connect token id when using shareable link
+  const rawState = searchParams.get("state") || "";
+
+  // state formats:
+  //   ""              → direct connect, default app
+  //   "2"             → direct connect, app key "2"
+  //   "{tokenId}"     → connect link, default app (legacy)
+  //   "{tokenId}:{k}" → connect link, app key "k"
+  let connectTokenState: string | null = null;
+  let appKey = "";
+
+  if (rawState.includes(":")) {
+    const colonIdx = rawState.lastIndexOf(":");
+    connectTokenState = rawState.slice(0, colonIdx) || null;
+    appKey = rawState.slice(colonIdx + 1);
+  } else if (rawState.length <= 3 && /^\d+$/.test(rawState)) {
+    appKey = rawState;
+  } else {
+    connectTokenState = rawState || null;
+  }
+
+  const state = connectTokenState;
 
   if (code && code.endsWith("#_")) {
     code = code.slice(0, -2);
@@ -48,7 +69,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const short = await exchangeCodeForShortLivedToken(code);
+    const appCfg = appKey ? getMetaAppByKey(appKey) ?? undefined : undefined;
+    const short = await exchangeCodeForShortLivedToken(code, appCfg);
 
     let accessToken = short.access_token;
     let tokenExpiresAt: Date | null = null;
@@ -79,6 +101,7 @@ export async function GET(request: Request) {
         profilePictureUrl: profile.profile_picture_url ?? null,
         accessTokenEnc,
         tokenExpiresAt,
+        appKey: appKey || "1",
         lastError: null,
       },
       update: {
@@ -86,6 +109,7 @@ export async function GET(request: Request) {
         profilePictureUrl: profile.profile_picture_url ?? null,
         accessTokenEnc,
         tokenExpiresAt,
+        appKey: appKey || "1",
         lastError: null,
       },
     });

@@ -42,6 +42,7 @@ export async function proxy(request: NextRequest) {
     request.nextUrl.pathname.startsWith("/api/instagram/deletion") ||
     request.nextUrl.pathname.startsWith("/api/admin/meta-test") ||
     request.nextUrl.pathname.startsWith("/api/cron/") ||
+    request.nextUrl.pathname.startsWith("/api/webhooks/") ||
     request.nextUrl.pathname.startsWith("/connect/") ||
     request.nextUrl.pathname.startsWith("/connect-error");
 
@@ -62,5 +63,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon\\.ico|sw\\.js|manifest\\.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
 };

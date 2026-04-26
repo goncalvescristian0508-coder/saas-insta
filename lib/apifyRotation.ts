@@ -1,4 +1,5 @@
 import { ApifyClient, ApifyApiError } from "apify-client";
+import { prisma } from "@/lib/prisma";
 
 export const APIFY_SERVICE_UNAVAILABLE =
   "Serviço temporariamente indisponível";
@@ -8,8 +9,43 @@ const ACTORS_PREFLIGHT = [
   "apify/instagram-profile-scraper",
 ] as const;
 
-/** Tokens marcados como esgotados neste processo Node (reinicia em cold start). */
-const exhaustedTokens = new Set<string>();
+const DB_KEY = "apify_exhausted_tokens";
+
+/** In-memory cache to avoid DB reads on every call within the same process. */
+let cachedExhausted: Set<string> | null = null;
+
+async function loadExhaustedTokens(): Promise<Set<string>> {
+  if (cachedExhausted !== null) return cachedExhausted;
+  try {
+    const row = await prisma.appSetting.findUnique({ where: { key: DB_KEY } });
+    const tokens: string[] = row ? JSON.parse(row.value) : [];
+    cachedExhausted = new Set(tokens);
+  } catch {
+    cachedExhausted = new Set();
+  }
+  return cachedExhausted;
+}
+
+async function persistExhaustedToken(token: string): Promise<void> {
+  const set = await loadExhaustedTokens();
+  set.add(token);
+  try {
+    await prisma.appSetting.upsert({
+      where: { key: DB_KEY },
+      create: { key: DB_KEY, value: JSON.stringify([...set]) },
+      update: { value: JSON.stringify([...set]) },
+    });
+  } catch {
+    /* falha silenciosa — in-memory ainda funciona */
+  }
+}
+
+export async function clearExhaustedApifyTokens(): Promise<void> {
+  cachedExhausted = new Set();
+  try {
+    await prisma.appSetting.deleteMany({ where: { key: DB_KEY } });
+  } catch { /* ignore */ }
+}
 
 export class ApifyAllTokensExhaustedError extends Error {
   constructor() {
@@ -38,7 +74,6 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
-/** Limite mensal USD atingido (heurística local após limits()). */
 function isMonthlyCapError(err: unknown): boolean {
   return (
     typeof err === "object" &&
@@ -112,9 +147,6 @@ function assertMonthlyHeadroom(limits: LimitsPayload): void {
   }
 }
 
-/**
- * Valida token: usuário, limites mensais (se existirem) e metadados dos actors usados.
- */
 export async function preflightApifyToken(client: ApifyClient): Promise<void> {
   await client.user().get();
 
@@ -130,8 +162,8 @@ export async function preflightApifyToken(client: ApifyClient): Promise<void> {
 }
 
 /**
- * Executa uma operação com o primeiro token válido; em falha de cota / billing,
- * marca o token e tenta o próximo.
+ * Executa uma operação com o primeiro token válido disponível.
+ * Tokens esgotados são persistidos no banco para sobreviver a cold starts.
  */
 export async function runWithApifyRotation<T>(
   operation: (client: ApifyClient) => Promise<T>,
@@ -141,7 +173,9 @@ export async function runWithApifyRotation<T>(
     throw new ApifyTokensNotConfiguredError();
   }
 
-  const tokens = configured.filter((t) => !exhaustedTokens.has(t));
+  const exhausted = await loadExhaustedTokens();
+  const tokens = configured.filter((t) => !exhausted.has(t));
+
   if (tokens.length === 0) {
     throw new ApifyAllTokensExhaustedError();
   }
@@ -156,9 +190,9 @@ export async function runWithApifyRotation<T>(
     } catch (err) {
       lastError = err;
       if (shouldTryNextToken(err)) {
-        exhaustedTokens.add(token);
+        await persistExhaustedToken(token);
         console.warn(
-          "[apifyRotation] token indisponível ou esgotado, tentando próximo…",
+          "[apifyRotation] token esgotado, persistindo e tentando próximo…",
           errorMessage(err),
         );
         continue;

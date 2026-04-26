@@ -1,0 +1,14 @@
+{
+  "name": "AutoPost",
+  "short_name": "AutoPost",
+  "description": "Automatize e agende suas postagens no Instagram.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#080A10",
+  "theme_color": "#080A10",
+  "icons": [
+    { "src": "/logo-notification.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/logo-notification.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

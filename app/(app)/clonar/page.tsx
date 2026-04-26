@@ -65,6 +65,7 @@ export default function ClonarPage() {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [intervalMinutes, setIntervalMinutes] = useState(5);
+  const [postsPerDay, setPostsPerDay] = useState<number | null>(null);
   const [postLimit, setPostLimit] = useState<number | "all">(20);
   const [cloneBio, setCloneBio] = useState(true);
   const [cloneStories, setCloneStories] = useState(false);
@@ -567,6 +568,28 @@ export default function ClonarPage() {
             </div>
           </div>
 
+          {/* Posts per day */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+              Posts por dia
+            </label>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+              {[1, 2, 3, 4, 6, 8, 12, 24].map((ppd) => {
+                const mins = Math.round((24 * 60) / ppd);
+                return (
+                  <button key={ppd} onClick={() => { setPostsPerDay(ppd); setIntervalMinutes(mins); }} style={{ padding: "0.4rem 0.9rem", borderRadius: "8px", border: `1px solid ${postsPerDay === ppd ? "rgba(74,222,128,0.4)" : "rgba(255,255,255,0.1)"}`, background: postsPerDay === ppd ? "rgba(74,222,128,0.1)" : "transparent", color: postsPerDay === ppd ? "#4ade80" : "var(--text-secondary)", fontWeight: postsPerDay === ppd ? 700 : 400, fontSize: "0.82rem", cursor: "pointer" }}>
+                    {ppd}x
+                  </button>
+                );
+              })}
+            </div>
+            {postsPerDay && (
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.35rem" }}>
+                → intervalo de {intervalMinutes >= 60 ? `${Math.round(intervalMinutes / 60)}h` : `${intervalMinutes}min`} entre posts
+              </p>
+            )}
+          </div>
+
           {/* Interval */}
           <div style={{ marginBottom: "1.25rem" }}>
             <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
@@ -574,7 +597,7 @@ export default function ClonarPage() {
             </label>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
               {[1, 2, 3, 5, 10, 15, 20, 30, 60].map((m) => (
-                <button key={m} onClick={() => setIntervalMinutes(m)} style={{ padding: "0.4rem 0.9rem", borderRadius: "8px", border: `1px solid ${intervalMinutes === m ? "rgba(201,162,39,0.4)" : "rgba(255,255,255,0.1)"}`, background: intervalMinutes === m ? "rgba(201,162,39,0.12)" : "transparent", color: intervalMinutes === m ? "var(--accent-gold)" : "var(--text-secondary)", fontWeight: intervalMinutes === m ? 700 : 400, fontSize: "0.82rem", cursor: "pointer" }}>
+                <button key={m} onClick={() => { setIntervalMinutes(m); setPostsPerDay(null); }} style={{ padding: "0.4rem 0.9rem", borderRadius: "8px", border: `1px solid ${intervalMinutes === m && !postsPerDay ? "rgba(201,162,39,0.4)" : "rgba(255,255,255,0.1)"}`, background: intervalMinutes === m && !postsPerDay ? "rgba(201,162,39,0.12)" : "transparent", color: intervalMinutes === m && !postsPerDay ? "var(--accent-gold)" : "var(--text-secondary)", fontWeight: intervalMinutes === m && !postsPerDay ? 700 : 400, fontSize: "0.82rem", cursor: "pointer" }}>
                   {m}min
                 </button>
               ))}

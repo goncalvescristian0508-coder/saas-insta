@@ -17,12 +17,17 @@ export type GraphPublishResult = {
 
 export async function exchangeCodeForShortLivedToken(
   code: string,
+  overrideConfig?: { appId: string; appSecret: string; redirectUri: string },
 ): Promise<{ access_token: string; user_id: string }> {
-  const { appSecret } = getMetaOAuthConfig();
-  const appId = "1990801641474298";
-  const redirectUri = "https://saas-insta.vercel.app/api/instagram/oauth/callback";
+  const base = getMetaOAuthConfig();
+  const appId = overrideConfig?.appId || base.appId || "1990801641474298";
+  const appSecret = overrideConfig?.appSecret || base.appSecret;
+  const redirectUri = overrideConfig?.redirectUri || base.redirectUri;
   if (!appSecret) {
     throw new Error("META_APP_SECRET ausente.");
+  }
+  if (!redirectUri) {
+    throw new Error("META_REDIRECT_URI ausente.");
   }
 
   const body = new URLSearchParams();
@@ -32,26 +37,22 @@ export async function exchangeCodeForShortLivedToken(
   body.append("redirect_uri", redirectUri);
   body.append("code", code);
 
-  console.log("TOKEN EXCHANGE →", { appId, redirectUri, codeLength: code?.length, secretPrefix: appSecret?.slice(0, 6) });
-
+  console.log("[exchangeCode] appId:", appId, "redirectUri:", redirectUri, "codeLen:", code.length);
   const res = await fetch("https://api.instagram.com/oauth/access_token", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    body: body,
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body,
   });
 
   const data = (await res.json()) as Record<string, unknown>;
-  console.log("Status:", res.status);
-  console.log("Response:", JSON.stringify(data));
+  console.log("[exchangeCode] response:", res.status, JSON.stringify(data));
   const errMsg =
     (data.error_message as string) ||
     (typeof data.error === "string"
       ? data.error
       : (data.error as { message?: string } | undefined)?.message);
   if (!res.ok || errMsg) {
-    throw new Error(`${errMsg || JSON.stringify(data)} | URI usada: "${redirectUri}"`);
+    throw new Error(errMsg || JSON.stringify(data));
   }
 
   const access_token = data.access_token as string;

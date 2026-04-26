@@ -23,7 +23,13 @@ export async function GET(request: Request) {
     const buffer = await response.arrayBuffer();
     const headers = new Headers();
     headers.set("Content-Type", response.headers.get("content-type") || "image/jpeg");
-    headers.set("Cache-Control", "public, max-age=86400"); // Cache por 24h
+    headers.set("Cache-Control", "public, max-age=86400");
+
+    const download = searchParams.get("download");
+    if (download === "1") {
+      const filename = searchParams.get("filename") || "foto.jpg";
+      headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+    }
 
     return new NextResponse(buffer, { headers });
   } catch (error) {

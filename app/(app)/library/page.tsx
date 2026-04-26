@@ -30,6 +30,9 @@ export default function LibraryPage() {
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadCurrent, setUploadCurrent] = useState(0);
+  const [uploadTotal, setUploadTotal] = useState(0);
+  const [uploadFileName, setUploadFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
@@ -50,27 +53,26 @@ export default function LibraryPage() {
 
   useEffect(() => { fetchVideos(); }, [fetchVideos]);
 
-  async function uploadFile(file: File) {
+  async function uploadFile(file: File): Promise<boolean> {
     const allowed = ["video/mp4", "video/quicktime", "video/mov", "video/x-msvideo"];
     if (!allowed.includes(file.type)) {
-      showToast("error", "Formato inválido. Use MP4 ou MOV.");
-      return;
+      showToast("error", `"${file.name}" — formato inválido. Use MP4 ou MOV.`);
+      return false;
     }
     if (file.size > 200 * 1024 * 1024) {
-      showToast("error", "Arquivo muito grande. Máximo 200MB.");
-      return;
+      showToast("error", `"${file.name}" — muito grande. Máximo 200MB.`);
+      return false;
     }
 
-    setUploading(true);
     setUploadProgress(0);
+    setUploadFileName(file.name);
 
     try {
-      // Step 1: get a signed upload URL (no file sent to Vercel)
       const signRes = await fetch(`/api/media/sign-upload?filename=${encodeURIComponent(file.name)}`);
       if (!signRes.ok) {
         const d = await signRes.json();
         showToast("error", d.error ?? "Erro ao preparar upload");
-        return;
+        return false;
       }
       const { signedUrl, storagePath, publicUrl } = await signRes.json() as {
         signedUrl: string; storagePath: string; publicUrl: string;
@@ -78,7 +80,6 @@ export default function LibraryPage() {
 
       setUploadProgress(5);
 
-      // Step 2: upload directly to Supabase Storage (bypasses Vercel body limit)
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.upload.addEventListener("progress", (e) => {
@@ -98,7 +99,6 @@ export default function LibraryPage() {
 
       setUploadProgress(95);
 
-      // Step 3: register metadata in DB
       const metaRes = await fetch("/api/media/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -110,23 +110,43 @@ export default function LibraryPage() {
       if (!metaRes.ok) {
         const d = await metaRes.json();
         showToast("error", d.error ?? "Erro ao registrar vídeo");
-      } else {
-        showToast("success", "Vídeo enviado com sucesso!");
-        await fetchVideos();
+        return false;
       }
+      return true;
     } catch (err: unknown) {
       showToast("error", err instanceof Error ? err.message : "Erro de conexão no upload");
-    } finally {
-      setTimeout(() => {
-        setUploading(false);
-        setUploadProgress(0);
-      }, 600);
+      return false;
     }
   }
 
-  function handleFiles(files: FileList | null) {
+  async function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
-    uploadFile(files[0]);
+    const fileArray = Array.from(files);
+    setUploading(true);
+    setUploadTotal(fileArray.length);
+    let successCount = 0;
+
+    for (let i = 0; i < fileArray.length; i++) {
+      setUploadCurrent(i + 1);
+      const ok = await uploadFile(fileArray[i]);
+      if (ok) successCount++;
+    }
+
+    await fetchVideos();
+
+    if (successCount === fileArray.length) {
+      showToast("success", fileArray.length === 1 ? "Vídeo enviado com sucesso!" : `${successCount} vídeos enviados!`);
+    } else if (successCount > 0) {
+      showToast("success", `${successCount} de ${fileArray.length} vídeos enviados.`);
+    }
+
+    setTimeout(() => {
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadCurrent(0);
+      setUploadTotal(0);
+      setUploadFileName("");
+    }, 600);
   }
 
   async function deleteVideo(id: string) {
@@ -230,14 +250,22 @@ export default function LibraryPage() {
           ref={inputRef}
           type="file"
           accept="video/mp4,video/quicktime,video/mov"
+          multiple
           style={{ display: "none" }}
-          onChange={(e) => handleFiles(e.target.files)}
+          onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }}
         />
 
         {uploading ? (
           <div>
             <Loader2 size={40} color="var(--accent-gold)" style={{ margin: "0 auto 1rem", animation: "spin 1s linear infinite" }} />
-            <p style={{ fontWeight: 600, marginBottom: "0.75rem" }}>Enviando vídeo...</p>
+            <p style={{ fontWeight: 600, marginBottom: "0.3rem" }}>
+              {uploadTotal > 1 ? `Enviando ${uploadCurrent} de ${uploadTotal}...` : "Enviando vídeo..."}
+            </p>
+            {uploadFileName && (
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "260px", margin: "0 auto 0.75rem" }}>
+                {uploadFileName}
+              </p>
+            )}
             <div style={{
               maxWidth: "280px",
               margin: "0 auto",
@@ -262,10 +290,10 @@ export default function LibraryPage() {
           <>
             <UploadCloud size={40} color={dragOver ? "var(--accent-gold)" : "var(--text-secondary)"} style={{ margin: "0 auto 0.85rem" }} />
             <p style={{ fontWeight: 600, marginBottom: "0.4rem" }}>
-              {dragOver ? "Solte o arquivo aqui" : "Arraste seus vídeos ou clique para selecionar"}
+              {dragOver ? "Solte os arquivos aqui" : "Arraste seus vídeos ou clique para selecionar"}
             </p>
             <p style={{ color: "var(--text-secondary)", fontSize: "0.85rem" }}>
-              MP4 ou MOV · Máximo 200MB
+              MP4 ou MOV · Máximo 200MB · Múltiplos arquivos suportados
             </p>
           </>
         )}

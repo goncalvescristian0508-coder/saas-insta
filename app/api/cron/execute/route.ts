@@ -48,17 +48,34 @@ export async function GET(request: Request) {
     data: { status: "PENDING", errorMsg: null },
   });
 
-  // Process up to 5 posts per cron run
+  // Load active warmup configs keyed by accountId
+  const warmups = await prisma.accountWarmup.findMany({ where: { isActive: true } });
+  const warmupMap = new Map(warmups.map((w) => [w.accountId, w]));
+
+  // Process up to 10 posts per cron run
   const pending = await prisma.scheduledPost.findMany({
     where: { status: "PENDING", scheduledAt: { lte: now } },
     include: { account: true, video: true },
     orderBy: { scheduledAt: "asc" },
-    take: 5,
+    take: 10,
   });
 
   const results = [];
 
   for (const post of pending) {
+    // Warmup throttle: skip if account is in warmup and interval hasn't passed yet
+    const warmup = warmupMap.get(post.accountId);
+    if (warmup) {
+      if (warmup.lastPostedAt) {
+        const msSinceLast = now.getTime() - warmup.lastPostedAt.getTime();
+        const msRequired = warmup.intervalMinutes * 60 * 1000;
+        if (msSinceLast < msRequired) {
+          results.push({ id: post.id, status: "skipped_warmup" });
+          continue;
+        }
+      }
+    }
+
     await prisma.scheduledPost.update({
       where: { id: post.id },
       data: { status: "RUNNING" },
@@ -97,6 +114,22 @@ export async function GET(request: Request) {
         where: { id: post.id },
         data: { status: "DONE", postedAt: new Date(), errorMsg: null },
       });
+
+      // Update warmup progress if account is in warmup mode
+      if (warmup) {
+        const newCount = warmup.completedPosts + 1;
+        const finished = newCount >= warmup.targetPosts;
+        await prisma.accountWarmup.update({
+          where: { id: warmup.id },
+          data: {
+            completedPosts: newCount,
+            lastPostedAt: now,
+            isActive: !finished,
+          },
+        });
+        warmup.completedPosts = newCount;
+        warmup.lastPostedAt = now;
+      }
 
       results.push({ id: post.id, status: "done" });
     } catch (err: unknown) {

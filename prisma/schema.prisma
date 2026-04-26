@@ -13,6 +13,7 @@ model PrivateInstagramAccount {
   userId      String?
   username    String   @unique
   passwordEnc String
+  totpSecret  String?
   sessionJson String?
   lastError   String?
   createdAt   DateTime @default(now())
@@ -29,10 +30,12 @@ model InstagramOAuthAccount {
   profilePictureUrl String?
   accessTokenEnc    String
   tokenExpiresAt    DateTime?
+  appKey            String         @default("1")
   lastError         String?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   scheduledPosts    ScheduledPost[]
+  warmup            AccountWarmup?
 
   @@unique([userId, instagramUserId])
   @@index([userId, createdAt])
@@ -54,24 +57,54 @@ model LibraryVideo {
   @@index([userId, createdAt])
 }
 
-model ScheduledPost {
-  id          String                @id @default(cuid())
-  userId      String
-  accountId   String
-  videoId     String
-  caption     String                @db.Text
-  scheduledAt DateTime
-  status      ScheduledPostStatus   @default(PENDING)
-  errorMsg    String?
-  postedAt    DateTime?
-  createdAt   DateTime              @default(now())
-  updatedAt   DateTime              @updatedAt
+model CloneJob {
+  id               String   @id @default(cuid())
+  userId           String
+  sourceUsername   String
+  profilePicUrl    String?
+  accountUsernames String[]
+  totalReels       Int
+  clonedBio        Boolean  @default(false)
+  clonedPhoto      Boolean  @default(false)
+  createdAt        DateTime @default(now())
 
-  account InstagramOAuthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  video   LibraryVideo          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  posts ScheduledPost[]
+
+  @@index([userId, createdAt])
+}
+
+model ScheduledPost {
+  id            String                @id @default(cuid())
+  userId        String
+  accountId     String
+  videoId       String?
+  rawVideoUrl   String?
+  cloneJobId    String?
+  caption       String                @db.Text
+  scheduledAt   DateTime
+  status        ScheduledPostStatus   @default(PENDING)
+  errorMsg      String?
+  postedAt      DateTime?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  account  InstagramOAuthAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  video    LibraryVideo?          @relation(fields: [videoId], references: [id], onDelete: Cascade)
+  cloneJob CloneJob?              @relation(fields: [cloneJobId], references: [id], onDelete: SetNull)
 
   @@index([userId, scheduledAt])
   @@index([status, scheduledAt])
+  @@index([cloneJobId])
+}
+
+model ConnectToken {
+  id        String    @id @default(cuid())
+  userId    String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
 }
 
 enum ScheduledPostStatus {
@@ -79,4 +112,90 @@ enum ScheduledPostStatus {
   RUNNING
   DONE
   FAILED
+}
+
+model AppSetting {
+  key       String   @id
+  value     String   @db.Text
+  updatedAt DateTime @updatedAt
+}
+
+model AccountWarmup {
+  id              String    @id @default(cuid())
+  userId          String
+  accountId       String    @unique
+  targetPosts     Int       @default(30)
+  completedPosts  Int       @default(0)
+  intervalMinutes Int       @default(120)
+  isActive        Boolean   @default(true)
+  lastPostedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  account InstagramOAuthAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UserApifyToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String
+  label     String   @default("")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model UserIntegration {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String
+  config    String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, type])
+  @@index([userId])
+}
+
+model Sale {
+  id             String     @id @default(cuid())
+  userId         String
+  gateway        String
+  gatewayOrderId String
+  amount         Float
+  status         SaleStatus @default(PENDING)
+  customerName   String?
+  customerEmail  String?
+  igUsername     String?
+  planName       String?
+  trackingCode   String?
+  rawPayload     String?    @db.Text
+  telegramSent   Boolean    @default(false)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  @@unique([gateway, gatewayOrderId])
+  @@index([userId, createdAt])
+  @@index([igUsername])
+}
+
+enum SaleStatus {
+  PENDING
+  APPROVED
+  REFUNDED
+  CANCELLED
+}
+
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
 }

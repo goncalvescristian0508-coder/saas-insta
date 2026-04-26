@@ -1,7 +1,14 @@
 "use client";
 
-import { Search, Plus, X, Download, Play, FolderOpen, Trash2, ExternalLink, Sparkles, Loader2, AlertTriangle, Heart, MessageCircle, Eye, CalendarPlus } from "lucide-react";
+import { Search, Plus, X, Download, Play, FolderOpen, Trash2, ExternalLink, Sparkles, Loader2, AlertTriangle, Heart, MessageCircle, Eye, CalendarPlus, Key, CheckCircle } from "lucide-react";
 import { useState, useEffect } from "react";
+
+interface ApifyToken {
+  id: string;
+  masked: string;
+  label: string;
+  isActive: boolean;
+}
 
 interface VideoItem {
   id: number;
@@ -37,6 +44,50 @@ export default function InspiracoesPage() {
 
   const [isLoaded, setIsLoaded] = useState(false);
 
+  // Apify token management
+  const [apifyTokens, setApifyTokens] = useState<ApifyToken[]>([]);
+  const [apifyActiveCount, setApifyActiveCount] = useState(0);
+  const [newTokenValue, setNewTokenValue] = useState("");
+  const [newTokenLabel, setNewTokenLabel] = useState("");
+  const [addingToken, setAddingToken] = useState(false);
+  const [tokenAdded, setTokenAdded] = useState(false);
+
+  const loadApifyTokens = async () => {
+    try {
+      const res = await fetch("/api/apify-tokens");
+      if (!res.ok) return;
+      const d = await res.json();
+      setApifyTokens(d.tokens ?? []);
+      setApifyActiveCount(d.activeCount ?? 0);
+    } catch {}
+  };
+
+  const handleAddToken = async () => {
+    if (!newTokenValue.trim()) return;
+    setAddingToken(true);
+    try {
+      const res = await fetch("/api/apify-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: newTokenValue.trim(), label: newTokenLabel.trim() }),
+      });
+      if (res.ok) {
+        setNewTokenValue("");
+        setNewTokenLabel("");
+        setTokenAdded(true);
+        setTimeout(() => setTokenAdded(false), 2000);
+        void loadApifyTokens();
+      }
+    } finally {
+      setAddingToken(false);
+    }
+  };
+
+  const handleDeleteToken = async (id: string) => {
+    await fetch(`/api/apify-tokens/${id}`, { method: "DELETE" });
+    setApifyTokens((prev) => prev.filter((t) => t.id !== id));
+  };
+
   // Carregar modelos do localStorage ao montar o componente
   useEffect(() => {
     const saved = localStorage.getItem("wayne_inspiracoes_models");
@@ -44,6 +95,7 @@ export default function InspiracoesPage() {
       try { setModels(JSON.parse(saved)); } catch {}
     }
     setIsLoaded(true);
+    void loadApifyTokens();
   }, []);
 
   // Salvar modelos no localStorage sempre que a lista mudar
@@ -197,6 +249,100 @@ export default function InspiracoesPage() {
         }}>
           <Plus size={18} /> Adicionar Modelo
         </button>
+      </div>
+
+      {/* Apify API Keys section */}
+      <div style={{
+        marginTop: "1.5rem", padding: "1.25rem 1.5rem", borderRadius: "12px",
+        background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-color)",
+        marginBottom: "1.5rem",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <Key size={16} color="var(--accent-gold)" />
+            <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>API Keys da Apify</span>
+          </div>
+          <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
+            {apifyActiveCount} ativa(s) / {apifyTokens.length} total
+          </span>
+        </div>
+
+        {/* Add form */}
+        <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.75rem" }}>
+          <input
+            type="text"
+            placeholder="apify_api_..."
+            value={newTokenValue}
+            onChange={(e) => setNewTokenValue(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && void handleAddToken()}
+            style={{
+              flex: 2, padding: "0.5rem 0.75rem", borderRadius: "8px",
+              background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)",
+              color: "#fff", fontSize: "0.85rem", outline: "none",
+            }}
+          />
+          <input
+            type="text"
+            placeholder="Label (opcional)"
+            value={newTokenLabel}
+            onChange={(e) => setNewTokenLabel(e.target.value)}
+            style={{
+              flex: 1, padding: "0.5rem 0.75rem", borderRadius: "8px",
+              background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)",
+              color: "#fff", fontSize: "0.85rem", outline: "none",
+            }}
+          />
+          <button
+            onClick={() => void handleAddToken()}
+            disabled={addingToken || !newTokenValue.trim()}
+            style={{
+              padding: "0.5rem 1rem", borderRadius: "8px",
+              background: tokenAdded ? "rgba(74,222,128,0.2)" : "rgba(96,165,250,0.2)",
+              border: `1px solid ${tokenAdded ? "rgba(74,222,128,0.4)" : "rgba(96,165,250,0.4)"}`,
+              color: tokenAdded ? "#4ade80" : "#60a5fa", cursor: "pointer",
+              fontWeight: 700, fontSize: "0.82rem", display: "flex", alignItems: "center", gap: "0.3rem",
+            }}
+          >
+            {tokenAdded ? <CheckCircle size={14} /> : <Plus size={14} />}
+            {tokenAdded ? "Adicionada" : "Add"}
+          </button>
+        </div>
+
+        {/* Token list */}
+        {apifyTokens.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {apifyTokens.map((t) => (
+              <div key={t.id} style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: "0.5rem 0.75rem", borderRadius: "8px",
+                background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flex: 1, minWidth: 0 }}>
+                  <CheckCircle size={14} color={t.isActive ? "#22c55e" : "var(--text-muted)"} />
+                  <span style={{ fontSize: "0.82rem", fontFamily: "monospace", color: "var(--text-secondary)" }}>
+                    {t.masked}
+                  </span>
+                  {t.label && (
+                    <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{t.label}</span>
+                  )}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexShrink: 0 }}>
+                  <span style={{ fontSize: "0.72rem", color: t.isActive ? "#22c55e" : "var(--text-muted)" }}>
+                    {t.isActive ? "Active" : "Inativa"}
+                  </span>
+                  <button
+                    onClick={() => void handleDeleteToken(t.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "0.2rem" }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; }}
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Search Panel */}

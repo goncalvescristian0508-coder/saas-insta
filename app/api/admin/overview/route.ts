@@ -25,12 +25,10 @@ export async function GET() {
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 
-  // All auth users
   const { data: authData } = await adminClient().auth.admin.listUsers({ perPage: 1000 });
   const authUsers = authData?.users ?? [];
 
-  // All accounts + recent posts
-  const [oauthAccounts, privateAccounts, recentPosts, videos] = await Promise.all([
+  const [oauthAccounts, privateAccounts, recentPosts, videos, salesByUser, globalSales] = await Promise.all([
     prisma.instagramOAuthAccount.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.privateInstagramAccount.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.scheduledPost.findMany({
@@ -39,23 +37,43 @@ export async function GET() {
       include: { account: true, video: true },
     }),
     prisma.libraryVideo.findMany({ orderBy: { createdAt: "desc" } }),
+    prisma.sale.groupBy({
+      by: ["userId"],
+      where: { status: "APPROVED" },
+      _sum: { amount: true },
+      _count: { id: true },
+    }),
+    prisma.sale.aggregate({
+      where: { status: "APPROVED" },
+      _sum: { amount: true },
+      _count: { id: true },
+    }),
   ]);
 
-  // Build per-user summary
+  const salesMap: Record<string, { revenue: number; count: number }> = {};
+  for (const s of salesByUser) {
+    salesMap[s.userId] = { revenue: s._sum.amount ?? 0, count: s._count.id };
+  }
+
   const userMap: Record<string, {
-    id: string; email: string; createdAt: string;
+    id: string; email: string; name: string | null; createdAt: string;
+    adminMessage: string | null; adminMessageAt: string | null;
     oauthAccounts: typeof oauthAccounts;
     privateAccounts: typeof privateAccounts;
     videoCount: number;
     postsTotal: number; postsDone: number; postsFailed: number;
     lastActivity: string | null;
+    revenue: number; salesCount: number;
   }> = {};
 
   for (const u of authUsers) {
     userMap[u.id] = {
       id: u.id,
       email: u.email ?? "(sem email)",
+      name: u.user_metadata?.name ?? null,
       createdAt: u.created_at,
+      adminMessage: u.user_metadata?.adminMessage ?? null,
+      adminMessageAt: u.user_metadata?.adminMessageAt ?? null,
       oauthAccounts: [],
       privateAccounts: [],
       videoCount: 0,
@@ -63,14 +81,19 @@ export async function GET() {
       postsDone: 0,
       postsFailed: 0,
       lastActivity: null,
+      revenue: salesMap[u.id]?.revenue ?? 0,
+      salesCount: salesMap[u.id]?.count ?? 0,
     };
   }
 
   for (const acc of oauthAccounts) {
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
-        id: acc.userId, email: "(desconhecido)", createdAt: acc.createdAt.toISOString(),
-        oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0, postsDone: 0, postsFailed: 0, lastActivity: null,
+        id: acc.userId, email: "(desconhecido)", name: null, createdAt: acc.createdAt.toISOString(),
+        adminMessage: null, adminMessageAt: null,
+        oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0,
+        postsDone: 0, postsFailed: 0, lastActivity: null,
+        revenue: salesMap[acc.userId]?.revenue ?? 0, salesCount: salesMap[acc.userId]?.count ?? 0,
       };
     }
     userMap[acc.userId].oauthAccounts.push(acc);
@@ -80,8 +103,11 @@ export async function GET() {
     if (!acc.userId) continue;
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
-        id: acc.userId, email: "(desconhecido)", createdAt: acc.createdAt.toISOString(),
-        oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0, postsDone: 0, postsFailed: 0, lastActivity: null,
+        id: acc.userId, email: "(desconhecido)", name: null, createdAt: acc.createdAt.toISOString(),
+        adminMessage: null, adminMessageAt: null,
+        oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0,
+        postsDone: 0, postsFailed: 0, lastActivity: null,
+        revenue: salesMap[acc.userId]?.revenue ?? 0, salesCount: salesMap[acc.userId]?.count ?? 0,
       };
     }
     userMap[acc.userId].privateAccounts.push(acc);
@@ -108,6 +134,8 @@ export async function GET() {
     totalPrivateAccounts: privateAccounts.length,
     totalVideos: videos.length,
     totalPostsDone: recentPosts.filter(p => p.status === "DONE").length,
+    globalRevenue: globalSales._sum.amount ?? 0,
+    globalSalesCount: globalSales._count.id,
   };
 
   return NextResponse.json({
@@ -115,13 +143,16 @@ export async function GET() {
     users: Object.values(userMap).map(u => ({
       ...u,
       privateAccounts: u.privateAccounts.map(a => ({ id: a.id, username: a.username, lastError: a.lastError })),
-      oauthAccounts: u.oauthAccounts.map(a => ({ id: a.id, username: a.username, profilePictureUrl: a.profilePictureUrl, lastError: a.lastError, createdAt: a.createdAt })),
+      oauthAccounts: u.oauthAccounts.map(a => ({
+        id: a.id, username: a.username, profilePictureUrl: a.profilePictureUrl,
+        lastError: a.lastError, createdAt: a.createdAt,
+      })),
     })),
-    recentPosts: recentPosts.slice(0, 30).map(p => ({
+    recentPosts: recentPosts.slice(0, 50).map(p => ({
       id: p.id,
       userId: p.userId,
       accountUsername: p.account.username,
-      videoName: p.video.originalName,
+      videoName: p.video?.originalName ?? "Reel clonado",
       caption: p.caption.slice(0, 60),
       status: p.status,
       scheduledAt: p.scheduledAt,

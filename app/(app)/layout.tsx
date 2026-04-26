@@ -1,19 +1,15 @@
 import "../globals.css";
 import Sidebar from "@/components/Sidebar";
-import GothamBackdrop from "@/components/GothamBackdrop";
-import GothamAtmosphere from "@/components/GothamAtmosphere";
+import PushSetup from "@/components/PushSetup";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return (
-    <>
-      <GothamBackdrop />
-      <GothamAtmosphere />
-      <div className="app-container">
-        <Sidebar />
-        <main className="main-content">
-          {children}
-        </main>
-      </div>
-    </>
+    <div className="app-container">
+      <Sidebar />
+      <main className="main-content">
+        {children}
+      </main>
+      <PushSetup />
+    </div>
   );
 }
