@@ -574,7 +574,7 @@ export default function ClonarPage() {
               Posts por dia
             </label>
             <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              {[1, 2, 3, 4, 6, 8, 12, 24].map((ppd) => {
+              {[1, 2, 3, 4, 6, 8, 12, 24, 36, 48, 72].map((ppd) => {
                 const mins = Math.round((24 * 60) / ppd);
                 return (
                   <button key={ppd} onClick={() => { setPostsPerDay(ppd); setIntervalMinutes(mins); }} style={{ padding: "0.4rem 0.9rem", borderRadius: "8px", border: `1px solid ${postsPerDay === ppd ? "rgba(74,222,128,0.4)" : "rgba(255,255,255,0.1)"}`, background: postsPerDay === ppd ? "rgba(74,222,128,0.1)" : "transparent", color: postsPerDay === ppd ? "#4ade80" : "var(--text-secondary)", fontWeight: postsPerDay === ppd ? 700 : 400, fontSize: "0.82rem", cursor: "pointer" }}>
