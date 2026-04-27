@@ -10,7 +10,8 @@ export async function POST(request: Request) {
   if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
   // Only admin
-  if (user.email !== process.env.ADMIN_EMAIL) {
+  const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
+  if (user.email !== adminEmail) {
     return NextResponse.json({ error: "Não autorizado" }, { status: 403 });
   }
 
