@@ -4,6 +4,7 @@ import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { sendPushToUser } from "@/lib/sendPush";
 
 function storageAdmin() {
   return createClient(
@@ -152,6 +153,12 @@ export async function GET(request: Request) {
       await prisma.scheduledPost.update({
         where: { id: post.id },
         data: { status: "FAILED", errorMsg: msg },
+      });
+      const accountName = post.account.username ?? "conta";
+      await sendPushToUser(post.userId, {
+        title: "Falha no agendamento",
+        body: `@${accountName}: ${msg.slice(0, 100)}`,
+        url: "/schedule",
       });
       results.push({ id: post.id, status: "failed", error: msg });
     } finally {
