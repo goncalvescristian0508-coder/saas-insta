@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -53,10 +53,19 @@ async function downloadReelToLibrary(
   index: number,
 ): Promise<{ id: string; publicUrl: string } | null> {
   try {
+    // Use a hash of the URL as filename — prevents duplicates across clone runs
+    const urlHash = createHash("md5").update(videoUrl).digest("hex");
+    const storagePath = `cloned/${userId}/${urlHash}.mp4`;
+
+    // If this video was already downloaded, return the existing record
+    const existing = await prisma.libraryVideo.findFirst({
+      where: { userId, storagePath },
+    });
+    if (existing) return { id: existing.id, publicUrl: existing.publicUrl };
+
     const res = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return null;
     const buffer = Buffer.from(await res.arrayBuffer());
-    const storagePath = `cloned/${userId}/${randomUUID()}.mp4`;
     const admin = storageAdmin();
     const { error } = await admin.storage
       .from("library-videos")
