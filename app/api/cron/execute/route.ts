@@ -143,6 +143,32 @@ async function runCron() {
         warmup.lastPostedAt = now;
       }
 
+      // After success, check if account was in care mode and has 2+ successes since last rate limit
+      const lastRateLimit = await prisma.scheduledPost.findFirst({
+        where: { accountId: post.accountId, status: "FAILED", errorMsg: { contains: "too many actions" } },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (lastRateLimit) {
+        const successesSince = await prisma.scheduledPost.count({
+          where: { accountId: post.accountId, status: "DONE", postedAt: { gte: lastRateLimit.updatedAt } },
+        });
+        if (successesSince >= 2) {
+          // Restore normal timing: pull pending posts back 4h
+          await prisma.$executeRaw`
+            UPDATE "ScheduledPost"
+            SET "scheduledAt" = "scheduledAt" - INTERVAL '4 hours'
+            WHERE "accountId" = ${post.accountId}
+              AND "status" = 'PENDING'
+              AND "scheduledAt" > NOW()
+          `;
+          await sendPushToUser(post.userId, {
+            title: "Conta recuperada",
+            body: `@${post.account.username} voltou ao ritmo normal após 2 posts bem-sucedidos.`,
+            url: "/schedule",
+          });
+        }
+      }
+
       results.push({ id: post.id, status: "done" });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro desconhecido";
