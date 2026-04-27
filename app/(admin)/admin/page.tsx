@@ -752,13 +752,24 @@ function MensagemTab() {
 function TestadoresTab() {
   const [input, setInput] = useState("");
   const [appKey, setAppKey] = useState("");
+  const [apps, setApps] = useState<{ key: string; name: string; appId: string }[]>([]);
   const [loading, setLoading] = useState(false);
-  const [results, setResults] = useState<{ username: string; ok: boolean; error?: string }[]>([]);
+  const [results, setResults] = useState<{ username: string; ok: boolean; error?: string; appName?: string }[]>([]);
+
+  useEffect(() => {
+    fetch("/api/admin/meta-apps")
+      .then(r => r.json())
+      .then((d: { apps?: { key: string; name: string; appId: string }[] }) => {
+        const list = d.apps ?? [];
+        setApps(list);
+        if (list.length > 0) setAppKey(list[0].key);
+      });
+  }, []);
 
   async function addTester(username: string) {
     const clean = username.trim().replace(/^@/, "");
     if (!clean) return;
-    setLoading(true);
+    const selectedApp = apps.find(a => a.key === appKey);
     try {
       const r = await fetch("/api/admin/add-instagram-tester", {
         method: "POST",
@@ -766,20 +777,19 @@ function TestadoresTab() {
         body: JSON.stringify({ igUsername: clean, appKey: appKey || undefined }),
       });
       const d = await r.json() as { ok?: boolean; error?: string };
-      setResults(prev => [{ username: clean, ok: !!d.ok, error: d.error }, ...prev]);
-    } finally {
-      setLoading(false);
+      setResults(prev => [{ username: clean, ok: !!d.ok, error: d.error, appName: selectedApp?.name }, ...prev]);
+    } catch {
+      setResults(prev => [{ username: clean, ok: false, error: "Erro de conexão", appName: selectedApp?.name }, ...prev]);
     }
   }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    // Support bulk: one per line or comma separated
     const names = input.split(/[\n,]+/).map(s => s.trim().replace(/^@/, "")).filter(Boolean);
     setInput("");
-    for (const name of names) {
-      await addTester(name);
-    }
+    setLoading(true);
+    for (const name of names) await addTester(name);
+    setLoading(false);
   }
 
   return (
@@ -793,6 +803,31 @@ function TestadoresTab() {
           <strong style={{ color: "#e0e0e0" }}>Instagram → Configurações → Apps e Sites</strong> para aceitar.
         </p>
         <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: ".75rem" }}>
+          {/* App selector */}
+          {apps.length > 0 && (
+            <div>
+              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".08em" }}>App de destino</label>
+              <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }}>
+                {apps.map(app => (
+                  <button
+                    key={app.key}
+                    type="button"
+                    onClick={() => setAppKey(app.key)}
+                    style={{
+                      padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                      background: appKey === app.key ? "rgba(255,213,79,.18)" : "rgba(255,255,255,.04)",
+                      border: appKey === app.key ? "1px solid rgba(255,213,79,.4)" : "1px solid rgba(255,255,255,.08)",
+                      color: appKey === app.key ? "#FFD54F" : "#888",
+                      transition: "all .15s", fontFamily: "var(--font-sans)",
+                    }}
+                  >
+                    {app.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           <textarea
             value={input}
             onChange={e => setInput(e.target.value)}
@@ -800,25 +835,14 @@ function TestadoresTab() {
             rows={4}
             style={{ width: "100%", padding: "10px 12px", borderRadius: 9, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#f0f0f0", fontSize: 13, resize: "vertical", outline: "none", fontFamily: "var(--font-sans)" }}
           />
-          <div style={{ display: "flex", gap: ".75rem", alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }}>
-              <label style={{ display: "block", fontSize: 11, color: "#555", marginBottom: 4 }}>App (deixe vazio para o padrão)</label>
-              <input
-                value={appKey}
-                onChange={e => setAppKey(e.target.value)}
-                placeholder="1, 2, 3... (META_APP_1_ID)"
-                style={{ width: "100%", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#f0f0f0", fontSize: 13, outline: "none", fontFamily: "var(--font-sans)" }}
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={loading || !input.trim()}
-              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || !input.trim() ? "not-allowed" : "pointer", fontWeight: 700, opacity: !input.trim() ? 0.5 : 1, fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}
-            >
-              {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={14} />}
-              Adicionar
-            </button>
-          </div>
+          <button
+            type="submit"
+            disabled={loading || !input.trim()}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || !input.trim() ? "not-allowed" : "pointer", fontWeight: 700, opacity: !input.trim() ? 0.5 : 1, fontFamily: "var(--font-sans)" }}
+          >
+            {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={14} />}
+            Adicionar como Testador
+          </button>
         </form>
       </Panel>
 
@@ -830,6 +854,7 @@ function TestadoresTab() {
               <div key={i} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".6rem .85rem", borderRadius: 9, background: r.ok ? "rgba(34,197,94,.07)" : "rgba(239,68,68,.07)", border: `1px solid ${r.ok ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)"}` }}>
                 {r.ok ? <CheckCircle2 size={15} color="#4ade80" /> : <XCircle size={15} color="#f87171" />}
                 <span style={{ fontSize: 13, fontWeight: 600, color: r.ok ? "#4ade80" : "#f87171" }}>@{r.username}</span>
+                {r.appName && <span style={{ fontSize: 11, color: "#444", padding: "2px 7px", borderRadius: 5, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.07)" }}>{r.appName}</span>}
                 {r.ok
                   ? <span style={{ fontSize: 12, color: "#555", marginLeft: "auto" }}>Convite enviado ✓</span>
                   : <span style={{ fontSize: 12, color: "#f87171", marginLeft: "auto" }}>{r.error}</span>}
