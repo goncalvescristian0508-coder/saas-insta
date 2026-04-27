@@ -543,9 +543,15 @@ export default function SchedulePage() {
 
               {/* Videos multi-select */}
               <div>
-                <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  Vídeos da Biblioteca ({selectedVideoIds.length} selecionado{selectedVideoIds.length !== 1 ? "s" : ""})
-                </label>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                  <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    Vídeos da Biblioteca ({selectedVideoIds.length} selecionado{selectedVideoIds.length !== 1 ? "s" : ""})
+                  </label>
+                  <button type="button" onClick={() => setSelectedVideoIds(selectedVideoIds.length === videos.length ? [] : videos.map((v) => v.id))}
+                    style={{ fontSize: "0.72rem", fontWeight: 600, color: selectedVideoIds.length === videos.length ? "#f87171" : "var(--accent-gold)", background: "transparent", border: "none", cursor: "pointer", padding: 0 }}>
+                    {selectedVideoIds.length === videos.length ? "Desmarcar todos" : "Selecionar todos"}
+                  </button>
+                </div>
                 <div style={{ maxHeight: "170px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.25rem", padding: "0.35rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
                   {videos.map((v) => {
                     const checked = selectedVideoIds.includes(v.id);
