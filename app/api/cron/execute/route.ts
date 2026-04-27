@@ -57,9 +57,20 @@ async function runCron() {
   const warmups = await prisma.accountWarmup.findMany({ where: { isActive: true } });
   const warmupMap = new Map(warmups.map((w) => [w.accountId, w]));
 
-  // Process up to 10 posts per cron run, but at most 1 per account to avoid rate limits
+  // Find accounts already being processed in a concurrent cron run
+  const runningPosts = await prisma.scheduledPost.findMany({
+    where: { status: "RUNNING" },
+    select: { accountId: true },
+  });
+  const busyAccountIds = new Set(runningPosts.map((p) => p.accountId));
+
+  // Process up to 10 posts per cron run, 1 per account, skip accounts already running
   const allPending = await prisma.scheduledPost.findMany({
-    where: { status: "PENDING", scheduledAt: { lte: now } },
+    where: {
+      status: "PENDING",
+      scheduledAt: { lte: now },
+      accountId: { notIn: [...busyAccountIds] },
+    },
     include: { account: true, video: true },
     orderBy: { scheduledAt: "asc" },
     take: 50,
