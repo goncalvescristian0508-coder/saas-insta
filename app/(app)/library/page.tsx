@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   UploadCloud, FileVideo, Trash2, Clock, HardDrive,
-  CheckCircle, XCircle, Loader2, Film
+  CheckCircle, XCircle, Loader2, Film, Copy, AlertTriangle
 } from "lucide-react";
 
 interface Video {
@@ -35,6 +35,8 @@ export default function LibraryPage() {
   const [uploadFileName, setUploadFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [cleaning, setCleaning] = useState(false);
+  const [confirmClean, setConfirmClean] = useState<"duplicates" | "all" | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -161,6 +163,24 @@ export default function LibraryPage() {
     setDeletingId(null);
   }
 
+  async function cleanupVideos(type: "duplicates" | "all") {
+    setCleaning(true);
+    setConfirmClean(null);
+    const res = await fetch("/api/media/cleanup", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      showToast("success", data.deleted === 0 ? "Nenhum duplicado encontrado" : `${data.deleted} vídeo(s) removido(s)`);
+      await fetchVideos();
+    } else {
+      showToast("error", "Erro ao limpar vídeos");
+    }
+    setCleaning(false);
+  }
+
   const totalSize = videos.reduce((acc, v) => acc + v.sizeBytes, 0);
 
   return (
@@ -194,6 +214,27 @@ export default function LibraryPage() {
         </div>
       )}
 
+      {/* Confirm clean modal */}
+      {confirmClean && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="glass-panel" style={{ padding: "2rem", borderRadius: "16px", maxWidth: "400px", width: "90%", textAlign: "center" }}>
+            <AlertTriangle size={32} color="#f87171" style={{ margin: "0 auto 1rem" }} />
+            <h3 style={{ fontWeight: 700, marginBottom: "0.5rem" }}>Confirmar limpeza</h3>
+            <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", marginBottom: "1.5rem" }}>
+              {confirmClean === "duplicates"
+                ? "Remove todos os vídeos duplicados, mantendo apenas 1 cópia de cada."
+                : "Remove TODOS os vídeos da biblioteca permanentemente."}
+            </p>
+            <div style={{ display: "flex", gap: "0.75rem", justifyContent: "center" }}>
+              <button onClick={() => setConfirmClean(null)} style={{ padding: "0.6rem 1.25rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.875rem" }}>Cancelar</button>
+              <button onClick={() => void cleanupVideos(confirmClean)} disabled={cleaning} style={{ padding: "0.6rem 1.25rem", borderRadius: "8px", border: "none", background: "rgba(239,68,68,0.15)", color: "#f87171", cursor: "pointer", fontSize: "0.875rem", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                {cleaning ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={14} />} Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem" }}>
         <div>
@@ -215,6 +256,18 @@ export default function LibraryPage() {
               <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)" }}>
                 {videos.length} vídeo{videos.length !== 1 ? "s" : ""} · {formatBytes(totalSize)}
               </span>
+            </div>
+          )}
+          {videos.length > 0 && (
+            <div style={{ display: "flex", gap: "0.4rem" }}>
+              <button onClick={() => setConfirmClean("duplicates")} disabled={cleaning}
+                style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.45rem 0.85rem", borderRadius: "8px", border: "1px solid rgba(96,165,250,0.2)", background: "rgba(96,165,250,0.07)", color: "#60a5fa", fontSize: "0.78rem", cursor: "pointer", fontWeight: 600 }}>
+                <Copy size={13} /> Remover duplicados
+              </button>
+              <button onClick={() => setConfirmClean("all")} disabled={cleaning}
+                style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.45rem 0.85rem", borderRadius: "8px", border: "1px solid rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.07)", color: "#f87171", fontSize: "0.78rem", cursor: "pointer", fontWeight: 600 }}>
+                <Trash2 size={13} /> Apagar tudo
+              </button>
             </div>
           )}
           <button
