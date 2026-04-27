@@ -58,22 +58,25 @@ export async function POST(request: Request) {
 
   const start = new Date(scheduledAt);
   const intervalMs = (intervalSeconds ?? 30) * 1000;
+  // Each account gets its own time block so posts never overlap across accounts
+  const accountBlockMs = validVIds.length * intervalMs;
 
-  function getScheduledAt(videoIdx: number): Date {
+  function getScheduledAt(videoIdx: number, accountIdx: number): Date {
+    const accountOffset = accountIdx * accountBlockMs;
     if (batchSize && batchIntervalHours) {
       const batchIntervalMs = batchIntervalHours * 3600 * 1000;
       const blockIdx = Math.floor(videoIdx / batchSize);
       const posInBlock = videoIdx % batchSize;
-      return new Date(start.getTime() + blockIdx * batchIntervalMs + posInBlock * intervalMs);
+      return new Date(start.getTime() + accountOffset + blockIdx * batchIntervalMs + posInBlock * intervalMs);
     }
-    return new Date(start.getTime() + videoIdx * intervalMs);
+    return new Date(start.getTime() + accountOffset + videoIdx * intervalMs);
   }
 
   const schedules = await Promise.all(
-    validVIds.flatMap((vId, videoIdx) =>
-      accounts.map((account) =>
+    accounts.flatMap((account, accountIdx) =>
+      validVIds.map((vId, videoIdx) =>
         prisma.scheduledPost.create({
-          data: { userId: user.id, accountId: account.id, videoId: vId, caption, scheduledAt: getScheduledAt(videoIdx) },
+          data: { userId: user.id, accountId: account.id, videoId: vId, caption, scheduledAt: getScheduledAt(videoIdx, accountIdx) },
           include: {
             account: { select: { username: true } },
             video: { select: { originalName: true } },
