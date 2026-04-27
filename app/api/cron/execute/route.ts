@@ -38,12 +38,20 @@ export async function GET(request: Request) {
 
   const now = new Date();
 
-  // Reset ALL failed posts to PENDING so they're retried automatically on next run
-  // Permanent failures (bad video, disconnected account) will keep failing and can be manually deleted
+  // Reset posts stuck in RUNNING (cron crashed mid-execution) after 10 minutes
+  const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
+  await prisma.scheduledPost.updateMany({
+    where: { status: "RUNNING", updatedAt: { lte: tenMinutesAgo } },
+    data: { status: "PENDING" },
+  });
+
+  // Reset failed posts to PENDING only after a 2-hour backoff (prevents hammering rate-limited accounts)
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
   await prisma.scheduledPost.updateMany({
     where: {
       status: "FAILED",
       scheduledAt: { lte: now },
+      updatedAt: { lte: twoHoursAgo },
     },
     data: { status: "PENDING", errorMsg: null },
   });
@@ -52,13 +60,20 @@ export async function GET(request: Request) {
   const warmups = await prisma.accountWarmup.findMany({ where: { isActive: true } });
   const warmupMap = new Map(warmups.map((w) => [w.accountId, w]));
 
-  // Process up to 10 posts per cron run
-  const pending = await prisma.scheduledPost.findMany({
+  // Process up to 10 posts per cron run, but at most 1 per account to avoid rate limits
+  const allPending = await prisma.scheduledPost.findMany({
     where: { status: "PENDING", scheduledAt: { lte: now } },
     include: { account: true, video: true },
     orderBy: { scheduledAt: "asc" },
-    take: 10,
+    take: 50,
   });
+
+  const seenAccounts = new Set<string>();
+  const pending = allPending.filter((post) => {
+    if (seenAccounts.has(post.accountId)) return false;
+    seenAccounts.add(post.accountId);
+    return true;
+  }).slice(0, 10);
 
   const results = [];
 
