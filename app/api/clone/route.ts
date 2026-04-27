@@ -184,10 +184,12 @@ export async function POST(request: Request) {
   const biography = String(profileItem.biography ?? profileItem.bio ?? "");
   const profilePicUrl = String(profileItem.profilePicUrlHD ?? profileItem.profilePicUrl ?? "");
 
+  const seenUrls = new Set<string>();
   const reelsRaw = reelsItems
     .filter((p) => p.videoUrl)
-    .slice(0, postLimit ?? undefined)
-    .map((p) => ({ videoUrl: String(p.videoUrl), caption: String(p.caption ?? "") }));
+    .map((p) => ({ videoUrl: String(p.videoUrl), caption: String(p.caption ?? "") }))
+    .filter((r) => { if (seenUrls.has(r.videoUrl)) return false; seenUrls.add(r.videoUrl); return true; })
+    .slice(0, postLimit ?? undefined);
 
   if (reelsRaw.length === 0) return NextResponse.json({ error: "Nenhum reel encontrado para este perfil" }, { status: 404 });
 
