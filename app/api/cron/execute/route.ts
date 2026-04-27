@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
@@ -31,12 +32,7 @@ async function rehostVideo(rawUrl: string): Promise<{ publicUrl: string; storage
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-export async function GET(request: Request) {
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
+async function runCron() {
   const now = new Date();
 
   // Reset posts stuck in RUNNING (cron crashed mid-execution) after 10 minutes
@@ -168,5 +164,16 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ processed: results.length, results });
+}
+
+export async function GET(request: Request) {
+  const authHeader = request.headers.get("authorization");
+  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // Respond immediately so cron-job.org doesn't timeout (30s limit)
+  // Processing continues in background via waitUntil
+  waitUntil(runCron());
+  return NextResponse.json({ ok: true, message: "Processing started" });
 }
