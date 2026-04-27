@@ -57,7 +57,7 @@ async function downloadReelToLibrary(
     const urlHash = createHash("md5").update(videoUrl).digest("hex");
     const storagePath = `cloned/${userId}/${urlHash}.mp4`;
 
-    // If this video was already downloaded, return the existing record
+    // If this video was already downloaded (same URL hash), return the existing record
     const existing = await prisma.libraryVideo.findFirst({
       where: { userId, storagePath },
     });
@@ -66,6 +66,13 @@ async function downloadReelToLibrary(
     const res = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return null;
     const buffer = Buffer.from(await res.arrayBuffer());
+
+    // Also deduplicate by file size — same size = same video (Apify CDN URL variants)
+    const existingBySize = await prisma.libraryVideo.findFirst({
+      where: { userId, sizeBytes: buffer.length, mimeType: "video/mp4" },
+    });
+    if (existingBySize) return { id: existingBySize.id, publicUrl: existingBySize.publicUrl };
+
     const admin = storageAdmin();
     const { error } = await admin.storage
       .from("library-videos")
@@ -214,10 +221,16 @@ export async function POST(request: Request) {
     libraryVideos.push(...results);
   }
 
-  // Only keep reels that were successfully downloaded
+  // Only keep reels that were successfully downloaded, deduplicated by library ID
+  const seenLibraryIds = new Set<string>();
   const reels = reelsRaw
     .map((reel, i) => ({ ...reel, library: libraryVideos[i] }))
-    .filter((r) => r.library !== null) as Array<{ videoUrl: string; caption: string; library: { id: string; publicUrl: string } }>;
+    .filter((r) => {
+      if (!r.library) return false;
+      if (seenLibraryIds.has(r.library.id)) return false;
+      seenLibraryIds.add(r.library.id);
+      return true;
+    }) as Array<{ videoUrl: string; caption: string; library: { id: string; publicUrl: string } }>;
 
   if (reels.length === 0) return NextResponse.json({ error: "Falha ao baixar os vídeos. Tente novamente." }, { status: 500 });
 
