@@ -150,12 +150,32 @@ async function runCron() {
         where: { id: post.id },
         data: { status: "FAILED", errorMsg: msg },
       });
+
       const accountName = post.account.username ?? "conta";
-      await sendPushToUser(post.userId, {
-        title: "Falha no agendamento",
-        body: `@${accountName}: ${msg.slice(0, 100)}`,
-        url: "/schedule",
-      });
+      const isRateLimit = msg.toLowerCase().includes("too many actions") || msg.toLowerCase().includes("rate limit");
+
+      if (isRateLimit) {
+        // Push all pending posts for this account 4 hours forward (care mode)
+        const fourHours = 4 * 60 * 60 * 1000;
+        await prisma.$executeRaw`
+          UPDATE "ScheduledPost"
+          SET "scheduledAt" = "scheduledAt" + INTERVAL '4 hours'
+          WHERE "accountId" = ${post.accountId}
+            AND "status" = 'PENDING'
+        `;
+        await sendPushToUser(post.userId, {
+          title: "Conta em modo de cuidado",
+          body: `@${accountName} foi pausada por 4h (limite do Instagram). Posts reagendados automaticamente.`,
+          url: "/schedule",
+        });
+      } else {
+        await sendPushToUser(post.userId, {
+          title: "Falha no agendamento",
+          body: `@${accountName}: ${msg.slice(0, 100)}`,
+          url: "/schedule",
+        });
+      }
+
       results.push({ id: post.id, status: "failed", error: msg });
     } finally {
       if (rehostPath) {
