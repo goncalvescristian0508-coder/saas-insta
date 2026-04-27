@@ -181,18 +181,37 @@ async function runCron() {
       const isRateLimit = msg.toLowerCase().includes("too many actions") || msg.toLowerCase().includes("rate limit");
 
       if (isRateLimit) {
-        // Push all pending posts for this account 4 hours forward (care mode)
-        const fourHours = 4 * 60 * 60 * 1000;
-        await prisma.$executeRaw`
-          UPDATE "ScheduledPost"
-          SET "scheduledAt" = "scheduledAt" + INTERVAL '4 hours'
-          WHERE "accountId" = ${post.accountId}
-            AND "status" = 'PENDING'
-        `;
-        await sendPushToUser(post.userId, {
-          title: "Conta em modo de cuidado",
-          body: `@${accountName} foi pausada por 4h (limite do Instagram). Posts reagendados automaticamente.`,
-          url: "/schedule",
+        // Check if care mode was already activated recently (last 3h) to avoid repeated triggers
+        const threeHoursAgo = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+        const recentCareMode = await prisma.scheduledPost.findFirst({
+          where: {
+            accountId: post.accountId,
+            status: "FAILED",
+            errorMsg: { contains: "too many actions" },
+            updatedAt: { gte: threeHoursAgo },
+            id: { not: post.id },
+          },
+        });
+
+        if (!recentCareMode) {
+          // First activation: push all pending posts +4h
+          await prisma.$executeRaw`
+            UPDATE "ScheduledPost"
+            SET "scheduledAt" = "scheduledAt" + INTERVAL '4 hours'
+            WHERE "accountId" = ${post.accountId}
+              AND "status" = 'PENDING'
+          `;
+          await sendPushToUser(post.userId, {
+            title: "Conta em modo de cuidado",
+            body: `@${accountName} foi pausada por 4h (limite do Instagram). Posts reagendados automaticamente.`,
+            url: "/schedule",
+          });
+        }
+
+        // Push the failed post's scheduledAt +4h so it's not retried until then
+        await prisma.scheduledPost.update({
+          where: { id: post.id },
+          data: { scheduledAt: new Date(now.getTime() + 4 * 60 * 60 * 1000) },
         });
       } else {
         await sendPushToUser(post.userId, {
