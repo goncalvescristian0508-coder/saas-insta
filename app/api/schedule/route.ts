@@ -29,15 +29,17 @@ export async function POST(request: Request) {
   const body = await request.json();
   const {
     accountIds, videoId, videoIds, caption, scheduledAt,
-    intervalSeconds = 30, batchSize, batchIntervalHours,
+    intervalSeconds = 30, batchSize, batchIntervalHours, distributeVideos = false,
   } = body as {
     accountIds: string[]; videoId?: string; videoIds?: string[]; caption: string;
-    scheduledAt: string; intervalSeconds?: number; batchSize?: number; batchIntervalHours?: number;
+    scheduledAt: string; intervalSeconds?: number; batchSize?: number;
+    batchIntervalHours?: number; distributeVideos?: boolean;
   };
 
-  const vIds: string[] = Array.isArray(videoIds) && videoIds.length > 0
-    ? videoIds
-    : videoId ? [videoId] : [];
+  const vIdsRaw: string[] = Array.isArray(videoIds) && videoIds.length > 0
+    ? videoIds : videoId ? [videoId] : [];
+  // Deduplicate — never schedule the same video twice to the same account
+  const vIds = [...new Set(vIdsRaw)];
 
   if (!accountIds || vIds.length === 0 || !caption || !scheduledAt) {
     return NextResponse.json({ error: "Campos obrigatórios faltando" }, { status: 400 });
@@ -58,11 +60,9 @@ export async function POST(request: Request) {
 
   const start = new Date(scheduledAt);
   const intervalMs = (intervalSeconds ?? 30) * 1000;
-  // Each account gets its own time block so posts never overlap across accounts
-  const accountBlockMs = validVIds.length * intervalMs;
 
-  function getScheduledAt(videoIdx: number, accountIdx: number): Date {
-    const accountOffset = accountIdx * accountBlockMs;
+  function getScheduledAt(videoIdx: number, accountIdx: number, totalVidsForAccount: number): Date {
+    const accountOffset = accountIdx * totalVidsForAccount * intervalMs;
     if (batchSize && batchIntervalHours) {
       const batchIntervalMs = batchIntervalHours * 3600 * 1000;
       const blockIdx = Math.floor(videoIdx / batchSize);
@@ -72,18 +72,35 @@ export async function POST(request: Request) {
     return new Date(start.getTime() + accountOffset + videoIdx * intervalMs);
   }
 
+  let pairs: { accountIdx: number; accountId: string; vId: string; videoIdx: number }[];
+
+  if (distributeVideos) {
+    // Each account gets a different slice of videos — no account shares the same video
+    const perAccount = Math.ceil(validVIds.length / accounts.length);
+    pairs = accounts.flatMap((account, accountIdx) => {
+      const slice = validVIds.slice(accountIdx * perAccount, (accountIdx + 1) * perAccount);
+      return slice.map((vId, videoIdx) => ({ accountIdx, accountId: account.id, vId, videoIdx }));
+    });
+  } else {
+    // All accounts receive all videos, staggered in time
+    pairs = accounts.flatMap((account, accountIdx) =>
+      validVIds.map((vId, videoIdx) => ({ accountIdx, accountId: account.id, vId, videoIdx }))
+    );
+  }
+
   const schedules = await Promise.all(
-    accounts.flatMap((account, accountIdx) =>
-      validVIds.map((vId, videoIdx) =>
-        prisma.scheduledPost.create({
-          data: { userId: user.id, accountId: account.id, videoId: vId, caption, scheduledAt: getScheduledAt(videoIdx, accountIdx) },
-          include: {
-            account: { select: { username: true } },
-            video: { select: { originalName: true } },
-          },
-        })
-      )
-    )
+    pairs.map(({ accountIdx, accountId, vId, videoIdx }) => {
+      const totalVids = distributeVideos
+        ? Math.ceil(validVIds.length / accounts.length)
+        : validVIds.length;
+      return prisma.scheduledPost.create({
+        data: { userId: user.id, accountId, videoId: vId, caption, scheduledAt: getScheduledAt(videoIdx, accountIdx, totalVids) },
+        include: {
+          account: { select: { username: true } },
+          video: { select: { originalName: true } },
+        },
+      });
+    })
   );
 
   return NextResponse.json({ schedules });

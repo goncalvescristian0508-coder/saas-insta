@@ -285,6 +285,7 @@ export default function SchedulePage() {
   const [form, setForm] = useState({
     caption: "", ...getDefaultDateTime(),
     intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2,
+    distributeVideos: false,
   });
 
   const showToast = (type: "success" | "error", msg: string) => {
@@ -340,6 +341,7 @@ export default function SchedulePage() {
         caption: form.caption,
         scheduledAt,
         intervalSeconds: form.intervalSeconds,
+        distributeVideos: form.distributeVideos,
         ...(form.batchMode ? { batchSize: form.batchSize, batchIntervalHours: form.batchIntervalHours } : {}),
       }),
     });
@@ -349,7 +351,7 @@ export default function SchedulePage() {
       const count = Array.isArray(data.schedules) ? data.schedules.length : 1;
       showToast("success", `${count} post(s) agendado(s) com sucesso!`);
       setSelectedVideoIds([]);
-      setForm({ caption: "", ...getDefaultDateTime(), intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2 });
+      setForm({ caption: "", ...getDefaultDateTime(), intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2, distributeVideos: false });
       await loadData();
     } else {
       const data = await res.json();
@@ -568,6 +570,19 @@ export default function SchedulePage() {
 
               {/* Interval + batch mode */}
               <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem", padding: "0.85rem", background: "rgba(255,255,255,0.02)", borderRadius: "10px", border: "1px solid var(--border-color)" }}>
+                {/* Distribute toggle */}
+                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", padding: "0.5rem 0.6rem", borderRadius: "8px", background: form.distributeVideos ? "rgba(96,165,250,0.07)" : "rgba(255,255,255,0.02)", border: `1px solid ${form.distributeVideos ? "rgba(96,165,250,0.25)" : "transparent"}`, transition: "all 0.15s" }}>
+                  <input type="checkbox" checked={form.distributeVideos}
+                    onChange={(e) => setForm((f) => ({ ...f, distributeVideos: e.target.checked }))}
+                    style={{ accentColor: "#60a5fa" }} />
+                  <div>
+                    <span style={{ fontSize: "0.83rem", fontWeight: 600, color: form.distributeVideos ? "#60a5fa" : "var(--text-secondary)" }}>Distribuir entre contas</span>
+                    <p style={{ fontSize: "0.71rem", color: "var(--text-muted)", margin: 0 }}>
+                      {form.distributeVideos ? "Cada conta recebe vídeos diferentes" : "Todas as contas recebem os mesmos vídeos"}
+                    </p>
+                  </div>
+                </label>
+
                 <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
                   <div style={{ flex: 1 }}>
                     <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.3rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
@@ -602,11 +617,20 @@ export default function SchedulePage() {
                     </div>
                   </div>
                 )}
-                {selectedVideoIds.length > 1 && (
+                {selectedVideoIds.length > 0 && (
                   <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: 0 }}>
-                    {form.batchMode
-                      ? `${selectedVideoIds.length} vídeos em lotes de ${form.batchSize} · a cada ${form.batchIntervalHours}h`
-                      : `${selectedVideoIds.length} vídeos · ${form.intervalSeconds}s de intervalo`}
+                    {(() => {
+                      const nContas = Object.values(
+                        Object.fromEntries(Object.entries(selectedAccounts).filter(([,v]) => v))
+                      ).length;
+                      if (form.distributeVideos && nContas > 1) {
+                        const perConta = Math.ceil(selectedVideoIds.length / nContas);
+                        return `${selectedVideoIds.length} vídeos ÷ ${nContas} contas = ~${perConta} por conta`;
+                      }
+                      if (form.batchMode)
+                        return `${selectedVideoIds.length} vídeos em lotes de ${form.batchSize} · a cada ${form.batchIntervalHours}h`;
+                      return `${selectedVideoIds.length} vídeo${selectedVideoIds.length > 1 ? "s" : ""} · ${form.intervalSeconds}s de intervalo`;
+                    })()}
                   </p>
                 )}
               </div>
