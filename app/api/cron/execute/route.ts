@@ -45,13 +45,13 @@ export async function GET(request: Request) {
     data: { status: "PENDING" },
   });
 
-  // Reset failed posts to PENDING only after a 2-hour backoff (prevents hammering rate-limited accounts)
-  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  // Reset failed posts to PENDING after 5 minutes
+  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
   await prisma.scheduledPost.updateMany({
     where: {
       status: "FAILED",
       scheduledAt: { lte: now },
-      updatedAt: { lte: twoHoursAgo },
+      updatedAt: { lte: fiveMinutesAgo },
     },
     data: { status: "PENDING", errorMsg: null },
   });
