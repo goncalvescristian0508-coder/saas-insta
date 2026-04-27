@@ -265,6 +265,7 @@ export default function SchedulePage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [retryingId, setRetryingId] = useState<string | null>(null);
   const [clearing, setClearing] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
   const [confirmClear, setConfirmClear] = useState<null | "pending" | "done" | "failed" | "all">(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
@@ -388,6 +389,19 @@ export default function SchedulePage() {
       showToast("error", "Erro ao retentar post");
     }
     setRetryingId(null);
+  }
+
+  async function retryAllFailed() {
+    setRetryingAll(true);
+    const res = await fetch("/api/schedule", { method: "PATCH" });
+    if (res.ok) {
+      const data = await res.json();
+      showToast("success", `${data.retried} post(s) reenfileirado(s) para retry`);
+      await loadData();
+    } else {
+      showToast("error", "Erro ao retentar posts");
+    }
+    setRetryingAll(false);
   }
 
   async function deleteSchedule(id: string) {
@@ -670,9 +684,14 @@ export default function SchedulePage() {
                   </button>
                 )}
                 {schedules.some(s => s.status === "FAILED") && (
-                  <button onClick={() => setConfirmClear("failed")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.06)", color: "#f87171", fontSize: "0.75rem", cursor: "pointer" }}>
-                    <Trash2 size={11} /> Limpar falhos
-                  </button>
+                  <>
+                    <button onClick={() => void retryAllFailed()} disabled={retryingAll} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(96,165,250,0.25)", background: "rgba(96,165,250,0.08)", color: "#60a5fa", fontSize: "0.75rem", cursor: "pointer", fontWeight: 600 }}>
+                      {retryingAll ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={11} />} Retentar falhos
+                    </button>
+                    <button onClick={() => setConfirmClear("failed")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.2)", background: "rgba(239,68,68,0.06)", color: "#f87171", fontSize: "0.75rem", cursor: "pointer" }}>
+                      <Trash2 size={11} /> Limpar falhos
+                    </button>
+                  </>
                 )}
                 <button onClick={() => setConfirmClear("all")} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.7rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.08)", color: "#f87171", fontSize: "0.75rem", cursor: "pointer", fontWeight: 600 }}>
                   <Trash2 size={11} /> Limpar tudo

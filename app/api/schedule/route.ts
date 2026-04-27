@@ -106,6 +106,19 @@ export async function POST(request: Request) {
   return NextResponse.json({ schedules });
 }
 
+export async function PATCH() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const { count } = await prisma.scheduledPost.updateMany({
+    where: { userId: user.id, status: "FAILED" },
+    data: { status: "PENDING", errorMsg: null },
+  });
+
+  return NextResponse.json({ retried: count });
+}
+
 export async function DELETE(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
