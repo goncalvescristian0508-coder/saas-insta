@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard, Users, Tag, AlertTriangle,
-  Activity, Megaphone, LogOut, ChevronRight, Shield, ExternalLink,
+  Activity, Megaphone, LogOut, ChevronRight, Shield, ExternalLink, UserCheck,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -17,6 +17,7 @@ const navItems = [
   { name: "Erros de Conta",  tab: "erros",     icon: AlertTriangle },
   { name: "Registros",       tab: "logs",      icon: Activity },
   { name: "Mensagem Global", tab: "mensagem",  icon: Megaphone },
+  { name: "Testadores IG",   tab: "testadores", icon: UserCheck },
 ];
 
 function SidebarInner() {

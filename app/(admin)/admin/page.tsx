@@ -748,6 +748,100 @@ function MensagemTab() {
   );
 }
 
+/* ═══════════════════════ testadores tab ═══════════════════════ */
+function TestadoresTab() {
+  const [input, setInput] = useState("");
+  const [appKey, setAppKey] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [results, setResults] = useState<{ username: string; ok: boolean; error?: string }[]>([]);
+
+  async function addTester(username: string) {
+    const clean = username.trim().replace(/^@/, "");
+    if (!clean) return;
+    setLoading(true);
+    try {
+      const r = await fetch("/api/admin/add-instagram-tester", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ igUsername: clean, appKey: appKey || undefined }),
+      });
+      const d = await r.json() as { ok?: boolean; error?: string };
+      setResults(prev => [{ username: clean, ok: !!d.ok, error: d.error }, ...prev]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    // Support bulk: one per line or comma separated
+    const names = input.split(/[\n,]+/).map(s => s.trim().replace(/^@/, "")).filter(Boolean);
+    setInput("");
+    for (const name of names) {
+      await addTester(name);
+    }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem", maxWidth: 600 }}>
+      <PageHeader title="Testadores Instagram" subtitle="Adiciona usuários como Instagram Tester no app da Meta via API" />
+
+      <Panel style={{ padding: "1.5rem" }}>
+        <SectionLabel>Adicionar Testador</SectionLabel>
+        <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Cole o @ do Instagram (um por linha ou separado por vírgula). O usuário receberá um convite em{" "}
+          <strong style={{ color: "#e0e0e0" }}>Instagram → Configurações → Apps e Sites</strong> para aceitar.
+        </p>
+        <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: ".75rem" }}>
+          <textarea
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder={"@username1\n@username2\nou username1, username2"}
+            rows={4}
+            style={{ width: "100%", padding: "10px 12px", borderRadius: 9, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#f0f0f0", fontSize: 13, resize: "vertical", outline: "none", fontFamily: "var(--font-sans)" }}
+          />
+          <div style={{ display: "flex", gap: ".75rem", alignItems: "flex-end" }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: "block", fontSize: 11, color: "#555", marginBottom: 4 }}>App (deixe vazio para o padrão)</label>
+              <input
+                value={appKey}
+                onChange={e => setAppKey(e.target.value)}
+                placeholder="1, 2, 3... (META_APP_1_ID)"
+                style={{ width: "100%", padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#f0f0f0", fontSize: 13, outline: "none", fontFamily: "var(--font-sans)" }}
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || !input.trim() ? "not-allowed" : "pointer", fontWeight: 700, opacity: !input.trim() ? 0.5 : 1, fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}
+            >
+              {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={14} />}
+              Adicionar
+            </button>
+          </div>
+        </form>
+      </Panel>
+
+      {results.length > 0 && (
+        <Panel style={{ padding: "1.5rem" }}>
+          <SectionLabel>Resultados</SectionLabel>
+          <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+            {results.map((r, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".6rem .85rem", borderRadius: 9, background: r.ok ? "rgba(34,197,94,.07)" : "rgba(239,68,68,.07)", border: `1px solid ${r.ok ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)"}` }}>
+                {r.ok ? <CheckCircle2 size={15} color="#4ade80" /> : <XCircle size={15} color="#f87171" />}
+                <span style={{ fontSize: 13, fontWeight: 600, color: r.ok ? "#4ade80" : "#f87171" }}>@{r.username}</span>
+                {r.ok
+                  ? <span style={{ fontSize: 12, color: "#555", marginLeft: "auto" }}>Convite enviado ✓</span>
+                  : <span style={{ fontSize: 12, color: "#f87171", marginLeft: "auto" }}>{r.error}</span>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
 /* ═══════════════════════ main ═══════════════════════ */
 function AdminContent() {
   const searchParams = useSearchParams();
@@ -776,7 +870,8 @@ function AdminContent() {
       {tab === "usuarios"  && overview && <UsuariosTab users={overview.users} recentPosts={overview.recentPosts} onRefresh={loadOverview} />}
       {tab === "erros"     && overview && <ErrosTab users={overview.users} />}
       {tab === "logs"      && overview && <LogsTab posts={overview.recentPosts} />}
-      {tab === "mensagem"  && <MensagemTab />}
+      {tab === "mensagem"   && <MensagemTab />}
+      {tab === "testadores" && <TestadoresTab />}
     </div>
   );
 }
