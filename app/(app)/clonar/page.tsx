@@ -80,6 +80,8 @@ export default function ClonarPage() {
   const [loadingJobs, setLoadingJobs] = useState(true);
   const [detail, setDetail] = useState<CloneJobDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [retryingPostId, setRetryingPostId] = useState<string | null>(null);
+  const [retryingAll, setRetryingAll] = useState(false);
   const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
   const [justSaved, setJustSaved] = useState(false);
 
@@ -91,6 +93,22 @@ export default function ClonarPage() {
       time: `${pad(d.getHours())}:${pad(d.getMinutes())}`,
     };
   }
+
+  const retryPost = async (postId: string) => {
+    setRetryingPostId(postId);
+    await fetch(`/api/schedule/${postId}`, { method: "POST" });
+    setDetail((d) => d ? { ...d, posts: d.posts.map((p) => p.id === postId ? { ...p, status: "PENDING", errorMsg: null } : p) } : d);
+    setRetryingPostId(null);
+  };
+
+  const retryAllFailedInDetail = async () => {
+    if (!detail) return;
+    setRetryingAll(true);
+    const failed = detail.posts.filter((p) => p.status === "FAILED");
+    await Promise.all(failed.map((p) => fetch(`/api/schedule/${p.id}`, { method: "POST" })));
+    setDetail((d) => d ? { ...d, posts: d.posts.map((p) => p.status === "FAILED" ? { ...p, status: "PENDING", errorMsg: null } : p) } : d);
+    setRetryingAll(false);
+  };
 
   const openDetail = async (jobId: string) => {
     setLoadingDetail(true);
@@ -293,7 +311,14 @@ export default function ClonarPage() {
                   <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>{detail?.posts.length ?? 0} posts agendados</p>
                 </div>
               </div>
-              <button onClick={() => setDetail(null)} style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "1.2rem", lineHeight: 1 }}>✕</button>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                {detail?.posts.some((p) => p.status === "FAILED") && (
+                  <button onClick={() => void retryAllFailedInDetail()} disabled={retryingAll} style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.35rem 0.75rem", borderRadius: "7px", border: "1px solid rgba(96,165,250,0.25)", background: "rgba(96,165,250,0.08)", color: "#60a5fa", fontSize: "0.75rem", cursor: "pointer", fontWeight: 600 }}>
+                    {retryingAll ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={12} />} Retentar falhos
+                  </button>
+                )}
+                <button onClick={() => setDetail(null)} style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "1.2rem", lineHeight: 1 }}>✕</button>
+              </div>
             </div>
             {/* List */}
             <div style={{ overflowY: "auto", padding: "1rem 1.5rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
@@ -311,13 +336,18 @@ export default function ClonarPage() {
                       <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.caption || "(sem legenda)"}</p>
                       {p.errorMsg && <p style={{ fontSize: "0.72rem", color: "#f87171", marginTop: "0.2rem" }}>{p.errorMsg}</p>}
                     </div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0, textAlign: "right" }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0, textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.35rem" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
                         <Clock size={11} />
                         {p.status === "DONE" && p.postedAt
                           ? new Date(p.postedAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
                           : new Date(p.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
                       </div>
+                      {p.status === "FAILED" && (
+                        <button onClick={() => void retryPost(p.id)} disabled={retryingPostId === p.id} style={{ display: "flex", alignItems: "center", gap: "0.25rem", padding: "2px 7px", borderRadius: "5px", border: "1px solid rgba(96,165,250,0.2)", background: "rgba(96,165,250,0.07)", color: "#60a5fa", fontSize: "0.7rem", cursor: "pointer" }}>
+                          {retryingPostId === p.id ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={10} />} Retentar
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
