@@ -266,9 +266,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }
 
-    const tokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
+    // User's own tokens take priority, then fall back to system tokens
+    const userTokenRecords = await prisma.userApifyToken.findMany({
+      where: { userId: user.id, isActive: true },
+      orderBy: { createdAt: "asc" },
+      select: { token: true },
+    });
+    const userTokens = userTokenRecords.map((r) => r.token);
+    const systemTokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
       .split(",").map((t) => t.trim()).filter(Boolean);
-    if (tokens.length === 0) return NextResponse.json({ error: "Token Apify não configurado" }, { status: 500 });
+    const tokens = [...userTokens, ...systemTokens];
+    if (tokens.length === 0) return NextResponse.json({ error: "Token Apify não configurado. Adicione em Integrações." }, { status: 500 });
 
     const accounts = await prisma.instagramOAuthAccount.findMany({
       where: { id: { in: accountIds as string[] }, userId: user.id },

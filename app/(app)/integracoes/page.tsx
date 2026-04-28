@@ -1,11 +1,13 @@
 "use client";
 
-import { Plug, Save, Loader2, CheckCircle, Copy, AtSign, Bell } from "lucide-react";
+import { Plug, Save, Loader2, CheckCircle, Copy, AtSign, Bell, Plus, Trash2, Key, ToggleLeft, ToggleRight } from "lucide-react";
 import { useState, useEffect } from "react";
 
 const WEBHOOK_BASE = typeof window !== "undefined" ? window.location.origin : "";
 
 interface IgAccount { id: string; username: string; }
+
+interface ApifyToken { id: string; label: string; tokenMasked: string; isActive: boolean; createdAt: string; }
 
 export default function IntegracoesPage() {
   const [configs, setConfigs] = useState<Record<string, Record<string, string>>>({});
@@ -15,17 +17,64 @@ export default function IntegracoesPage() {
   const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<IgAccount[]>([]);
+  const [apifyTokens, setApifyTokens] = useState<ApifyToken[]>([]);
+  const [newToken, setNewToken] = useState("");
+  const [newLabel, setNewLabel] = useState("");
+  const [addingToken, setAddingToken] = useState(false);
+  const [addTokenError, setAddTokenError] = useState("");
 
   useEffect(() => {
     Promise.all([
       fetch("/api/integrations").then((r) => r.json()),
       fetch("/api/auth/instagram/accounts").then((r) => r.json()),
-    ]).then(([intData, accData]) => {
+      fetch("/api/user/apify-tokens").then((r) => r.json()),
+    ]).then(([intData, accData, apifyData]) => {
       setConfigs(intData.integrations ?? {});
       setDrafts(intData.integrations ?? {});
       setAccounts(accData.accounts ?? []);
+      setApifyTokens(apifyData.tokens ?? []);
     }).finally(() => setLoading(false));
   }, []);
+
+  const handleAddToken = async () => {
+    if (!newToken.trim()) return;
+    setAddingToken(true);
+    setAddTokenError("");
+    try {
+      const res = await fetch("/api/user/apify-tokens", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: newToken.trim(), label: newLabel.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setAddTokenError(data.error || "Erro ao adicionar"); return; }
+      setNewToken("");
+      setNewLabel("");
+      const r2 = await fetch("/api/user/apify-tokens");
+      const d2 = await r2.json();
+      setApifyTokens(d2.tokens ?? []);
+    } finally {
+      setAddingToken(false);
+    }
+  };
+
+  const handleDeleteToken = async (id: string) => {
+    await fetch("/api/user/apify-tokens", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    setApifyTokens((prev) => prev.filter((t) => t.id !== id));
+  };
+
+  const handleToggleToken = async (id: string, isActive: boolean) => {
+    await fetch("/api/user/apify-tokens", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, isActive }),
+    });
+    setApifyTokens((prev) => prev.map((t) => t.id === id ? { ...t, isActive } : t));
+  };
 
   const handleSave = async (type: string) => {
     setSaving(type);
@@ -69,6 +118,75 @@ export default function IntegracoesPage() {
       <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "2rem" }}>
         Configure o webhook da ApexVips e o bot do Telegram para rastreio de vendas.
       </p>
+
+      {/* Apify Tokens */}
+      <div style={{ marginBottom: "1.25rem" }}>
+        <Section title="Tokens Apify (Clonagem)" color="#60a5fa" badge="Clonagem">
+          <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "1rem", lineHeight: 1.6 }}>
+            Adicione seu próprio token da <strong style={{ color: "#fff" }}>Apify</strong> para usar nos clones de perfil. Cada usuário usa seu próprio crédito — sem depender do token compartilhado do sistema.
+            <br />
+            <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>
+              Crie sua conta em <strong>apify.com</strong> → Settings → Integrations → Personal API token
+            </span>
+          </p>
+
+          {/* Token list */}
+          {apifyTokens.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginBottom: "1rem" }}>
+              {apifyTokens.map((t) => (
+                <div key={t.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.6rem 0.85rem", borderRadius: "8px", background: t.isActive ? "rgba(96,165,250,0.06)" : "rgba(255,255,255,0.03)", border: `1px solid ${t.isActive ? "rgba(96,165,250,0.2)" : "rgba(255,255,255,0.07)"}` }}>
+                  <Key size={14} color={t.isActive ? "#60a5fa" : "var(--text-muted)"} style={{ flexShrink: 0 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    {t.label && <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "#fff", margin: 0 }}>{t.label}</p>}
+                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: 0, fontFamily: "monospace" }}>{t.tokenMasked}</p>
+                  </div>
+                  <button
+                    onClick={() => handleToggleToken(t.id, !t.isActive)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: t.isActive ? "#60a5fa" : "var(--text-muted)", padding: "0.2rem", flexShrink: 0 }}
+                    title={t.isActive ? "Desativar" : "Ativar"}
+                  >
+                    {t.isActive ? <ToggleRight size={20} /> : <ToggleLeft size={20} />}
+                  </button>
+                  <button
+                    onClick={() => handleDeleteToken(t.id)}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.2rem", flexShrink: 0 }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+                    title="Remover"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add new token */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            <input
+              type="text" placeholder="Label (ex: Minha conta Apify)" value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              style={{ padding: "0.5rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.85rem", outline: "none" }}
+            />
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input
+                type="password" placeholder="apify_api_xxxxxxxxxxxxxxxxxxxx" value={newToken}
+                onChange={(e) => setNewToken(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !addingToken && handleAddToken()}
+                style={{ flex: 1, padding: "0.5rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.85rem", outline: "none" }}
+              />
+              <button
+                onClick={handleAddToken} disabled={addingToken || !newToken.trim()}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", borderRadius: "8px", background: "rgba(96,165,250,0.15)", border: "1px solid rgba(96,165,250,0.3)", color: "#60a5fa", fontSize: "0.82rem", fontWeight: 700, cursor: addingToken ? "not-allowed" : "pointer", opacity: !newToken.trim() ? 0.5 : 1 }}
+              >
+                {addingToken ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={14} />}
+                Adicionar
+              </button>
+            </div>
+            {addTokenError && <p style={{ fontSize: "0.78rem", color: "#f87171", margin: 0 }}>{addTokenError}</p>}
+          </div>
+        </Section>
+      </div>
 
       {/* ApexVips */}
       <Section title="ApexVips — Rastreio por Conta" color="#f97316" badge="Tracking">
