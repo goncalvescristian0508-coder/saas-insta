@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
   Search, Send, LogOut, ChevronRight, Shield, Copy, Menu, X,
-  Flame, WifiOff, ShoppingBag, Plug, BarChart2, Camera, Activity,
+  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -24,7 +24,7 @@ const navItems = [
   { name: "Agendamento",       href: "/schedule",       icon: CalendarClock },
   { name: "Aquecimento",       href: "/aquecimento",    icon: Flame },
   { name: "Contas Off",        href: "/contas-off",     icon: WifiOff },
-  { name: "Compradas",         href: "/compradas",      icon: ShoppingBag },
+  { name: "Engajamento",        href: "/engajamento",    icon: TrendingUp },
   { name: "Vendas",            href: "/vendas",         icon: BarChart2 },
   { name: "Integrações",       href: "/integracoes",    icon: Plug },
 ];
