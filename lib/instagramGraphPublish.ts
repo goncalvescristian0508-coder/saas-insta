@@ -69,8 +69,10 @@ export async function exchangeCodeForShortLivedToken(
 
 export async function exchangeForLongLivedToken(
   shortLivedToken: string,
+  overrideAppSecret?: string,
 ): Promise<{ access_token: string; expires_in: number }> {
-  const { appSecret } = getMetaOAuthConfig();
+  const { appSecret: defaultSecret } = getMetaOAuthConfig();
+  const appSecret = overrideAppSecret || defaultSecret;
   if (!appSecret) {
     throw new Error("META_APP_SECRET ausente.");
   }
@@ -98,6 +100,26 @@ export async function exchangeForLongLivedToken(
   if (!access_token) {
     throw new Error("Long-lived token ausente na resposta.");
   }
+  return { access_token, expires_in };
+}
+
+export async function refreshLongLivedToken(
+  longLivedToken: string,
+): Promise<{ access_token: string; expires_in: number }> {
+  const u = new URL("https://graph.instagram.com/refresh_access_token");
+  u.searchParams.set("grant_type", "ig_refresh_token");
+  u.searchParams.set("access_token", longLivedToken);
+
+  const res = await fetch(u.toString());
+  const data = (await res.json()) as Record<string, unknown>;
+  if (!res.ok) {
+    const msg = (data.error as { message?: string })?.message || JSON.stringify(data);
+    throw new Error(String(msg));
+  }
+
+  const access_token = data.access_token as string;
+  const expires_in = Number(data.expires_in ?? 0);
+  if (!access_token) throw new Error("Token renovado ausente na resposta.");
   return { access_token, expires_in };
 }
 
@@ -143,7 +165,8 @@ async function pollContainerReady(
     const res = await fetch(u.toString());
     const data = (await res.json()) as {
       status_code?: string;
-      error?: { message?: string };
+      status?: string;
+      error?: { message?: string; error_subcode?: number };
     };
 
     if (!res.ok) {
@@ -153,7 +176,11 @@ async function pollContainerReady(
     const code = data.status_code;
     if (code === "FINISHED") return { ok: true };
     if (code === "ERROR" || code === "EXPIRED") {
-      return { ok: false, error: `Container status: ${code}` };
+      const detail = data.status ?? data.error?.message ?? "";
+      const hint = detail
+        ? `Container status: ${code} — ${detail}`
+        : `Container status: ${code} (vídeo inválido ou fora das especificações do Instagram)`;
+      return { ok: false, error: hint };
     }
     await sleep(1000);
   }

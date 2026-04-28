@@ -4,19 +4,20 @@ import NextLink from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard, Users, Tag, AlertTriangle,
-  Activity, Megaphone, LogOut, ChevronRight, Shield, ExternalLink, UserCheck,
+  Activity, Megaphone, LogOut, ChevronRight, Shield, ExternalLink, UserCheck, UserPlus,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const navItems = [
-  { name: "Painel Geral",    tab: "dashboard", icon: LayoutDashboard },
-  { name: "Usuários",        tab: "usuarios",  icon: Users },
-  { name: "Planos",          tab: "planos",    icon: Tag },
-  { name: "Erros de Conta",  tab: "erros",     icon: AlertTriangle },
-  { name: "Registros",       tab: "logs",      icon: Activity },
-  { name: "Mensagem Global", tab: "mensagem",  icon: Megaphone },
+  { name: "Painel Geral",    tab: "dashboard",  icon: LayoutDashboard },
+  { name: "Aprovações",      tab: "aprovacoes", icon: UserPlus },
+  { name: "Usuários",        tab: "usuarios",   icon: Users },
+  { name: "Planos",          tab: "planos",     icon: Tag },
+  { name: "Erros de Conta",  tab: "erros",      icon: AlertTriangle },
+  { name: "Registros",       tab: "logs",       icon: Activity },
+  { name: "Mensagem Global", tab: "mensagem",   icon: Megaphone },
   { name: "Testadores IG",   tab: "testadores", icon: UserCheck },
 ];
 

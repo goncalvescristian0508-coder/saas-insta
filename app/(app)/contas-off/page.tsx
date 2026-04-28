@@ -1,6 +1,6 @@
 "use client";
 
-import { WifiOff, RefreshCw, Trash2, Loader2, AlertTriangle } from "lucide-react";
+import { WifiOff, RefreshCw, Trash2, Loader2, AlertTriangle, ShieldOff, Clock } from "lucide-react";
 import { useState, useEffect } from "react";
 
 interface FallenAccount {
@@ -9,6 +9,8 @@ interface FallenAccount {
   source: "oauth" | "private";
   profilePicUrl?: string;
   lastError: string;
+  accountStatus?: string;
+  quarantinedUntil?: string | null;
 }
 
 export default function ContasOffPage() {
@@ -23,8 +25,12 @@ export default function ContasOffPage() {
       const all = (d.accounts ?? []) as Array<{
         id: string; username: string; source: "oauth" | "private";
         profilePicUrl?: string; lastError: string | null;
+        accountStatus?: string; quarantinedUntil?: string | null;
       }>;
-      setAccounts(all.filter((a) => !!a.lastError) as FallenAccount[]);
+      // Show accounts with errors OR suspended/quarantine status
+      setAccounts(all.filter((a) =>
+        !!a.lastError || a.accountStatus === "SUSPENDED" || a.accountStatus === "QUARANTINE"
+      ) as FallenAccount[]);
     } finally {
       setLoading(false);
     }
@@ -69,48 +75,61 @@ export default function ContasOffPage() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-          {accounts.map((account) => (
+          {accounts.map((account) => {
+            const isSuspended = account.accountStatus === "SUSPENDED";
+            const isQuarantine = account.accountStatus === "QUARANTINE";
+            const quarantineEnd = account.quarantinedUntil ? new Date(account.quarantinedUntil) : null;
+            const color = isSuspended ? "#f87171" : isQuarantine ? "#fb923c" : "#f87171";
+            const bgColor = isSuspended ? "rgba(239,68,68,0.05)" : isQuarantine ? "rgba(251,146,60,0.05)" : "rgba(239,68,68,0.05)";
+            const borderColor = isSuspended ? "rgba(239,68,68,0.2)" : isQuarantine ? "rgba(251,146,60,0.25)" : "rgba(239,68,68,0.2)";
+
+            return (
             <div key={account.id} style={{
               padding: "1rem 1.25rem", borderRadius: "12px",
-              background: "rgba(239,68,68,0.05)", border: "1px solid rgba(239,68,68,0.2)",
+              background: bgColor, border: `1px solid ${borderColor}`,
               display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.75rem",
             }}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: "0.85rem", flex: 1, minWidth: 0 }}>
                 <div style={{
                   width: "40px", height: "40px", borderRadius: "50%", flexShrink: 0,
-                  background: "rgba(239,68,68,0.2)",
+                  background: isSuspended ? "rgba(239,68,68,0.2)" : isQuarantine ? "rgba(251,146,60,0.2)" : "rgba(239,68,68,0.2)",
                   display: "flex", justifyContent: "center", alignItems: "center",
-                  fontSize: "0.9rem", fontWeight: 700, color: "#f87171",
+                  fontSize: "0.9rem", fontWeight: 700, color,
                 }}>
-                  {account.username.charAt(0).toUpperCase()}
+                  {isSuspended ? <ShieldOff size={18} /> : isQuarantine ? <Clock size={18} /> : account.username.charAt(0).toUpperCase()}
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <p style={{ fontWeight: 600 }}>@{account.username}</p>
                   <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.1rem" }}>
-                    <WifiOff size={12} color="#f87171" />
-                    <span style={{ fontSize: "0.72rem", color: "#f87171" }}>
-                      {account.source === "oauth" ? "OAuth" : "Login direto"} · Conta caída
-                    </span>
+                    {isSuspended
+                      ? <><ShieldOff size={12} color={color} /><span style={{ fontSize: "0.72rem", color, fontWeight: 700 }}>Suspensa pelo Instagram</span></>
+                      : isQuarantine
+                      ? <><Clock size={12} color={color} /><span style={{ fontSize: "0.72rem", color, fontWeight: 700 }}>Quarentena{quarantineEnd ? ` — retoma ${quarantineEnd.toLocaleString("pt-BR", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}` : ""}</span></>
+                      : <><WifiOff size={12} color={color} /><span style={{ fontSize: "0.72rem", color }}>{account.source === "oauth" ? "OAuth" : "Login direto"} · Conta caída</span></>
+                    }
                   </div>
-                  <div style={{
-                    marginTop: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px",
-                    background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.15)",
-                    display: "flex", alignItems: "flex-start", gap: "0.4rem",
-                  }}>
-                    <AlertTriangle size={12} color="#f87171" style={{ marginTop: "2px", flexShrink: 0 }} />
-                    <p style={{ fontSize: "0.75rem", color: "#f87171", lineHeight: 1.4 }}>{account.lastError}</p>
-                  </div>
+                  {account.lastError && (
+                    <div style={{
+                      marginTop: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px",
+                      background: `${bgColor}`, border: `1px solid ${borderColor}`,
+                      display: "flex", alignItems: "flex-start", gap: "0.4rem",
+                    }}>
+                      <AlertTriangle size={12} color={color} style={{ marginTop: "2px", flexShrink: 0 }} />
+                      <p style={{ fontSize: "0.75rem", color, lineHeight: 1.4 }}>{account.lastError}</p>
+                    </div>
+                  )}
                 </div>
               </div>
               <button
                 onClick={() => void handleRemove(account.id, account.source)}
                 title="Remover conta"
-                style={{ background: "none", border: "none", cursor: "pointer", color: "#f87171", padding: "0.4rem", borderRadius: "8px", flexShrink: 0 }}
+                style={{ background: "none", border: "none", cursor: "pointer", color, padding: "0.4rem", borderRadius: "8px", flexShrink: 0 }}
               >
                 <Trash2 size={17} />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

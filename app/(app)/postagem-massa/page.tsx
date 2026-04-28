@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Send, Loader2, CheckCircle2, XCircle, Film, UploadCloud, AlertCircle } from "lucide-react";
 import Link from "next/link";
 
-type AccountRow = { id: string; username: string; source?: "oauth" | "private" };
+type AccountRow = { id: string; username: string; source?: "oauth" | "private"; tokenExpired?: boolean };
 type VideoRow = { id: string; originalName: string; publicUrl: string; sizeBytes: number };
 type StatusRow = { accountId: string; username: string; success?: boolean; error?: string; pending?: boolean };
 
@@ -30,7 +30,7 @@ export default function BulkPostPage() {
         fetch("/api/media/upload"),
       ]);
       const [accData, vidData] = await Promise.all([accRes.json(), vidRes.json()]);
-      const list = (accData.accounts ?? []) as AccountRow[];
+      const list = ((accData.accounts ?? []) as AccountRow[]).filter((a) => !a.tokenExpired);
       setAccounts(list);
       const sel: Record<string, boolean> = {};
       list.forEach((a) => { sel[a.id] = true; });

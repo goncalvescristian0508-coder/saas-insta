@@ -15,6 +15,8 @@ interface OAuthAccount {
   hasSession: boolean;
   lastError: string | null;
   appKey?: string;
+  tokenExpiresAt?: string | null;
+  tokenExpired?: boolean;
 }
 
 interface MetaApp {
@@ -155,6 +157,7 @@ function AccountsPageInner() {
 
   const oauthAccounts = accounts.filter((a) => a.source === "oauth");
   const privateAccounts = accounts.filter((a) => a.source === "private");
+  const expiredAccounts = oauthAccounts.filter((a) => a.tokenExpired);
 
   const cardStyle: React.CSSProperties = {
     padding: "1rem 1.25rem",
@@ -221,6 +224,23 @@ function AccountsPageInner() {
           </button>
         </div>
       </div>
+
+      {expiredAccounts.length > 0 && (
+        <div style={{
+          marginBottom: "1.25rem", padding: "1rem 1.25rem", borderRadius: "10px",
+          backgroundColor: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.4)",
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+            <AlertTriangle size={16} color="#f87171" />
+            <span style={{ fontWeight: 700, color: "#f87171", fontSize: "0.9rem" }}>
+              {expiredAccounts.length} conta{expiredAccounts.length > 1 ? "s" : ""} com token expirado — posts falharão até reconectar
+            </span>
+          </div>
+          <p style={{ fontSize: "0.8rem", color: "#f87171", opacity: 0.8 }}>
+            Clique em <strong>Reconectar</strong> em cada conta abaixo ou reconecte via Instagram OAuth.
+          </p>
+        </div>
+      )}
 
       {error && (
         <div style={{
@@ -430,9 +450,10 @@ function AccountCard({
   cardStyle: React.CSSProperties;
 }) {
   const isError = !!account.lastError;
+  const isExpired = account.tokenExpired === true;
 
   return (
-    <div style={cardStyle}>
+    <div style={{ ...cardStyle, border: isExpired ? "1px solid rgba(239,68,68,0.5)" : (cardStyle.border as string) }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.85rem", flex: 1, minWidth: 0 }}>
         {account.profilePicUrl ? (
           <img src={account.profilePicUrl} alt={account.username}
@@ -440,7 +461,7 @@ function AccountCard({
         ) : (
           <div style={{
             width: "40px", height: "40px", borderRadius: "50%", flexShrink: 0,
-            background: isError ? "rgba(239,68,68,0.2)" : "linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045)",
+            background: isExpired ? "rgba(239,68,68,0.2)" : isError ? "rgba(239,68,68,0.2)" : "linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045)",
             display: "flex", justifyContent: "center", alignItems: "center",
             fontSize: "0.9rem", fontWeight: 700, color: "#fff",
           }}>
@@ -452,7 +473,9 @@ function AccountCard({
             @{account.username}
           </p>
           <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginTop: "0.1rem" }}>
-            {isError
+            {isExpired
+              ? <><AlertTriangle size={12} color="#f87171" /><span style={{ fontSize: "0.72rem", color: "#f87171", fontWeight: 700 }}>Token expirado</span></>
+              : isError
               ? <><WifiOff size={12} color="#f87171" /><span style={{ fontSize: "0.72rem", color: "#f87171" }}>Erro</span></>
               : <><Wifi size={12} color="#22c55e" /><span style={{ fontSize: "0.72rem", color: "#22c55e" }}>{account.source === "oauth" ? "OAuth" : "Login direto"}</span></>
             }
@@ -468,7 +491,21 @@ function AccountCard({
         </div>
       </div>
 
-      <div style={{ position: "relative", flexShrink: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
+        {isExpired && account.source === "oauth" && (
+          <button
+            onClick={() => { window.location.assign(`/api/auth/instagram?app=${account.appKey ?? "1"}`); }}
+            style={{
+              display: "flex", alignItems: "center", gap: "0.35rem",
+              padding: "0.4rem 0.8rem", borderRadius: "7px", border: "none",
+              background: "rgba(239,68,68,0.15)", color: "#f87171",
+              cursor: "pointer", fontSize: "0.78rem", fontWeight: 700,
+            }}
+          >
+            <RefreshCw size={12} /> Reconectar
+          </button>
+        )}
+      <div style={{ position: "relative" }}>
         <button
           onClick={() => setOpenMenuId(openMenuId === account.id ? null : account.id)}
           style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "0.4rem", borderRadius: "8px" }}
@@ -499,6 +536,7 @@ function AccountCard({
             </button>
           </div>
         )}
+      </div>
       </div>
     </div>
   );

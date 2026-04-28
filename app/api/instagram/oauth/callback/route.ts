@@ -76,12 +76,14 @@ export async function GET(request: Request) {
     let tokenExpiresAt: Date | null = null;
 
     try {
-      const long = await exchangeForLongLivedToken(short.access_token);
+      // Pass the correct app secret for the app used during OAuth
+      const long = await exchangeForLongLivedToken(short.access_token, appCfg?.appSecret);
       accessToken = long.access_token;
       if (long.expires_in > 0) {
         tokenExpiresAt = new Date(Date.now() + long.expires_in * 1000);
       }
     } catch {
+      // Short-lived token fallback — will expire in ~1h, force reconnect
       tokenExpiresAt = new Date(Date.now() + 50 * 60 * 1000);
     }
 

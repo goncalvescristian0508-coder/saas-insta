@@ -1,0 +1,3 @@
+ALTER TABLE "InstagramOAuthAccount"
+  ADD COLUMN IF NOT EXISTS "accountStatus" TEXT NOT NULL DEFAULT 'ACTIVE',
+  ADD COLUMN IF NOT EXISTS "quarantinedUntil" TIMESTAMP(3);

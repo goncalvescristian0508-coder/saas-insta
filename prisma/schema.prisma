@@ -32,6 +32,8 @@ model InstagramOAuthAccount {
   tokenExpiresAt    DateTime?
   appKey            String         @default("1")
   lastError         String?
+  accountStatus     String         @default("ACTIVE") // ACTIVE | SUSPENDED | QUARANTINE
+  quarantinedUntil  DateTime?
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
   scheduledPosts    ScheduledPost[]
@@ -84,6 +86,7 @@ model ScheduledPost {
   scheduledAt   DateTime
   status        ScheduledPostStatus   @default(PENDING)
   errorMsg      String?
+  retryCount    Int                   @default(0)
   postedAt      DateTime?
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt

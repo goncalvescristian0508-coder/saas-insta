@@ -11,6 +11,8 @@ interface Account {
   username: string;
   source?: "oauth" | "private";
   profilePicUrl?: string | null;
+  tokenExpired?: boolean;
+  accountStatus?: string;
 }
 
 interface Video {
@@ -305,8 +307,8 @@ export default function SchedulePage() {
       accRes.json(), vidRes.json(), schRes.json(),
     ]);
     const accs = (accData.accounts ?? []) as Account[];
-    // Only OAuth accounts support scheduling (DB foreign key)
-    const oauthAccs = accs.filter((a) => a.source === "oauth");
+    // Only OAuth accounts with valid tokens support scheduling
+    const oauthAccs = accs.filter((a) => a.source === "oauth" && !a.tokenExpired && a.accountStatus !== "SUSPENDED" && a.accountStatus !== "QUARANTINE");
     setAccounts(oauthAccs);
     const sel: Record<string, boolean> = {};
     oauthAccs.forEach((a) => { sel[a.id] = true; });

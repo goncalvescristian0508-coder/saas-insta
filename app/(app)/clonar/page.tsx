@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Copy, Search, Loader2, CheckCircle, XCircle, Users, Clock, CalendarClock, AlertCircle, Image, FileText, RefreshCw, CheckCheck, AlertTriangle, Download, Trash2, Bookmark, BookmarkCheck } from "lucide-react";
 
-interface Account { id: string; username: string; }
+interface Account { id: string; username: string; tokenExpired?: boolean; }
 
 interface ProfilePreview {
   username: string;
@@ -179,7 +179,7 @@ export default function ClonarPage() {
     fetch("/api/private-ig/accounts")
       .then((r) => r.json())
       .then((data) => {
-        const oauth = (data.accounts ?? []).filter((a: Account & { source?: string }) => a.source === "oauth");
+        const oauth = (data.accounts ?? []).filter((a: Account & { source?: string; tokenExpired?: boolean; accountStatus?: string }) => a.source === "oauth" && !a.tokenExpired && a.accountStatus !== "SUSPENDED" && a.accountStatus !== "QUARANTINE");
         setAccounts(oauth);
         const sel: Record<string, boolean> = {};
         oauth.forEach((a: Account) => { sel[a.id] = true; });

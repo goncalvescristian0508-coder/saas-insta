@@ -24,6 +24,7 @@ interface PrivateAccount { id: string; username: string; lastError?: string; }
 interface UserRow {
   id: string; email: string; name: string | null; createdAt: string;
   adminMessage: string | null; adminMessageAt: string | null;
+  approved: boolean | null;
   oauthAccounts: OAuthAccount[]; privateAccounts: PrivateAccount[];
   videoCount: number; postsTotal: number; postsDone: number; postsFailed: number;
   lastActivity: string | null; revenue: number; salesCount: number;
@@ -867,6 +868,106 @@ function TestadoresTab() {
   );
 }
 
+/* ═══════════════════════ aprovações tab ═══════════════════════ */
+interface PendingUser { id: string; email: string; name: string | null; createdAt: string; approved: boolean | null; }
+
+function AprovacõesTab({ users, onRefresh }: { users: PendingUser[]; onRefresh: () => void }) {
+  const [approving, setApproving] = useState<string | null>(null);
+
+  const pending = users.filter(u => u.approved === false);
+  const approved = users.filter(u => u.approved === true);
+
+  async function setApproval(userId: string, approve: boolean) {
+    setApproving(userId);
+    await fetch("/api/admin/approve-user", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId, approved: approve }),
+    });
+    setApproving(null);
+    onRefresh();
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}>
+      <PageHeader
+        title="Aprovações de Cadastro"
+        subtitle="Gerencie quem pode acessar a plataforma"
+        right={
+          <button onClick={onRefresh} style={{ width: 34, height: 34, borderRadius: 9, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.08)", color: "#555", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer" }}>
+            <RefreshCw size={14} />
+          </button>
+        }
+      />
+
+      <Panel style={{ padding: "1.25rem 1.4rem" }}>
+        <SectionLabel>Aguardando Aprovação ({pending.length})</SectionLabel>
+        {pending.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#444" }}>Nenhum cadastro pendente.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+            {pending.map(u => (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".75rem 1rem", borderRadius: 10, background: "rgba(255,213,79,.04)", border: "1px solid rgba(255,213,79,.12)" }}>
+                <div style={{ width: 36, height: 36, borderRadius: 8, background: "rgba(255,213,79,.12)", border: "1px solid rgba(255,213,79,.2)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 700, color: "#FFD54F", flexShrink: 0 }}>
+                  {(u.name ?? u.email)[0].toUpperCase()}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "#e0e0e0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name ?? "(sem nome)"}</p>
+                  <p style={{ fontSize: 11, color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.email} · {fmtDate(u.createdAt)}</p>
+                </div>
+                <button
+                  disabled={approving === u.id}
+                  onClick={() => void setApproval(u.id, false)}
+                  style={{ padding: "6px 14px", borderRadius: 8, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.25)", color: "#f87171", fontSize: 12, fontWeight: 600, cursor: approving === u.id ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)", display: "flex", alignItems: "center", gap: 5 }}
+                >
+                  {approving === u.id ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <XCircle size={12} />}
+                  Recusar
+                </button>
+                <button
+                  disabled={approving === u.id}
+                  onClick={() => void setApproval(u.id, true)}
+                  style={{ padding: "6px 14px", borderRadius: 8, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.25)", color: "#4ade80", fontSize: 12, fontWeight: 600, cursor: approving === u.id ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)", display: "flex", alignItems: "center", gap: 5 }}
+                >
+                  {approving === u.id ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <CheckCircle2 size={12} />}
+                  Aprovar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      <Panel style={{ padding: "1.25rem 1.4rem" }}>
+        <SectionLabel>Aprovados ({approved.length})</SectionLabel>
+        {approved.length === 0 ? (
+          <p style={{ fontSize: 13, color: "#444" }}>Nenhum usuário aprovado ainda.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: ".4rem" }}>
+            {approved.map(u => (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".6rem .875rem", borderRadius: 9, background: "rgba(34,197,94,.04)", border: "1px solid rgba(34,197,94,.08)" }}>
+                <CheckCircle2 size={14} color="#4ade80" style={{ flexShrink: 0 }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <p style={{ fontSize: 12, color: "#e0e0e0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {u.name ? `${u.name} · ` : ""}<span style={{ color: "#555" }}>{u.email}</span>
+                  </p>
+                </div>
+                <span style={{ fontSize: 11, color: "#444", flexShrink: 0 }}>{fmtDate(u.createdAt)}</span>
+                <button
+                  disabled={approving === u.id}
+                  onClick={() => void setApproval(u.id, false)}
+                  style={{ padding: "4px 10px", borderRadius: 7, background: "transparent", border: "1px solid rgba(239,68,68,.2)", color: "#f87171", fontSize: 11, fontWeight: 600, cursor: approving === u.id ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}
+                >
+                  Revogar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 /* ═══════════════════════ main ═══════════════════════ */
 function AdminContent() {
   const searchParams = useSearchParams();
@@ -882,7 +983,7 @@ function AdminContent() {
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
-  const needsOverview = tab === "usuarios" || tab === "erros" || tab === "logs";
+  const needsOverview = tab === "usuarios" || tab === "erros" || tab === "logs" || tab === "aprovacoes";
   if (loadingOverview && needsOverview) {
     return <Spinner />;
   }
@@ -890,11 +991,12 @@ function AdminContent() {
   return (
     <div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      {tab === "dashboard" && <DashboardTab />}
-      {tab === "planos"    && <PlanosTab />}
-      {tab === "usuarios"  && overview && <UsuariosTab users={overview.users} recentPosts={overview.recentPosts} onRefresh={loadOverview} />}
-      {tab === "erros"     && overview && <ErrosTab users={overview.users} />}
-      {tab === "logs"      && overview && <LogsTab posts={overview.recentPosts} />}
+      {tab === "dashboard"  && <DashboardTab />}
+      {tab === "aprovacoes" && overview && <AprovacõesTab users={overview.users} onRefresh={loadOverview} />}
+      {tab === "planos"     && <PlanosTab />}
+      {tab === "usuarios"   && overview && <UsuariosTab users={overview.users} recentPosts={overview.recentPosts} onRefresh={loadOverview} />}
+      {tab === "erros"      && overview && <ErrosTab users={overview.users} />}
+      {tab === "logs"       && overview && <LogsTab posts={overview.recentPosts} />}
       {tab === "mensagem"   && <MensagemTab />}
       {tab === "testadores" && <TestadoresTab />}
     </div>

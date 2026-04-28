@@ -42,13 +42,14 @@ async function runCron() {
     data: { status: "PENDING" },
   });
 
-  // Reset failed posts to PENDING after 5 minutes
-  const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+  // Retry failed posts up to 3 times (1 min interval). Rate-limit posts are protected — their scheduledAt is 4h ahead.
+  const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
   await prisma.scheduledPost.updateMany({
     where: {
       status: "FAILED",
       scheduledAt: { lte: now },
-      updatedAt: { lte: fiveMinutesAgo },
+      retryCount: { lt: 3 },
+      updatedAt: { lte: oneMinuteAgo },
     },
     data: { status: "PENDING", errorMsg: null },
   });
@@ -64,16 +65,23 @@ async function runCron() {
   });
   const busyAccountIds = new Set(runningPosts.map((p) => p.accountId));
 
-  // Process up to 10 posts per cron run, 1 per account, skip accounts already running
+  // Release quarantine on accounts whose quarantine period has ended
+  await prisma.instagramOAuthAccount.updateMany({
+    where: { accountStatus: "QUARANTINE", quarantinedUntil: { lte: now } },
+    data: { accountStatus: "ACTIVE", quarantinedUntil: null },
+  });
+
+  // Process up to 30 posts per cron run, 1 per account, skip suspended/quarantined/busy
   const allPending = await prisma.scheduledPost.findMany({
     where: {
       status: "PENDING",
       scheduledAt: { lte: now },
       accountId: { notIn: [...busyAccountIds] },
+      account: { accountStatus: "ACTIVE" },
     },
     include: { account: true, video: true },
     orderBy: { scheduledAt: "asc" },
-    take: 50,
+    take: 150,
   });
 
   const seenAccounts = new Set<string>();
@@ -81,21 +89,19 @@ async function runCron() {
     if (seenAccounts.has(post.accountId)) return false;
     seenAccounts.add(post.accountId);
     return true;
-  }).slice(0, 10);
+  }).slice(0, 30);
 
-  const results = [];
+  const results: { id: string; status: string; error?: string }[] = [];
 
-  for (const post of pending) {
-    // Warmup throttle: skip if account is in warmup and interval hasn't passed yet
+  // Process posts in parallel batches of 5
+  async function processPost(post: typeof pending[number]) {
+    // Warmup throttle
     const warmup = warmupMap.get(post.accountId);
-    if (warmup) {
-      if (warmup.lastPostedAt) {
-        const msSinceLast = now.getTime() - warmup.lastPostedAt.getTime();
-        const msRequired = warmup.intervalMinutes * 60 * 1000;
-        if (msSinceLast < msRequired) {
-          results.push({ id: post.id, status: "skipped_warmup" });
-          continue;
-        }
+    if (warmup?.lastPostedAt) {
+      const msSinceLast = now.getTime() - warmup.lastPostedAt.getTime();
+      const msRequired = warmup.intervalMinutes * 60 * 1000;
+      if (msSinceLast < msRequired) {
+        return { id: post.id, status: "skipped_warmup" };
       }
     }
 
@@ -180,16 +186,78 @@ async function runCron() {
         }
       }
 
-      results.push({ id: post.id, status: "done" });
+      return { id: post.id, status: "done" };
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Erro desconhecido";
+      const msgLower = msg.toLowerCase();
+      const newRetryCount = post.retryCount + 1;
       await prisma.scheduledPost.update({
         where: { id: post.id },
-        data: { status: "FAILED", errorMsg: msg },
+        data: { status: "FAILED", errorMsg: msg, retryCount: newRetryCount },
       });
 
       const accountName = post.account.username ?? "conta";
-      const isRateLimit = msg.toLowerCase().includes("too many actions") || msg.toLowerCase().includes("rate limit");
+      const isRateLimit = msgLower.includes("too many actions") || msgLower.includes("rate limit");
+
+      // Detect suspended account
+      const isSuspended =
+        msgLower.includes("suspended") ||
+        msgLower.includes("account has been disabled") ||
+        msgLower.includes("account disabled") ||
+        msgLower.includes("user has been disabled") ||
+        (msgLower.includes("disabled") && msgLower.includes("account"));
+
+      // Detect posting restriction (quarantine)
+      const isRestricted =
+        !isSuspended && (
+          msgLower.includes("user access is restricted") ||
+          msgLower.includes("action blocked") ||
+          msgLower.includes("checkpoint") ||
+          msgLower.includes("restricted") ||
+          msgLower.includes("posting is blocked") ||
+          msgLower.includes("please try again later")
+        );
+
+      if (isSuspended) {
+        await prisma.instagramOAuthAccount.update({
+          where: { id: post.accountId },
+          data: { accountStatus: "SUSPENDED", lastError: msg },
+        });
+        // Cancel all pending posts for this account
+        await prisma.scheduledPost.updateMany({
+          where: { accountId: post.accountId, status: "PENDING" },
+          data: { status: "FAILED", errorMsg: "Conta suspensa pelo Instagram." },
+        });
+        await sendPushToUser(post.userId, {
+          title: "⚠️ Conta suspensa",
+          body: `@${accountName} foi suspensa pelo Instagram e movida para Contas OFF.`,
+          url: "/contas-off",
+        });
+        return { id: post.id, status: "suspended" };
+      }
+
+      if (isRestricted) {
+        const quarantinedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000); // 24h
+        await prisma.instagramOAuthAccount.update({
+          where: { id: post.accountId },
+          data: { accountStatus: "QUARANTINE", quarantinedUntil, lastError: msg },
+        });
+        // Reschedule pending posts to after quarantine ends
+        await prisma.$executeRaw`
+          UPDATE "ScheduledPost"
+          SET "scheduledAt" = ${quarantinedUntil}::timestamp + (("scheduledAt" - NOW()) * 0.1)
+          WHERE "accountId" = ${post.accountId}
+            AND "status" = 'PENDING'
+        `;
+        await sendPushToUser(post.userId, {
+          title: "🔒 Conta em quarentena",
+          body: `@${accountName} está restrita de postar. Pausada por 24h e retomará automaticamente.`,
+          url: "/accounts",
+        });
+        return { id: post.id, status: "quarantine" };
+      }
+
+      const exhaustedRetries = newRetryCount >= 3;
 
       if (isRateLimit) {
         // Check if care mode was already activated recently (last 3h) to avoid repeated triggers
@@ -224,20 +292,34 @@ async function runCron() {
           where: { id: post.id },
           data: { scheduledAt: new Date(now.getTime() + 4 * 60 * 60 * 1000) },
         });
-      } else {
+      } else if (exhaustedRetries) {
+        // 3 consecutive failures — enter safety mode: delay post 4h and notify
+        await prisma.scheduledPost.update({
+          where: { id: post.id },
+          data: { scheduledAt: new Date(now.getTime() + 4 * 60 * 60 * 1000) },
+        });
         await sendPushToUser(post.userId, {
-          title: "Falha no agendamento",
-          body: `@${accountName}: ${msg.slice(0, 100)}`,
+          title: "Modo segurança ativado",
+          body: `@${accountName}: 3 tentativas falharam. Post adiado por 4h. Erro: ${msg.slice(0, 80)}`,
           url: "/schedule",
         });
       }
+      // else: still has retries left — silent retry in 1 min, no notification spam
 
-      results.push({ id: post.id, status: "failed", error: msg });
+      return { id: post.id, status: "failed", error: msg };
     } finally {
       if (rehostPath) {
         await storageAdmin().storage.from("library-videos").remove([rehostPath]).catch(() => null);
       }
     }
+  }
+
+  // Run in parallel batches of 5
+  const BATCH = 5;
+  for (let i = 0; i < pending.length; i += BATCH) {
+    const batch = pending.slice(i, i + BATCH);
+    const batchResults = await Promise.all(batch.map((post) => processPost(post)));
+    results.push(...batchResults);
   }
 
 }

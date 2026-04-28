@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { waitUntil } from "@vercel/functions";
 import { createClient } from "@/lib/supabase/server";
 import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
@@ -18,12 +19,12 @@ function storageAdmin() {
 }
 
 async function apifyRun(token: string, actorId: string, input: object): Promise<Record<string, unknown>[]> {
-  const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${token}&timeout=120&memory=256`;
+  const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${token}&timeout=240&memory=512`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
-    signal: AbortSignal.timeout(130_000),
+    signal: AbortSignal.timeout(250_000),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
@@ -44,7 +45,7 @@ async function updateBio(accessToken: string, igUserId: string, biography: strin
   }
 }
 
-// Downloads a video from Instagram URL and saves it to Supabase storage permanently.
+// Downloads a video from URL and saves it to Supabase storage permanently.
 // Returns the LibraryVideo id and publicUrl, or null if download fails.
 async function downloadReelToLibrary(
   videoUrl: string,
@@ -53,11 +54,9 @@ async function downloadReelToLibrary(
   index: number,
 ): Promise<{ id: string; publicUrl: string } | null> {
   try {
-    // Use a hash of the URL as filename — prevents duplicates across clone runs
     const urlHash = createHash("md5").update(videoUrl).digest("hex");
     const storagePath = `cloned/${userId}/${urlHash}.mp4`;
 
-    // If this video was already downloaded (same URL hash), return the existing record
     const existing = await prisma.libraryVideo.findFirst({
       where: { userId, storagePath },
     });
@@ -66,12 +65,6 @@ async function downloadReelToLibrary(
     const res = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return null;
     const buffer = Buffer.from(await res.arrayBuffer());
-
-    // Also deduplicate by file size — same size = same video (Apify CDN URL variants)
-    const existingBySize = await prisma.libraryVideo.findFirst({
-      where: { userId, sizeBytes: buffer.length, mimeType: "video/mp4" },
-    });
-    if (existingBySize) return { id: existingBySize.id, publicUrl: existingBySize.publicUrl };
 
     const admin = storageAdmin();
     const { error } = await admin.storage
@@ -137,6 +130,30 @@ async function scrapeAndSaveMedia(
     return saved;
   } catch {
     return 0;
+  }
+}
+
+// Downloads videos to library in background and updates posts with videoId.
+// Posts are already created with rawVideoUrl so the cron can post them immediately.
+async function downloadVideosBackground(
+  reels: Array<{ videoUrl: string; caption: string }>,
+  userId: string,
+  cloneJobId: string,
+) {
+  const BATCH = 3;
+  for (let i = 0; i < reels.length; i += BATCH) {
+    const batch = reels.slice(i, i + BATCH);
+    await Promise.all(
+      batch.map(async (reel, j) => {
+        const lib = await downloadReelToLibrary(reel.videoUrl, userId, reel.caption, i + j);
+        if (lib) {
+          await prisma.scheduledPost.updateMany({
+            where: { cloneJobId, rawVideoUrl: reel.videoUrl, status: "PENDING" },
+            data: { videoId: lib.id, rawVideoUrl: null },
+          });
+        }
+      })
+    );
   }
 }
 
@@ -209,31 +226,6 @@ export async function POST(request: Request) {
 
   if (reelsRaw.length === 0) return NextResponse.json({ error: "Nenhum reel encontrado para este perfil" }, { status: 404 });
 
-  // Download each unique reel video to Supabase immediately so URLs don't expire.
-  // We download in parallel batches of 5 to stay within timeout.
-  const libraryVideos: Array<{ id: string; publicUrl: string } | null> = [];
-  const BATCH = 5;
-  for (let i = 0; i < reelsRaw.length; i += BATCH) {
-    const batch = reelsRaw.slice(i, i + BATCH);
-    const results = await Promise.all(
-      batch.map((reel, j) => downloadReelToLibrary(reel.videoUrl, user.id, reel.caption, i + j))
-    );
-    libraryVideos.push(...results);
-  }
-
-  // Only keep reels that were successfully downloaded, deduplicated by library ID
-  const seenLibraryIds = new Set<string>();
-  const reels = reelsRaw
-    .map((reel, i) => ({ ...reel, library: libraryVideos[i] }))
-    .filter((r) => {
-      if (!r.library) return false;
-      if (seenLibraryIds.has(r.library.id)) return false;
-      seenLibraryIds.add(r.library.id);
-      return true;
-    }) as Array<{ videoUrl: string; caption: string; library: { id: string; publicUrl: string } }>;
-
-  if (reels.length === 0) return NextResponse.json({ error: "Falha ao baixar os vídeos. Tente novamente." }, { status: 500 });
-
   const start = new Date(startAt);
   const intervalMs = intervalMinutes * 60 * 1000;
 
@@ -243,29 +235,28 @@ export async function POST(request: Request) {
       sourceUsername: cleanUsername,
       profilePicUrl: profilePicUrl || null,
       accountUsernames: accounts.map((a) => a.username),
-      totalReels: reels.length,
+      totalReels: reelsRaw.length,
       clonedBio: cloneBio && !!biography,
       clonedPhoto: false,
     },
   });
 
-  await Promise.all(
-    reels.flatMap((reel, i) =>
-      accounts.map((account, accountIdx) =>
-        prisma.scheduledPost.create({
-          data: {
-            userId: user.id,
-            accountId: account.id,
-            videoId: reel.library.id,
-            rawVideoUrl: null,
-            caption: reel.caption,
-            scheduledAt: new Date(start.getTime() + i * intervalMs + accountIdx * 60_000),
-            cloneJobId: cloneJob.id,
-          },
-        })
-      )
-    )
-  );
+  // Create all posts immediately with rawVideoUrl — no download needed before responding.
+  // The execute cron downloads the video at post time via rehostVideo().
+  // Background task below will replace rawVideoUrl with a stable library videoId.
+  await prisma.scheduledPost.createMany({
+    data: reelsRaw.flatMap((reel, i) =>
+      accounts.map((account, accountIdx) => ({
+        userId: user.id,
+        accountId: account.id,
+        videoId: null,
+        rawVideoUrl: reel.videoUrl,
+        caption: reel.caption,
+        scheduledAt: new Date(start.getTime() + i * intervalMs + accountIdx * 60_000),
+        cloneJobId: cloneJob.id,
+      }))
+    ),
+  });
 
   if (cloneBio && biography) {
     await Promise.all(
@@ -276,20 +267,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const [storiesSaved, highlightsSaved] = await Promise.all([
-    cloneStories ? scrapeAndSaveMedia(tokens[0], cleanUsername, user.id, "stories") : Promise.resolve(0),
-    cloneHighlights ? scrapeAndSaveMedia(tokens[0], cleanUsername, user.id, "highlights") : Promise.resolve(0),
-  ]);
+  // Download videos to library in background — posts will post via rawVideoUrl in the meantime
+  waitUntil(
+    Promise.all([
+      downloadVideosBackground(reelsRaw, user.id, cloneJob.id),
+      cloneStories ? scrapeAndSaveMedia(token, cleanUsername, user.id, "stories") : Promise.resolve(0),
+      cloneHighlights ? scrapeAndSaveMedia(token, cleanUsername, user.id, "highlights") : Promise.resolve(0),
+    ])
+  );
 
-  const lastAt = new Date(start.getTime() + (reels.length - 1) * intervalMs);
+  const lastAt = new Date(start.getTime() + (reelsRaw.length - 1) * intervalMs);
 
   return NextResponse.json({
-    created: reels.length * accounts.length,
-    reels: reels.length,
+    created: reelsRaw.length * accounts.length,
+    reels: reelsRaw.length,
     accounts: accounts.length,
     firstPost: start.toISOString(),
     lastPost: lastAt.toISOString(),
-    storiesSaved,
-    highlightsSaved,
+    storiesSaved: 0,
+    highlightsSaved: 0,
   });
 }

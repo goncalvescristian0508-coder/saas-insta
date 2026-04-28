@@ -31,14 +31,17 @@ export async function updateSession(request: NextRequest) {
 
   const isAuthPage =
     request.nextUrl.pathname.startsWith("/login") ||
-    request.nextUrl.pathname.startsWith("/signup");
+    request.nextUrl.pathname.startsWith("/signup") ||
+    request.nextUrl.pathname.startsWith("/reset-password");
 
   const isApiAuthCallback =
     request.nextUrl.pathname.startsWith("/api/auth/callback") ||
     request.nextUrl.pathname.startsWith("/api/auth/instagram") ||
     request.nextUrl.pathname.startsWith("/connect/");
 
-  if (!user && !isAuthPage && !isApiAuthCallback) {
+  const isPendingApprovalPage = request.nextUrl.pathname.startsWith("/pending-approval");
+
+  if (!user && !isAuthPage && !isApiAuthCallback && !isPendingApprovalPage) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
@@ -48,6 +51,17 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);
+  }
+
+  // Block unapproved users (approved === false means explicitly pending; undefined = legacy user, pass through)
+  if (user && !isAuthPage && !isApiAuthCallback && !isPendingApprovalPage) {
+    const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
+    const isAdmin = user.email === adminEmail;
+    if (!isAdmin && user.app_metadata?.approved === false) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/pending-approval";
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;

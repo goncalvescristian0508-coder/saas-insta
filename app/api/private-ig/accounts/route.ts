@@ -34,11 +34,14 @@ export async function GET() {
         username: true,
         profilePictureUrl: true,
         lastError: true,
+        tokenExpiresAt: true,
+        appKey: true,
         createdAt: true,
       },
     }),
   ]);
 
+  const now = new Date();
   const oauthMapped = oauthRows.map((r) => ({
     id: r.id,
     username: r.username,
@@ -46,6 +49,11 @@ export async function GET() {
     source: "oauth" as const,
     profilePicUrl: r.profilePictureUrl ?? undefined,
     lastError: r.lastError,
+    tokenExpiresAt: r.tokenExpiresAt?.toISOString() ?? null,
+    tokenExpired: r.tokenExpiresAt ? r.tokenExpiresAt < now : false,
+    appKey: r.appKey ?? "1",
+    accountStatus: "ACTIVE",
+    quarantinedUntil: null,
     createdAt: r.createdAt,
   }));
 

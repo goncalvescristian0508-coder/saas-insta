@@ -18,7 +18,7 @@ export function parseApexVips(body: Record<string, unknown>): ParsedSale | null 
 
   // Determine status from event name (handle variants)
   let status: ParsedSale["status"];
-  if (event.includes("approv") || event.includes("paid") || event.includes("complet") || event.includes("confirm") || event === "payment_complete") {
+  if (event.includes("approv") || event.includes("paid") || event.includes("success") || event.includes("complet") || event.includes("confirm") || event === "payment_complete") {
     status = "APPROVED";
   } else if (event.includes("creat") || event.includes("generat") || event.includes("pending") || event.includes("pix_generated") || event.includes("wait")) {
     status = "PENDING";

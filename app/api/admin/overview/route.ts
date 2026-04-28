@@ -58,6 +58,7 @@ export async function GET() {
   const userMap: Record<string, {
     id: string; email: string; name: string | null; createdAt: string;
     adminMessage: string | null; adminMessageAt: string | null;
+    approved: boolean | null;
     oauthAccounts: typeof oauthAccounts;
     privateAccounts: typeof privateAccounts;
     videoCount: number;
@@ -74,6 +75,7 @@ export async function GET() {
       createdAt: u.created_at,
       adminMessage: u.user_metadata?.adminMessage ?? null,
       adminMessageAt: u.user_metadata?.adminMessageAt ?? null,
+      approved: u.app_metadata?.approved ?? null,
       oauthAccounts: [],
       privateAccounts: [],
       videoCount: 0,
@@ -90,7 +92,7 @@ export async function GET() {
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
         id: acc.userId, email: "(desconhecido)", name: null, createdAt: acc.createdAt.toISOString(),
-        adminMessage: null, adminMessageAt: null,
+        adminMessage: null, adminMessageAt: null, approved: null,
         oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0,
         postsDone: 0, postsFailed: 0, lastActivity: null,
         revenue: salesMap[acc.userId]?.revenue ?? 0, salesCount: salesMap[acc.userId]?.count ?? 0,
@@ -104,7 +106,7 @@ export async function GET() {
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
         id: acc.userId, email: "(desconhecido)", name: null, createdAt: acc.createdAt.toISOString(),
-        adminMessage: null, adminMessageAt: null,
+        adminMessage: null, adminMessageAt: null, approved: null,
         oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0,
         postsDone: 0, postsFailed: 0, lastActivity: null,
         revenue: salesMap[acc.userId]?.revenue ?? 0, salesCount: salesMap[acc.userId]?.count ?? 0,
