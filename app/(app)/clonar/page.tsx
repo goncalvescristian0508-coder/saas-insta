@@ -75,6 +75,7 @@ export default function ClonarPage() {
   const [cloning, setCloning] = useState(false);
   const [cloningStep, setCloningStep] = useState("");
   const [result, setResult] = useState<{ created: number; reels: number; lastPost: string; storiesSaved?: number; highlightsSaved?: number } | null>(null);
+  const [processingJobId, setProcessingJobId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [jobs, setJobs] = useState<CloneJob[]>([]);
   const [loadingJobs, setLoadingJobs] = useState(true);
@@ -139,6 +140,29 @@ export default function ClonarPage() {
       setLoadingJobs(false);
     }
   }, []);
+
+  // Poll while a clone job is being processed in the background
+  useEffect(() => {
+    if (!processingJobId) return;
+    const poll = async () => {
+      const res = await fetch("/api/clone/history");
+      const data = await res.json();
+      const list: CloneJob[] = data.jobs ?? [];
+      setJobs(list);
+      const job = list.find((j) => j.id === processingJobId);
+      if (!job) {
+        // Job was deleted — Apify failed
+        setError("Erro ao buscar postagens do perfil. Tente novamente.");
+        setProcessingJobId(null);
+      } else if (job.posts.total > 0) {
+        // Posts created — clone done
+        setResult({ created: job.posts.total, reels: job.totalReels, lastPost: "" });
+        setProcessingJobId(null);
+      }
+    };
+    const iv = setInterval(() => { void poll(); }, 5000);
+    return () => clearInterval(iv);
+  }, [processingJobId]);
 
   useEffect(() => {
     try {
@@ -250,10 +274,10 @@ export default function ClonarPage() {
       return;
     }
     setCloning(true);
-    const extraMsg = (cloneStories || cloneHighlights) ? " Isso pode levar alguns minutos." : " (pode levar 1-3 min)";
-    setCloningStep(`Buscando postagens do perfil...${extraMsg}`);
+    setCloningStep("Iniciando clone...");
     setError("");
     setResult(null);
+    setProcessingJobId(null);
     try {
       const startAt = new Date(`${startDate}T${startTime}`).toISOString();
       const res = await fetch("/api/clone", {
@@ -270,10 +294,10 @@ export default function ClonarPage() {
           startAt,
         }),
       });
-      setCloningStep("Criando agendamentos...");
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Erro ao clonar"); return; }
-      setResult(data);
+      // Server responds immediately — processing happens in background
+      setProcessingJobId(data.cloneJobId);
       await loadJobs();
     } catch {
       setError("Erro de conexão");
@@ -678,28 +702,34 @@ export default function ClonarPage() {
 
           {error && <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", color: "#f87171", fontSize: "0.85rem", marginBottom: "1rem" }}><XCircle size={15} /> {error}</div>}
 
-          {result && (
-            <div style={{ padding: "0.85rem 1rem", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: "10px", marginBottom: "1rem" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: "0.4rem" }}>
-                <CheckCircle size={16} color="#4ade80" />
-                <span style={{ fontSize: "0.875rem", color: "#4ade80", fontWeight: 600 }}>{result.created} posts agendados!</span>
+          {processingJobId && !result && (
+            <div style={{ padding: "0.85rem 1rem", background: "rgba(96,165,250,0.08)", border: "1px solid rgba(96,165,250,0.2)", borderRadius: "10px", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                <Loader2 size={16} color="#60a5fa" style={{ animation: "spin 1s linear infinite" }} />
+                <span style={{ fontSize: "0.875rem", color: "#60a5fa", fontWeight: 600 }}>Buscando reels... Os posts aparecerão em breve.</span>
               </div>
-              <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginLeft: "1.6rem" }}>
-                Último post em {new Date(result.lastPost).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-                {!!result.storiesSaved && ` · ${result.storiesSaved} stories salvos`}
-                {!!result.highlightsSaved && ` · ${result.highlightsSaved} destaques salvos`}
-              </p>
             </div>
           )}
 
-          <button onClick={handleClone} disabled={cloning || !profile || selectedCount === 0} className="btn btn-primary" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", opacity: (!profile || selectedCount === 0) ? 0.5 : 1 }}>
-            {cloning ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Clonando...</> : <><Copy size={16} /> Clonar Perfil</>}
-          </button>
-          {cloning && cloningStep && (
-            <p style={{ textAlign: "center", fontSize: "0.8rem", color: "var(--text-secondary)", marginTop: "0.75rem" }}>
-              ⏳ {cloningStep}
-            </p>
+          {result && (
+            <div style={{ padding: "0.85rem 1rem", background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.2)", borderRadius: "10px", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginBottom: result.lastPost ? "0.4rem" : 0 }}>
+                <CheckCircle size={16} color="#4ade80" />
+                <span style={{ fontSize: "0.875rem", color: "#4ade80", fontWeight: 600 }}>{result.created} posts agendados!</span>
+              </div>
+              {result.lastPost && (
+                <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginLeft: "1.6rem" }}>
+                  Último post em {new Date(result.lastPost).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                  {!!result.storiesSaved && ` · ${result.storiesSaved} stories salvos`}
+                  {!!result.highlightsSaved && ` · ${result.highlightsSaved} destaques salvos`}
+                </p>
+              )}
+            </div>
           )}
+
+          <button onClick={handleClone} disabled={cloning || !!processingJobId || !profile || selectedCount === 0} className="btn btn-primary" style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", opacity: (!profile || selectedCount === 0) ? 0.5 : 1 }}>
+            {cloning ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Iniciando...</> : processingJobId ? <><Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Processando...</> : <><Copy size={16} /> Clonar Perfil</>}
+          </button>
         </div>
       </div>
 
@@ -721,6 +751,7 @@ export default function ClonarPage() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
             {jobs.map((job) => {
+              const isProcessing = job.totalReels === 0 && job.posts.total === 0;
               const pct = job.posts.total > 0 ? Math.round((job.posts.done / job.posts.total) * 100) : 0;
               const allDone = job.posts.pending === 0 && job.posts.failed === 0 && job.posts.done > 0;
               const hasFailed = job.posts.failed > 0;
@@ -752,19 +783,26 @@ export default function ClonarPage() {
 
                   {/* Stats */}
                   <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", color: "#4ade80", fontWeight: 700, fontSize: "0.95rem" }}>
-                        <CheckCheck size={14} /> {job.posts.done}
+                    {isProcessing && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "#60a5fa", fontSize: "0.82rem", fontWeight: 600 }}>
+                        <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Buscando reels...
                       </div>
-                      <div style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>publicados</div>
-                    </div>
-                    <div style={{ textAlign: "center" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", color: "#60a5fa", fontWeight: 700, fontSize: "0.95rem" }}>
-                        <Clock size={14} /> {job.posts.pending}
+                    )}
+                    {!isProcessing && <>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", color: "#4ade80", fontWeight: 700, fontSize: "0.95rem" }}>
+                          <CheckCheck size={14} /> {job.posts.done}
+                        </div>
+                        <div style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>publicados</div>
                       </div>
-                      <div style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>pendentes</div>
-                    </div>
-                    {job.posts.failed > 0 && (
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", color: "#60a5fa", fontWeight: 700, fontSize: "0.95rem" }}>
+                          <Clock size={14} /> {job.posts.pending}
+                        </div>
+                        <div style={{ fontSize: "0.68rem", color: "var(--text-secondary)" }}>pendentes</div>
+                      </div>
+                    </>}
+                    {!isProcessing && job.posts.failed > 0 && (
                       <div style={{ textAlign: "center" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "0.3rem", color: "#f87171", fontWeight: 700, fontSize: "0.95rem" }}>
                           <AlertTriangle size={14} /> {job.posts.failed}
