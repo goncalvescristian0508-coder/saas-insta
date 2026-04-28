@@ -245,67 +245,73 @@ async function processCloneJob(p: ProcessParams) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  const body = await request.json() as {
-    username?: string;
-    accountIds?: string[];
-    intervalMinutes?: number;
-    postLimit?: number | null;
-    cloneBio?: boolean;
-    cloneStories?: boolean;
-    cloneHighlights?: boolean;
-    startAt?: string;
-  };
+    const body = await request.json() as {
+      username?: string;
+      accountIds?: string[];
+      intervalMinutes?: number;
+      postLimit?: number | null;
+      cloneBio?: boolean;
+      cloneStories?: boolean;
+      cloneHighlights?: boolean;
+      startAt?: string;
+    };
 
-  const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, cloneStories = false, cloneHighlights = false, startAt } = body;
-  if (!username || !accountIds?.length || !startAt) {
-    return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
-  }
+    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, cloneStories = false, cloneHighlights = false, startAt } = body;
+    if (!username || !accountIds?.length || !startAt) {
+      return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
+    }
 
-  const tokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
-    .split(",").map((t) => t.trim()).filter(Boolean);
-  if (tokens.length === 0) return NextResponse.json({ error: "Token Apify não configurado" }, { status: 500 });
+    const tokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
+      .split(",").map((t) => t.trim()).filter(Boolean);
+    if (tokens.length === 0) return NextResponse.json({ error: "Token Apify não configurado" }, { status: 500 });
 
-  const accounts = await prisma.instagramOAuthAccount.findMany({
-    where: { id: { in: accountIds }, userId: user.id },
-  });
-  if (accounts.length === 0) return NextResponse.json({ error: "Nenhuma conta válida" }, { status: 404 });
+    const accounts = await prisma.instagramOAuthAccount.findMany({
+      where: { id: { in: accountIds as string[] }, userId: user.id },
+    });
+    if (accounts.length === 0) return NextResponse.json({ error: "Nenhuma conta válida" }, { status: 404 });
 
-  const cleanUsername = username.replace("@", "").trim();
-  const start = new Date(startAt);
-  const intervalMs = intervalMinutes * 60 * 1000;
+    const cleanUsername = (username as string).replace("@", "").trim();
+    const start = new Date(startAt as string);
+    const intervalMs = intervalMinutes * 60 * 1000;
 
-  // Create the job immediately (totalReels=0 = processing)
-  const cloneJob = await prisma.cloneJob.create({
-    data: {
+    // Create the job immediately (totalReels=0 = processing)
+    const cloneJob = await prisma.cloneJob.create({
+      data: {
+        userId: user.id,
+        sourceUsername: cleanUsername,
+        profilePicUrl: null,
+        accountUsernames: accounts.map((a) => a.username),
+        totalReels: 0,
+        clonedBio: false,
+        clonedPhoto: false,
+      },
+    });
+
+    // All heavy work (Apify + posts + library) runs in background
+    waitUntil(processCloneJob({
+      cloneJobId: cloneJob.id,
       userId: user.id,
-      sourceUsername: cleanUsername,
-      profilePicUrl: null,
-      accountUsernames: accounts.map((a) => a.username),
-      totalReels: 0,
-      clonedBio: false,
-      clonedPhoto: false,
-    },
-  });
+      accounts,
+      tokens,
+      cleanUsername,
+      start,
+      intervalMs,
+      postLimit,
+      cloneBio,
+      cloneStories,
+      cloneHighlights,
+    }));
 
-  // All heavy work (Apify + posts + library) runs in background
-  waitUntil(processCloneJob({
-    cloneJobId: cloneJob.id,
-    userId: user.id,
-    accounts,
-    tokens,
-    cleanUsername,
-    start,
-    intervalMs,
-    postLimit,
-    cloneBio,
-    cloneStories,
-    cloneHighlights,
-  }));
-
-  // Respond immediately — client polls for completion
-  return NextResponse.json({ ok: true, cloneJobId: cloneJob.id });
+    // Respond immediately — client polls for completion
+    return NextResponse.json({ ok: true, cloneJobId: cloneJob.id });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[clone POST]", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 }
