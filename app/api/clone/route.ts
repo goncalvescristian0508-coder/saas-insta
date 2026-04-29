@@ -242,32 +242,32 @@ async function processCloneJob(p: ProcessParams) {
     }) : [];
 
     // Per-account sets for quick lookup
-    const seenUrls = new Map<string, Set<string>>();
-    const seenVideoIds = new Map<string, Set<string>>();
-    const seenCaptions = new Map<string, Set<string>>();
+    const acctSeenUrls = new Map<string, Set<string>>();
+    const acctSeenVideoIds = new Map<string, Set<string>>();
+    const acctSeenCaptions = new Map<string, Set<string>>();
     for (const a of p.accounts) {
-      seenUrls.set(a.id, new Set());
-      seenVideoIds.set(a.id, new Set());
-      seenCaptions.set(a.id, new Set());
+      acctSeenUrls.set(a.id, new Set());
+      acctSeenVideoIds.set(a.id, new Set());
+      acctSeenCaptions.set(a.id, new Set());
     }
     for (const r of existingByUrl) {
-      if (r.rawVideoUrl) seenUrls.get(r.accountId)?.add(r.rawVideoUrl);
+      if (r.rawVideoUrl) acctSeenUrls.get(r.accountId)?.add(r.rawVideoUrl);
     }
     for (const r of existingByLibId) {
-      if (r.videoId) seenVideoIds.get(r.accountId)?.add(r.videoId);
+      if (r.videoId) acctSeenVideoIds.get(r.accountId)?.add(r.videoId);
     }
     for (const r of existingByCaption) {
-      if (r.caption) seenCaptions.get(r.accountId)?.add(r.caption.trim());
+      if (r.caption) acctSeenCaptions.get(r.accountId)?.add(r.caption.trim());
     }
 
     // Create all posts immediately with rawVideoUrl (skipping duplicates per account)
     const postsToCreate = reelsRaw.flatMap((reel, i) =>
       p.accounts.flatMap((account, accountIdx) => {
-        if (seenUrls.get(account.id)!.has(reel.videoUrl)) return [];
+        if (acctSeenUrls.get(account.id)!.has(reel.videoUrl)) return [];
         const libId = pathToLibId.get(storagePaths[i]);
-        if (libId && seenVideoIds.get(account.id)!.has(libId)) return [];
+        if (libId && acctSeenVideoIds.get(account.id)!.has(libId)) return [];
         const caption = reel.caption.trim();
-        if (caption.length > 10 && seenCaptions.get(account.id)!.has(caption)) return [];
+        if (caption.length > 10 && acctSeenCaptions.get(account.id)!.has(caption)) return [];
         return [{
           userId: p.userId,
           accountId: account.id,
