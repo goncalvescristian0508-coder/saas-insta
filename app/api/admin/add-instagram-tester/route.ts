@@ -10,10 +10,6 @@ async function sendTesterInvite(
   appId: string,
   accessToken: string,
 ): Promise<{ username: string; ok: boolean; error?: string }> {
-  // Pass the Instagram username directly — the /roles endpoint accepts it.
-  // Do NOT try to resolve to a numeric ID: the Instagram Graph API returns
-  // app-scoped IGSIDs that are unknown to the Facebook Graph API, causing
-  // "Object does not exist" errors.
   const body = new URLSearchParams({
     user: clean,
     role: "instagram_testers",
@@ -32,7 +28,7 @@ async function sendTesterInvite(
     const errMsg = data.error?.message ?? "Erro ao adicionar tester";
     const code = data.error?.code;
     let hint = "";
-    if (code === 200 || code === 190) hint = " — verifique o App Secret";
+    if (code === 200 || code === 190) hint = " — verifique o token de admin";
     return { username: clean, ok: false, error: `${errMsg}${hint}` };
   }
 
@@ -55,7 +51,6 @@ export async function POST(request: Request) {
     appKey?: string;
   };
 
-  // Support both single and bulk
   const raw: string[] = body.igUsernames?.length
     ? body.igUsernames
     : body.igUsername ? [body.igUsername] : [];
@@ -66,7 +61,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Nenhum username fornecido" }, { status: 400 });
   }
 
-  // Resolve credentials once
+  // Resolve app ID
   let appId: string | undefined;
   let appSecret: string | undefined;
 
@@ -94,19 +89,37 @@ export async function POST(request: Request) {
     }
   }
 
-  if (!appId || !appSecret) {
-    return NextResponse.json({ error: "META_APP_ID / META_APP_SECRET não configurados" }, { status: 500 });
+  if (!appId) {
+    return NextResponse.json({ error: "META_APP_ID não configurado" }, { status: 500 });
   }
 
-  const accessToken = `${appId}|${appSecret}`;
+  // Prefer a long-lived User Access Token (needed for Business-managed apps).
+  // Set META_ADMIN_ACCESS_TOKEN_<key> (e.g. META_ADMIN_ACCESS_TOKEN_2) in Vercel env vars.
+  // Falls back to App Access Token (appId|appSecret) for non-Business apps.
+  const adminToken =
+    (body.appKey ? (process.env[`META_ADMIN_ACCESS_TOKEN_${body.appKey}`] || "").trim() : "") ||
+    (process.env["META_ADMIN_ACCESS_TOKEN"] || "").trim();
 
-  // Validate credentials once
-  const validateRes = await fetch(`https://graph.facebook.com/v21.0/app?access_token=${accessToken}`);
-  if (!validateRes.ok) {
-    const vd = await validateRes.json().catch(() => ({})) as { error?: { message?: string } };
-    return NextResponse.json({
-      error: `Credenciais inválidas (App ID: ${appId}). Detalhe: ${vd.error?.message ?? "desconhecido"}`,
-    }, { status: 500 });
+  let accessToken: string;
+
+  if (adminToken) {
+    accessToken = adminToken;
+  } else {
+    if (!appSecret) {
+      return NextResponse.json({
+        error: "App gerenciado por Business Manager requer META_ADMIN_ACCESS_TOKEN_" + (body.appKey ?? "") + " no Vercel. Gere um User Access Token de admin no Meta API Explorer e adicione nas env vars.",
+      }, { status: 500 });
+    }
+    accessToken = `${appId}|${appSecret}`;
+
+    // Validate App Access Token
+    const validateRes = await fetch(`https://graph.facebook.com/v21.0/app?access_token=${accessToken}`);
+    if (!validateRes.ok) {
+      const vd = await validateRes.json().catch(() => ({})) as { error?: { message?: string } };
+      return NextResponse.json({
+        error: `Credenciais inválidas (App ID: ${appId}). Detalhe: ${vd.error?.message ?? "desconhecido"}`,
+      }, { status: 500 });
+    }
   }
 
   // Send all invites in parallel
@@ -123,7 +136,6 @@ export async function POST(request: Request) {
   const ok = results.filter(r => r.ok).length;
   const errors = results.filter(r => !r.ok).length;
 
-  // Backwards-compat: single username returns flat ok/username fields too
   if (usernames.length === 1) {
     const r = results[0];
     if (!r.ok) return NextResponse.json({ error: r.error, results }, { status: 400 });
