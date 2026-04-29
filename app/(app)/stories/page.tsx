@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Camera, Loader2, Download, Trash2, CheckCircle, XCircle,
-  Play, Image as ImageIcon, Search, RefreshCw,
+  Play, Image as ImageIcon, Search, RefreshCw, Send, Users,
+  Shuffle, Check, Square, CheckSquare, ChevronDown, ChevronUp,
 } from "lucide-react";
 
 interface StoryItem {
@@ -14,6 +15,19 @@ interface StoryItem {
   mimeType: string;
   storagePath: string;
   createdAt: string;
+}
+
+interface Account {
+  id: string;
+  username: string;
+  profilePictureUrl: string | null;
+}
+
+interface PublishResult {
+  accountId: string;
+  username: string;
+  status: "ok" | "error";
+  error?: string;
 }
 
 function formatBytes(bytes: number) {
@@ -42,48 +56,59 @@ function Toast({ type, msg }: { type: "success" | "error"; msg: string }) {
   );
 }
 
-function StoryCard({ item, onDelete, onDownload, isDeleting }: {
+function StoryCard({ item, onDelete, onDownload, isDeleting, selectable, selected, onSelect }: {
   item: StoryItem;
   onDelete: () => void;
   onDownload: () => void;
   isDeleting: boolean;
+  selectable: boolean;
+  selected: boolean;
+  onSelect: () => void;
 }) {
   const isVideo = item.mimeType === "video/mp4";
   return (
     <div
       className="glass-panel"
-      style={{ overflow: "hidden", borderRadius: "12px", transition: "transform .2s" }}
-      onMouseEnter={e => (e.currentTarget.style.transform = "translateY(-3px)")}
-      onMouseLeave={e => (e.currentTarget.style.transform = "translateY(0)")}
+      onClick={selectable ? onSelect : undefined}
+      style={{
+        overflow: "hidden", borderRadius: "12px", transition: "transform .2s, box-shadow .2s",
+        cursor: selectable ? "pointer" : "default",
+        boxShadow: selected ? "0 0 0 2px #FFD54F" : "none",
+        outline: selected ? "2px solid #FFD54F" : "none",
+      }}
+      onMouseEnter={e => { if (!selectable) e.currentTarget.style.transform = "translateY(-3px)"; }}
+      onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; }}
     >
       {/* Portrait thumbnail (9:16) */}
       <div style={{ aspectRatio: "9/16", background: "#07090f", position: "relative", overflow: "hidden" }}>
         {isVideo ? (
-          <video
-            src={item.publicUrl}
-            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }}
-            preload="metadata"
-            muted
-          />
+          <video src={item.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }} preload="metadata" muted />
         ) : (
-          <img
-            src={item.publicUrl}
-            alt={item.originalName}
-            style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }}
-            loading="lazy"
-          />
+          <img src={item.publicUrl} alt={item.originalName} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }} loading="lazy" />
         )}
         <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,.65) 0%, transparent 55%)" }} />
 
         {/* Type badge */}
         <div style={{ position: "absolute", top: ".5rem", left: ".5rem", display: "flex", alignItems: "center", gap: "3px", padding: "2px 7px", borderRadius: "20px", background: "rgba(0,0,0,.55)", backdropFilter: "blur(8px)" }}>
-          {isVideo
-            ? <Play size={8} color="#fff" fill="#fff" />
-            : <ImageIcon size={8} color="#fff" />}
+          {isVideo ? <Play size={8} color="#fff" fill="#fff" /> : <ImageIcon size={8} color="#fff" />}
           <span style={{ fontSize: ".6rem", color: "#fff", fontWeight: 700, textTransform: "uppercase", letterSpacing: ".04em" }}>
             {isVideo ? "vídeo" : "foto"}
           </span>
         </div>
+
+        {/* Selection overlay */}
+        {selectable && (
+          <div style={{
+            position: "absolute", top: ".5rem", right: ".5rem",
+            width: 22, height: 22, borderRadius: "50%",
+            background: selected ? "#FFD54F" : "rgba(0,0,0,.5)",
+            border: selected ? "2px solid #FFD54F" : "2px solid rgba(255,255,255,.4)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            transition: "all .15s",
+          }}>
+            {selected && <Check size={12} color="#000" strokeWidth={3} />}
+          </div>
+        )}
 
         {/* Size */}
         <p style={{ position: "absolute", bottom: ".45rem", right: ".5rem", fontSize: ".62rem", color: "rgba(255,255,255,.65)", background: "rgba(0,0,0,.4)", padding: "1px 5px", borderRadius: "4px" }}>
@@ -91,28 +116,28 @@ function StoryCard({ item, onDelete, onDownload, isDeleting }: {
         </p>
       </div>
 
-      {/* Actions */}
-      <div style={{ display: "flex", gap: ".35rem", padding: ".55rem" }}>
-        <button
-          onClick={onDownload}
-          style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "7px", borderRadius: "7px", background: "rgba(255,213,79,.1)", border: "1px solid rgba(255,213,79,.2)", color: "#FFD54F", fontSize: ".72rem", cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}
-          onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,213,79,.18)"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,213,79,.1)"; }}
-        >
-          <Download size={11} /> Baixar
-        </button>
-        <button
-          onClick={onDelete}
-          disabled={isDeleting}
-          style={{ width: 33, display: "flex", alignItems: "center", justifyContent: "center", padding: "7px", borderRadius: "7px", background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.15)", color: "#f87171", cursor: isDeleting ? "not-allowed" : "pointer", flexShrink: 0 }}
-          onMouseEnter={e => { if (!isDeleting) e.currentTarget.style.background = "rgba(239,68,68,.16)"; }}
-          onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,.08)"; }}
-        >
-          {isDeleting
-            ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} />
-            : <Trash2 size={11} />}
-        </button>
-      </div>
+      {/* Actions — hidden in select mode */}
+      {!selectable && (
+        <div style={{ display: "flex", gap: ".35rem", padding: ".55rem" }}>
+          <button
+            onClick={onDownload}
+            style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 4, padding: "7px", borderRadius: "7px", background: "rgba(255,213,79,.1)", border: "1px solid rgba(255,213,79,.2)", color: "#FFD54F", fontSize: ".72rem", cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(255,213,79,.18)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,213,79,.1)"; }}
+          >
+            <Download size={11} /> Baixar
+          </button>
+          <button
+            onClick={onDelete}
+            disabled={isDeleting}
+            style={{ width: 33, display: "flex", alignItems: "center", justifyContent: "center", padding: "7px", borderRadius: "7px", background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.15)", color: "#f87171", cursor: isDeleting ? "not-allowed" : "pointer", flexShrink: 0 }}
+            onMouseEnter={e => { if (!isDeleting) e.currentTarget.style.background = "rgba(239,68,68,.16)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "rgba(239,68,68,.08)"; }}
+          >
+            {isDeleting ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={11} />}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -125,6 +150,16 @@ export default function StoriesPage() {
   const [fetchResult, setFetchResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+
+  // Publish state
+  const [selectable, setSelectable] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
+  const [distribute, setDistribute] = useState(true);
+  const [publishing, setPublishing] = useState(false);
+  const [publishResults, setPublishResults] = useState<PublishResult[] | null>(null);
+  const [showAccounts, setShowAccounts] = useState(false);
 
   function showToast(type: "success" | "error", msg: string) {
     setToast({ type, msg });
@@ -139,7 +174,14 @@ export default function StoriesPage() {
     setLoading(false);
   }, []);
 
+  const loadAccounts = useCallback(async () => {
+    const res = await fetch("/api/stories/publish");
+    const d = await res.json();
+    setAccounts(d.accounts ?? []);
+  }, []);
+
   useEffect(() => { loadStories(); }, [loadStories]);
+  useEffect(() => { loadAccounts(); }, [loadAccounts]);
 
   async function handleFetch() {
     const clean = username.replace(/^@/, "").trim();
@@ -194,6 +236,64 @@ export default function StoriesPage() {
     a.click();
   }
 
+  function toggleSelectMode() {
+    setSelectable(v => !v);
+    setSelectedIds(new Set());
+    setPublishResults(null);
+  }
+
+  function toggleStory(id: string) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAccount(id: string) {
+    setSelectedAccountIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function selectAllAccounts() {
+    if (selectedAccountIds.size === accounts.length) {
+      setSelectedAccountIds(new Set());
+    } else {
+      setSelectedAccountIds(new Set(accounts.map(a => a.id)));
+    }
+  }
+
+  async function handlePublish() {
+    if (selectedIds.size === 0) { showToast("error", "Selecione ao menos 1 story"); return; }
+    if (selectedAccountIds.size === 0) { showToast("error", "Selecione ao menos 1 conta"); return; }
+    setPublishing(true);
+    setPublishResults(null);
+    try {
+      const res = await fetch("/api/stories/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storyIds: Array.from(selectedIds),
+          accountIds: Array.from(selectedAccountIds),
+          distribute,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) { showToast("error", d.error ?? "Erro ao publicar"); return; }
+      setPublishResults(d.results ?? []);
+      showToast("success", `${d.ok} publicado(s) · ${d.errors} erro(s)`);
+    } catch {
+      showToast("error", "Erro de conexão");
+    } finally {
+      setPublishing(false);
+    }
+  }
+
   // Group by username
   const grouped: Record<string, StoryItem[]> = {};
   for (const s of stories) {
@@ -204,6 +304,7 @@ export default function StoriesPage() {
 
   const totalVideos = stories.filter(s => s.mimeType === "video/mp4").length;
   const totalImages = stories.length - totalVideos;
+  const allAccountsSelected = accounts.length > 0 && selectedAccountIds.size === accounts.length;
 
   return (
     <div style={{ position: "relative" }}>
@@ -213,7 +314,7 @@ export default function StoriesPage() {
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "2rem" }}>
         <div>
           <h1 className="page-title">Biblioteca de Stories</h1>
-          <p className="page-subtitle">Salve e organize stories do Instagram por perfil</p>
+          <p className="page-subtitle">Salve, organize e publique stories do Instagram</p>
         </div>
         <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
           {stories.length > 0 && (
@@ -223,6 +324,20 @@ export default function StoriesPage() {
                 {stories.length} salvo{stories.length !== 1 ? "s" : ""} · {totalVideos} vídeo{totalVideos !== 1 ? "s" : ""} · {totalImages} foto{totalImages !== 1 ? "s" : ""}
               </span>
             </div>
+          )}
+          {stories.length > 0 && (
+            <button
+              onClick={toggleSelectMode}
+              style={{
+                display: "flex", alignItems: "center", gap: ".4rem",
+                padding: ".5rem .9rem", borderRadius: "8px", fontSize: ".8rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)",
+                background: selectable ? "rgba(255,213,79,.15)" : "rgba(255,255,255,.05)",
+                border: selectable ? "1px solid rgba(255,213,79,.35)" : "1px solid rgba(255,255,255,.1)",
+                color: selectable ? "#FFD54F" : "var(--text-secondary)",
+              }}
+            >
+              <Send size={13} /> {selectable ? "Cancelar" : "Publicar Stories"}
+            </button>
           )}
           <button onClick={loadStories} style={{ padding: ".5rem", borderRadius: "8px", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", color: "#666", cursor: "pointer", display: "flex" }}>
             <RefreshCw size={14} />
@@ -252,18 +367,14 @@ export default function StoriesPage() {
             className="btn btn-primary"
             style={{ display: "flex", alignItems: "center", gap: ".5rem", whiteSpace: "nowrap", opacity: !username.trim() ? .5 : 1 }}
           >
-            {fetching
-              ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} />
-              : <Search size={15} />}
+            {fetching ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={15} />}
             {fetching ? "Buscando (pode levar ~30s)..." : "Buscar Stories"}
           </button>
         </div>
 
         {fetchResult && (
           <div style={{ marginTop: ".875rem", padding: ".75rem 1rem", borderRadius: "9px", background: fetchResult.ok ? "rgba(34,197,94,.08)" : "rgba(239,68,68,.08)", border: `1px solid ${fetchResult.ok ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)"}`, display: "flex", alignItems: "center", gap: ".5rem" }}>
-            {fetchResult.ok
-              ? <CheckCircle size={14} color="#4ade80" />
-              : <XCircle size={14} color="#f87171" />}
+            {fetchResult.ok ? <CheckCircle size={14} color="#4ade80" /> : <XCircle size={14} color="#f87171" />}
             <span style={{ fontSize: ".875rem", color: fetchResult.ok ? "#4ade80" : "#f87171" }}>{fetchResult.text}</span>
           </div>
         )}
@@ -272,6 +383,125 @@ export default function StoriesPage() {
           Stories são salvos permanentemente na sua biblioteca. Perfis privados requerem acesso à conta.
         </p>
       </div>
+
+      {/* Publish panel — shown when selectable mode is on */}
+      {selectable && (
+        <div className="glass-panel" style={{ padding: "1.5rem", marginBottom: "2rem", border: "1px solid rgba(255,213,79,.2)" }}>
+          <p style={{ fontSize: ".8rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: "1.25rem" }}>
+            Publicar Stories
+          </p>
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+            {/* Story count */}
+            <div style={{ padding: ".75rem 1rem", borderRadius: "10px", background: "rgba(255,213,79,.06)", border: "1px solid rgba(255,213,79,.15)" }}>
+              <p style={{ fontSize: ".7rem", color: "var(--text-muted)", marginBottom: ".25rem", textTransform: "uppercase", letterSpacing: ".08em" }}>Stories selecionados</p>
+              <p style={{ fontSize: "1.4rem", fontWeight: 800, color: "#FFD54F" }}>{selectedIds.size}</p>
+              <p style={{ fontSize: ".7rem", color: "var(--text-muted)" }}>clique nos cards abaixo para selecionar</p>
+            </div>
+
+            {/* Distribute toggle */}
+            <div style={{ padding: ".75rem 1rem", borderRadius: "10px", background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.07)" }}>
+              <p style={{ fontSize: ".7rem", color: "var(--text-muted)", marginBottom: ".5rem", textTransform: "uppercase", letterSpacing: ".08em" }}>Modo</p>
+              <div style={{ display: "flex", gap: ".5rem" }}>
+                <button
+                  onClick={() => setDistribute(true)}
+                  style={{ flex: 1, padding: ".4rem .5rem", borderRadius: "7px", fontSize: ".75rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", background: distribute ? "rgba(96,165,250,.15)" : "transparent", border: distribute ? "1px solid rgba(96,165,250,.35)" : "1px solid rgba(255,255,255,.08)", color: distribute ? "#60a5fa" : "var(--text-muted)", display: "flex", alignItems: "center", gap: ".3rem", justifyContent: "center" }}
+                >
+                  <Shuffle size={11} /> Distribuir
+                </button>
+                <button
+                  onClick={() => setDistribute(false)}
+                  style={{ flex: 1, padding: ".4rem .5rem", borderRadius: "7px", fontSize: ".75rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", background: !distribute ? "rgba(96,165,250,.15)" : "transparent", border: !distribute ? "1px solid rgba(96,165,250,.35)" : "1px solid rgba(255,255,255,.08)", color: !distribute ? "#60a5fa" : "var(--text-muted)", display: "flex", alignItems: "center", gap: ".3rem", justifyContent: "center" }}
+                >
+                  <Users size={11} /> Todos iguais
+                </button>
+              </div>
+              <p style={{ fontSize: ".65rem", color: "var(--text-muted)", marginTop: ".4rem" }}>
+                {distribute ? "Cada conta recebe um story diferente (sem cruzar dados)" : "Todas as contas recebem o mesmo story"}
+              </p>
+            </div>
+          </div>
+
+          {/* Account selector */}
+          <div style={{ marginBottom: "1rem" }}>
+            <button
+              onClick={() => setShowAccounts(v => !v)}
+              style={{ display: "flex", alignItems: "center", gap: ".5rem", width: "100%", padding: ".75rem 1rem", borderRadius: "10px", background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", color: "var(--text-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: ".85rem", fontWeight: 600, textAlign: "left" }}
+            >
+              <Users size={14} />
+              <span style={{ flex: 1 }}>
+                {selectedAccountIds.size === 0
+                  ? "Selecionar contas"
+                  : `${selectedAccountIds.size} conta(s) selecionada(s)`}
+              </span>
+              {showAccounts ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+
+            {showAccounts && accounts.length > 0 && (
+              <div style={{ marginTop: ".5rem", padding: ".75rem", borderRadius: "10px", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.06)", maxHeight: "220px", overflowY: "auto" }}>
+                {/* Select all */}
+                <button
+                  onClick={selectAllAccounts}
+                  style={{ display: "flex", alignItems: "center", gap: ".5rem", width: "100%", padding: ".4rem .5rem", borderRadius: "7px", background: "transparent", border: "none", color: "var(--accent-gold)", fontSize: ".78rem", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", marginBottom: ".5rem" }}
+                >
+                  {allAccountsSelected ? <CheckSquare size={13} /> : <Square size={13} />}
+                  {allAccountsSelected ? "Desmarcar todas" : `Selecionar todas (${accounts.length})`}
+                </button>
+                <div style={{ display: "flex", flexDirection: "column", gap: ".25rem" }}>
+                  {accounts.map(acc => (
+                    <button
+                      key={acc.id}
+                      onClick={() => toggleAccount(acc.id)}
+                      style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".4rem .5rem", borderRadius: "7px", background: selectedAccountIds.has(acc.id) ? "rgba(255,213,79,.08)" : "transparent", border: selectedAccountIds.has(acc.id) ? "1px solid rgba(255,213,79,.2)" : "1px solid transparent", cursor: "pointer", fontFamily: "var(--font-sans)", textAlign: "left" }}
+                    >
+                      <div style={{ width: 18, height: 18, borderRadius: "50%", background: selectedAccountIds.has(acc.id) ? "#FFD54F" : "rgba(255,255,255,.1)", border: selectedAccountIds.has(acc.id) ? "none" : "1px solid rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                        {selectedAccountIds.has(acc.id) && <Check size={10} color="#000" strokeWidth={3} />}
+                      </div>
+                      <span style={{ fontSize: ".8rem", color: selectedAccountIds.has(acc.id) ? "#fff" : "var(--text-secondary)" }}>@{acc.username}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {showAccounts && accounts.length === 0 && (
+              <p style={{ fontSize: ".8rem", color: "var(--text-muted)", marginTop: ".5rem", padding: ".5rem" }}>Nenhuma conta ativa encontrada.</p>
+            )}
+          </div>
+
+          {/* Publish button */}
+          <button
+            onClick={handlePublish}
+            disabled={publishing || selectedIds.size === 0 || selectedAccountIds.size === 0}
+            className="btn btn-primary"
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: ".5rem", opacity: (selectedIds.size === 0 || selectedAccountIds.size === 0) ? .5 : 1 }}
+          >
+            {publishing
+              ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Publicando em {selectedAccountIds.size} conta(s)...</>
+              : <><Send size={15} /> Publicar {selectedIds.size} story(ies) em {selectedAccountIds.size} conta(s)</>}
+          </button>
+
+          {/* Results */}
+          {publishResults && (
+            <div style={{ marginTop: "1rem" }}>
+              <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".5rem" }}>
+                Resultados
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: ".35rem", maxHeight: "200px", overflowY: "auto" }}>
+                {publishResults.map(r => (
+                  <div key={r.accountId} style={{ display: "flex", alignItems: "center", gap: ".5rem", padding: ".4rem .6rem", borderRadius: "7px", background: r.status === "ok" ? "rgba(34,197,94,.06)" : "rgba(239,68,68,.06)", border: `1px solid ${r.status === "ok" ? "rgba(34,197,94,.15)" : "rgba(239,68,68,.15)"}` }}>
+                    {r.status === "ok"
+                      ? <CheckCircle size={12} color="#4ade80" />
+                      : <XCircle size={12} color="#f87171" />}
+                    <span style={{ fontSize: ".78rem", color: r.status === "ok" ? "#4ade80" : "#f87171", fontWeight: 600 }}>@{r.username}</span>
+                    {r.error && <span style={{ fontSize: ".7rem", color: "var(--text-muted)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>— {r.error}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (
@@ -288,9 +518,13 @@ export default function StoriesPage() {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "2.5rem" }}>
+          {selectable && (
+            <p style={{ fontSize: ".8rem", color: "var(--text-muted)", marginBottom: "-.5rem" }}>
+              Clique nos stories abaixo para selecioná-los para publicação
+            </p>
+          )}
           {Object.entries(grouped).map(([uname, items]) => (
             <div key={uname}>
-              {/* Username header */}
               <div style={{ display: "flex", alignItems: "center", gap: ".75rem", marginBottom: "1.1rem" }}>
                 <div style={{ width: 36, height: 36, borderRadius: "50%", background: "linear-gradient(135deg,rgba(255,213,79,.25),rgba(255,213,79,.08))", border: "2px solid rgba(255,213,79,.3)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
                   <Camera size={14} color="#FFD54F" />
@@ -304,7 +538,6 @@ export default function StoriesPage() {
                 <div style={{ marginLeft: "auto", height: "1px", flex: 1, background: "rgba(255,255,255,.05)" }} />
               </div>
 
-              {/* Portrait grid */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: ".875rem" }}>
                 {items.map(item => (
                   <StoryCard
@@ -313,6 +546,9 @@ export default function StoriesPage() {
                     onDelete={() => handleDelete(item.id)}
                     onDownload={() => handleDownload(item)}
                     isDeleting={deletingId === item.id}
+                    selectable={selectable}
+                    selected={selectedIds.has(item.id)}
+                    onSelect={() => toggleStory(item.id)}
                   />
                 ))}
               </div>

@@ -245,6 +245,51 @@ export async function publishReelFromVideoUrl(params: {
   return { ok: true };
 }
 
+export async function publishStoryFromUrl(params: {
+  igUserId: string;
+  accessToken: string;
+  mediaUrl: string;
+  isVideo: boolean;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { igUserId, accessToken, mediaUrl, isVideo } = params;
+
+  const createUrl = new URL(`${GRAPH}/${igUserId}/media`);
+  if (isVideo) {
+    createUrl.searchParams.set("media_type", "VIDEO");
+    createUrl.searchParams.set("video_url", mediaUrl);
+  } else {
+    createUrl.searchParams.set("image_url", mediaUrl);
+  }
+  createUrl.searchParams.set("access_token", accessToken);
+
+  const createRes = await fetch(createUrl.toString(), { method: "POST" });
+  const createData = await createRes.json() as { id?: string; error?: { message?: string } };
+
+  if (!createRes.ok || !createData.id) {
+    return { ok: false, error: createData.error?.message || JSON.stringify(createData) };
+  }
+
+  const containerId = createData.id;
+
+  if (isVideo) {
+    const polled = await pollContainerReady(containerId, accessToken);
+    if (!polled.ok) return { ok: false, error: polled.error || "Falha no processamento do vídeo." };
+  }
+
+  const publishUrl = new URL(`${GRAPH}/${igUserId}/media_publish`);
+  publishUrl.searchParams.set("creation_id", containerId);
+  publishUrl.searchParams.set("access_token", accessToken);
+
+  const pubRes = await fetch(publishUrl.toString(), { method: "POST" });
+  const pubData = await pubRes.json() as { id?: string; error?: { message?: string } };
+
+  if (!pubRes.ok) {
+    return { ok: false, error: pubData.error?.message || JSON.stringify(pubData) };
+  }
+
+  return { ok: true };
+}
+
 export async function publishReelFromBuffer(params: {
   igUserId: string;
   accessToken: string;
