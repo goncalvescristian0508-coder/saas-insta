@@ -163,10 +163,11 @@ export default function StoriesPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
   const [distribute, setDistribute] = useState(true);
+  const [useLinks, setUseLinks] = useState(false);
   const [accountLinks, setAccountLinks] = useState<Record<string, string>>({});
+  const [bulkText, setBulkText] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [publishResults, setPublishResults] = useState<PublishResult[] | null>(null);
-  const [showAccounts, setShowAccounts] = useState(false);
 
   function showToast(type: "success" | "error", msg: string) {
     setToast({ type, msg });
@@ -292,10 +293,28 @@ export default function StoriesPage() {
     setSelectedIds(new Set());
     setPublishResults(null);
     setAccountLinks({});
+    setBulkText("");
   }
 
   function setLink(accountId: string, url: string) {
     setAccountLinks(prev => ({ ...prev, [accountId]: url }));
+  }
+
+  function parseBulkLinks() {
+    const lines = bulkText.split("\n").map(l => l.trim()).filter(Boolean);
+    const updates: Record<string, string> = {};
+    for (const line of lines) {
+      const parts = line.split(/\s+/);
+      if (parts.length < 2) continue;
+      const rawUser = parts[0].replace(/^@/, "").toLowerCase();
+      const url = parts[1];
+      if (!url.startsWith("http")) continue;
+      const account = accounts.find(a => a.username.toLowerCase() === rawUser);
+      if (account) updates[account.id] = url;
+    }
+    setAccountLinks(prev => ({ ...prev, ...updates }));
+    const matched = Object.keys(updates).length;
+    showToast(matched > 0 ? "success" : "error", matched > 0 ? `${matched} link(s) aplicado(s)` : "Nenhuma conta encontrada — verifique os @usernames");
   }
 
   function toggleStory(id: string) {
@@ -473,120 +492,120 @@ export default function StoriesPage() {
         </div>
       </div>
 
-      {/* Publish panel — shown when selectable mode is on */}
+      {/* Publish panel */}
       {selectable && (
         <div className="glass-panel" style={{ padding: "1.5rem", marginBottom: "2rem", border: "1px solid rgba(255,213,79,.2)" }}>
           <p style={{ fontSize: ".8rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: "1.25rem" }}>
             Publicar Stories
           </p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
-            {/* Story count */}
+          {/* Row 1: stories count + distribute mode */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1.25rem" }}>
             <div style={{ padding: ".75rem 1rem", borderRadius: "10px", background: "rgba(255,213,79,.06)", border: "1px solid rgba(255,213,79,.15)" }}>
               <p style={{ fontSize: ".7rem", color: "var(--text-muted)", marginBottom: ".25rem", textTransform: "uppercase", letterSpacing: ".08em" }}>Stories selecionados</p>
               <p style={{ fontSize: "1.4rem", fontWeight: 800, color: "#FFD54F" }}>{selectedIds.size}</p>
               <p style={{ fontSize: ".7rem", color: "var(--text-muted)" }}>clique nos cards abaixo para selecionar</p>
             </div>
-
-            {/* Distribute toggle */}
             <div style={{ padding: ".75rem 1rem", borderRadius: "10px", background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.07)" }}>
               <p style={{ fontSize: ".7rem", color: "var(--text-muted)", marginBottom: ".5rem", textTransform: "uppercase", letterSpacing: ".08em" }}>Modo</p>
               <div style={{ display: "flex", gap: ".5rem" }}>
-                <button
-                  onClick={() => setDistribute(true)}
-                  style={{ flex: 1, padding: ".4rem .5rem", borderRadius: "7px", fontSize: ".75rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", background: distribute ? "rgba(96,165,250,.15)" : "transparent", border: distribute ? "1px solid rgba(96,165,250,.35)" : "1px solid rgba(255,255,255,.08)", color: distribute ? "#60a5fa" : "var(--text-muted)", display: "flex", alignItems: "center", gap: ".3rem", justifyContent: "center" }}
-                >
-                  <Shuffle size={11} /> Distribuir
-                </button>
-                <button
-                  onClick={() => setDistribute(false)}
-                  style={{ flex: 1, padding: ".4rem .5rem", borderRadius: "7px", fontSize: ".75rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", background: !distribute ? "rgba(96,165,250,.15)" : "transparent", border: !distribute ? "1px solid rgba(96,165,250,.35)" : "1px solid rgba(255,255,255,.08)", color: !distribute ? "#60a5fa" : "var(--text-muted)", display: "flex", alignItems: "center", gap: ".3rem", justifyContent: "center" }}
-                >
-                  <Users size={11} /> Todos iguais
-                </button>
+                {[{ v: true, label: "Distribuir", icon: <Shuffle size={11} /> }, { v: false, label: "Todos iguais", icon: <Users size={11} /> }].map(opt => (
+                  <button key={String(opt.v)} onClick={() => setDistribute(opt.v)}
+                    style={{ flex: 1, padding: ".4rem .5rem", borderRadius: "7px", fontSize: ".75rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", display: "flex", alignItems: "center", gap: ".3rem", justifyContent: "center", background: distribute === opt.v ? "rgba(96,165,250,.15)" : "transparent", border: distribute === opt.v ? "1px solid rgba(96,165,250,.35)" : "1px solid rgba(255,255,255,.08)", color: distribute === opt.v ? "#60a5fa" : "var(--text-muted)" }}>
+                    {opt.icon} {opt.label}
+                  </button>
+                ))}
               </div>
               <p style={{ fontSize: ".65rem", color: "var(--text-muted)", marginTop: ".4rem" }}>
-                {distribute ? "Cada conta recebe um story diferente (sem cruzar dados)" : "Todas as contas recebem o mesmo story"}
+                {distribute ? "Cada conta recebe um story diferente" : "Todas recebem o mesmo story"}
               </p>
             </div>
           </div>
 
-          {/* Account selector */}
-          <div style={{ marginBottom: "1rem" }}>
-            <button
-              onClick={() => setShowAccounts(v => !v)}
-              style={{ display: "flex", alignItems: "center", gap: ".5rem", width: "100%", padding: ".75rem 1rem", borderRadius: "10px", background: "rgba(255,255,255,.03)", border: "1px solid rgba(255,255,255,.08)", color: "var(--text-secondary)", cursor: "pointer", fontFamily: "var(--font-sans)", fontSize: ".85rem", fontWeight: 600, textAlign: "left" }}
-            >
-              <Users size={14} />
-              <span style={{ flex: 1 }}>
-                {selectedAccountIds.size === 0
-                  ? "Selecionar contas"
-                  : `${selectedAccountIds.size} conta(s) selecionada(s)`}
-              </span>
-              {showAccounts ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            </button>
-
-            {showAccounts && accounts.length > 0 && (
-              <div style={{ marginTop: ".5rem", padding: ".75rem", borderRadius: "10px", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.06)", maxHeight: "220px", overflowY: "auto" }}>
-                {/* Select all */}
-                <button
-                  onClick={selectAllAccounts}
-                  style={{ display: "flex", alignItems: "center", gap: ".5rem", width: "100%", padding: ".4rem .5rem", borderRadius: "7px", background: "transparent", border: "none", color: "var(--accent-gold)", fontSize: ".78rem", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)", marginBottom: ".5rem" }}
-                >
-                  {allAccountsSelected ? <CheckSquare size={13} /> : <Square size={13} />}
-                  {allAccountsSelected ? "Desmarcar todas" : `Selecionar todas (${accounts.length})`}
+          {/* Row 2: link toggle */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".6rem" }}>Link no Story</p>
+            <div style={{ display: "flex", gap: ".5rem" }}>
+              {[{ v: false, label: "Sem link" }, { v: true, label: "Com link" }].map(opt => (
+                <button key={String(opt.v)} onClick={() => setUseLinks(opt.v)}
+                  style={{ padding: ".45rem 1rem", borderRadius: "8px", fontSize: ".8rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", background: useLinks === opt.v ? "rgba(255,213,79,.15)" : "rgba(255,255,255,.03)", border: useLinks === opt.v ? "1px solid rgba(255,213,79,.35)" : "1px solid rgba(255,255,255,.08)", color: useLinks === opt.v ? "#FFD54F" : "var(--text-muted)" }}>
+                  {opt.label}
                 </button>
-                <div style={{ display: "flex", flexDirection: "column", gap: ".25rem" }}>
-                  {accounts.map(acc => (
-                    <button
-                      key={acc.id}
-                      onClick={() => toggleAccount(acc.id)}
-                      style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".4rem .5rem", borderRadius: "7px", background: selectedAccountIds.has(acc.id) ? "rgba(255,213,79,.08)" : "transparent", border: selectedAccountIds.has(acc.id) ? "1px solid rgba(255,213,79,.2)" : "1px solid transparent", cursor: "pointer", fontFamily: "var(--font-sans)", textAlign: "left" }}
-                    >
-                      <div style={{ width: 18, height: 18, borderRadius: "50%", background: selectedAccountIds.has(acc.id) ? "#FFD54F" : "rgba(255,255,255,.1)", border: selectedAccountIds.has(acc.id) ? "none" : "1px solid rgba(255,255,255,.2)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                        {selectedAccountIds.has(acc.id) && <Check size={10} color="#000" strokeWidth={3} />}
-                      </div>
-                      <span style={{ fontSize: ".8rem", color: selectedAccountIds.has(acc.id) ? "#fff" : "var(--text-secondary)" }}>@{acc.username}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {showAccounts && accounts.length === 0 && (
-              <p style={{ fontSize: ".8rem", color: "var(--text-muted)", marginTop: ".5rem", padding: ".5rem" }}>Nenhuma conta ativa encontrada.</p>
-            )}
+              ))}
+            </div>
           </div>
 
-          {/* Per-account links — shown when accounts are selected */}
-          {selectedAccountIds.size > 0 && (
-            <div style={{ marginBottom: "1rem" }}>
+          {/* Bulk link paste — only when "com link" */}
+          {useLinks && (
+            <div style={{ marginBottom: "1.25rem", padding: "1rem", borderRadius: "10px", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.07)" }}>
               <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".6rem" }}>
-                Link por conta <span style={{ color: "#555", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(opcional)</span>
+                Cole os links em massa <span style={{ color: "#555", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(@conta https://link — um por linha)</span>
               </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: ".35rem", maxHeight: "260px", overflowY: "auto" }}>
-                {accounts.filter(a => selectedAccountIds.has(a.id)).map(acc => (
-                  <div key={acc.id} style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
-                    <span style={{ fontSize: ".78rem", color: "var(--text-secondary)", minWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
-                    <input
-                      value={accountLinks[acc.id] ?? ""}
-                      onChange={e => setLink(acc.id, e.target.value)}
-                      placeholder="https://..."
-                      style={{ flex: 1, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: "7px", padding: ".35rem .6rem", fontSize: ".78rem", color: "#f0f0f0", outline: "none", fontFamily: "var(--font-sans)" }}
-                    />
-                  </div>
-                ))}
-              </div>
+              <textarea
+                value={bulkText}
+                onChange={e => setBulkText(e.target.value)}
+                placeholder={"@catiasoniavirginia https://apextry.com/go/sx?utm_source=catiasoniavirginia\n@elisaguedeselizabete https://apextry.com/go/sx?utm_source=elisaguedeselizabete"}
+                rows={4}
+                style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: "8px", padding: ".6rem .75rem", fontSize: ".75rem", color: "#f0f0f0", outline: "none", fontFamily: "monospace", resize: "vertical", boxSizing: "border-box" }}
+              />
+              <button onClick={parseBulkLinks}
+                style={{ marginTop: ".5rem", padding: ".4rem .9rem", borderRadius: "7px", background: "rgba(255,213,79,.12)", border: "1px solid rgba(255,213,79,.25)", color: "#FFD54F", fontSize: ".78rem", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)" }}>
+                Aplicar links
+              </button>
             </div>
           )}
 
+          {/* Account list */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".6rem" }}>
+              <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em" }}>
+                Contas <span style={{ color: "#FFD54F" }}>{selectedAccountIds.size > 0 ? `· ${selectedAccountIds.size} selecionada(s)` : ""}</span>
+              </p>
+              <button onClick={selectAllAccounts}
+                style={{ display: "flex", alignItems: "center", gap: ".35rem", padding: ".3rem .6rem", borderRadius: "6px", background: "transparent", border: "1px solid rgba(255,255,255,.08)", color: "var(--accent-gold)", fontSize: ".72rem", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)" }}>
+                {allAccountsSelected ? <CheckSquare size={11} /> : <Square size={11} />}
+                {allAccountsSelected ? "Desmarcar todas" : `Selecionar todas (${accounts.length})`}
+              </button>
+            </div>
+
+            {accounts.length === 0
+              ? <p style={{ fontSize: ".8rem", color: "var(--text-muted)" }}>Nenhuma conta ativa encontrada.</p>
+              : (
+                <div style={{ display: "flex", flexDirection: "column", gap: ".3rem", maxHeight: "320px", overflowY: "auto" }}>
+                  {accounts.map(acc => {
+                    const selected = selectedAccountIds.has(acc.id);
+                    const link = accountLinks[acc.id] ?? "";
+                    return (
+                      <div key={acc.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".45rem .6rem", borderRadius: "8px", background: selected ? "rgba(255,213,79,.06)" : "rgba(255,255,255,.02)", border: selected ? "1px solid rgba(255,213,79,.18)" : "1px solid rgba(255,255,255,.05)" }}>
+                        {/* Checkbox */}
+                        <button onClick={() => toggleAccount(acc.id)}
+                          style={{ width: 18, height: 18, borderRadius: "4px", background: selected ? "#FFD54F" : "rgba(255,255,255,.08)", border: selected ? "none" : "1px solid rgba(255,255,255,.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
+                          {selected && <Check size={10} color="#000" strokeWidth={3} />}
+                        </button>
+                        {/* Username */}
+                        <span style={{ fontSize: ".8rem", color: selected ? "#fff" : "var(--text-secondary)", minWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
+                        {/* Link input — only when "com link" */}
+                        {useLinks && (
+                          <input
+                            value={link}
+                            onChange={e => setLink(acc.id, e.target.value)}
+                            placeholder="https://..."
+                            style={{ flex: 1, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: "6px", padding: ".3rem .5rem", fontSize: ".72rem", color: link ? "#60a5fa" : "var(--text-muted)", outline: "none", fontFamily: "var(--font-sans)" }}
+                          />
+                        )}
+                        {useLinks && link && <CheckCircle size={12} color="#4ade80" style={{ flexShrink: 0 }} />}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+          </div>
+
           {/* Publish button */}
-          <button
-            onClick={handlePublish}
+          <button onClick={handlePublish}
             disabled={publishing || selectedIds.size === 0 || selectedAccountIds.size === 0}
             className="btn btn-primary"
-            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: ".5rem", opacity: (selectedIds.size === 0 || selectedAccountIds.size === 0) ? .5 : 1 }}
-          >
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: ".5rem", opacity: (selectedIds.size === 0 || selectedAccountIds.size === 0) ? .5 : 1 }}>
             {publishing
               ? <><Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> Publicando em {selectedAccountIds.size} conta(s)...</>
               : <><Send size={15} /> Publicar {selectedIds.size} story(ies) em {selectedAccountIds.size} conta(s)</>}
@@ -595,15 +614,11 @@ export default function StoriesPage() {
           {/* Results */}
           {publishResults && (
             <div style={{ marginTop: "1rem" }}>
-              <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".5rem" }}>
-                Resultados
-              </p>
-              <div style={{ display: "flex", flexDirection: "column", gap: ".35rem", maxHeight: "200px", overflowY: "auto" }}>
+              <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".5rem" }}>Resultados</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: ".3rem", maxHeight: "200px", overflowY: "auto" }}>
                 {publishResults.map(r => (
                   <div key={r.accountId} style={{ display: "flex", alignItems: "center", gap: ".5rem", padding: ".4rem .6rem", borderRadius: "7px", background: r.status === "ok" ? "rgba(34,197,94,.06)" : "rgba(239,68,68,.06)", border: `1px solid ${r.status === "ok" ? "rgba(34,197,94,.15)" : "rgba(239,68,68,.15)"}` }}>
-                    {r.status === "ok"
-                      ? <CheckCircle size={12} color="#4ade80" />
-                      : <XCircle size={12} color="#f87171" />}
+                    {r.status === "ok" ? <CheckCircle size={12} color="#4ade80" /> : <XCircle size={12} color="#f87171" />}
                     <span style={{ fontSize: ".78rem", color: r.status === "ok" ? "#4ade80" : "#f87171", fontWeight: 600 }}>@{r.username}</span>
                     {r.error && <span style={{ fontSize: ".7rem", color: "var(--text-muted)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>— {r.error}</span>}
                   </div>
