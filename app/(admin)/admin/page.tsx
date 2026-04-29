@@ -755,6 +755,7 @@ function TestadoresTab() {
   const [appKey, setAppKey] = useState("");
   const [apps, setApps] = useState<{ key: string; name: string; appId: string }[]>([]);
   const [loading, setLoading] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
   const [results, setResults] = useState<{ username: string; ok: boolean; error?: string; appName?: string }[]>([]);
 
   useEffect(() => {
@@ -767,40 +768,53 @@ function TestadoresTab() {
       });
   }, []);
 
-  async function addTester(username: string) {
-    const clean = username.trim().replace(/^@/, "");
-    if (!clean) return;
+  const names = input.split(/[\n,]+/).map(s => s.trim().replace(/^@/, "")).filter(Boolean);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (names.length === 0) return;
+    setInput("");
+    setLoading(true);
+    setPendingCount(names.length);
     const selectedApp = apps.find(a => a.key === appKey);
     try {
       const r = await fetch("/api/admin/add-instagram-tester", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ igUsername: clean, appKey: appKey || undefined }),
+        body: JSON.stringify({ igUsernames: names, appKey: appKey || undefined }),
       });
-      const d = await r.json() as { ok?: boolean; error?: string };
-      setResults(prev => [{ username: clean, ok: !!d.ok, error: d.error, appName: selectedApp?.name }, ...prev]);
+      const d = await r.json() as {
+        results?: { username: string; ok: boolean; error?: string }[];
+        error?: string;
+      };
+      if (!r.ok && !d.results) {
+        // credential error — show single error for all
+        const errRows = names.map(u => ({ username: u, ok: false, error: d.error ?? "Erro", appName: selectedApp?.name }));
+        setResults(prev => [...errRows, ...prev]);
+      } else {
+        const rows = (d.results ?? []).map(row => ({ ...row, appName: selectedApp?.name }));
+        setResults(prev => [...rows, ...prev]);
+      }
     } catch {
-      setResults(prev => [{ username: clean, ok: false, error: "Erro de conexão", appName: selectedApp?.name }, ...prev]);
+      const errRows = names.map(u => ({ username: u, ok: false, error: "Erro de conexão", appName: selectedApp?.name }));
+      setResults(prev => [...errRows, ...prev]);
+    } finally {
+      setLoading(false);
+      setPendingCount(0);
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const names = input.split(/[\n,]+/).map(s => s.trim().replace(/^@/, "")).filter(Boolean);
-    setInput("");
-    setLoading(true);
-    for (const name of names) await addTester(name);
-    setLoading(false);
-  }
+  const okCount = results.filter(r => r.ok).length;
+  const errCount = results.filter(r => !r.ok).length;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem", maxWidth: 600 }}>
-      <PageHeader title="Testadores Instagram" subtitle="Adiciona usuários como Instagram Tester no app da Meta via API" />
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem", maxWidth: 640 }}>
+      <PageHeader title="Testadores Instagram" subtitle="Adiciona usuários como Instagram Tester no app da Meta via API — em massa e em paralelo" />
 
       <Panel style={{ padding: "1.5rem" }}>
-        <SectionLabel>Adicionar Testador</SectionLabel>
+        <SectionLabel>Adicionar Testadores</SectionLabel>
         <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
-          Cole o @ do Instagram (um por linha ou separado por vírgula). O usuário receberá um convite em{" "}
+          Cole os @usernames do Instagram (um por linha ou separado por vírgula). Todos são enviados em paralelo de uma vez. O usuário receberá um convite em{" "}
           <strong style={{ color: "#e0e0e0" }}>Instagram → Configurações → Apps e Sites</strong> para aceitar.
         </p>
         <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: ".75rem" }}>
@@ -833,32 +847,47 @@ function TestadoresTab() {
             value={input}
             onChange={e => setInput(e.target.value)}
             placeholder={"@username1\n@username2\nou username1, username2"}
-            rows={4}
+            rows={6}
             style={{ width: "100%", padding: "10px 12px", borderRadius: 9, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#f0f0f0", fontSize: 13, resize: "vertical", outline: "none", fontFamily: "var(--font-sans)" }}
           />
+
+          {names.length > 0 && (
+            <p style={{ fontSize: 11, color: "#555" }}>
+              {names.length} usuário{names.length !== 1 ? "s" : ""} detectado{names.length !== 1 ? "s" : ""}
+            </p>
+          )}
+
           <button
             type="submit"
-            disabled={loading || !input.trim()}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || !input.trim() ? "not-allowed" : "pointer", fontWeight: 700, opacity: !input.trim() ? 0.5 : 1, fontFamily: "var(--font-sans)" }}
+            disabled={loading || names.length === 0}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || names.length === 0 ? "not-allowed" : "pointer", fontWeight: 700, opacity: names.length === 0 ? 0.5 : 1, fontFamily: "var(--font-sans)" }}
           >
-            {loading ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={14} />}
-            Adicionar como Testador
+            {loading
+              ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Enviando {pendingCount} convite{pendingCount !== 1 ? "s" : ""} em paralelo...</>
+              : <><Send size={14} /> Enviar {names.length > 0 ? `${names.length} convite${names.length !== 1 ? "s" : ""}` : "convites"}</>}
           </button>
         </form>
       </Panel>
 
       {results.length > 0 && (
         <Panel style={{ padding: "1.5rem" }}>
-          <SectionLabel>Resultados</SectionLabel>
-          <div style={{ display: "flex", flexDirection: "column", gap: ".5rem" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".75rem" }}>
+            <SectionLabel>Resultados</SectionLabel>
+            <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+              {okCount > 0 && <span style={{ fontSize: 11, color: "#4ade80", background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.2)", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>{okCount} ✓</span>}
+              {errCount > 0 && <span style={{ fontSize: 11, color: "#f87171", background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.2)", borderRadius: 6, padding: "2px 8px", fontWeight: 700 }}>{errCount} ✗</span>}
+              <button onClick={() => setResults([])} style={{ fontSize: 11, color: "#444", background: "none", border: "none", cursor: "pointer", padding: "2px 6px" }}>Limpar</button>
+            </div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: ".4rem", maxHeight: 360, overflowY: "auto" }}>
             {results.map((r, i) => (
-              <div key={i} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".6rem .85rem", borderRadius: 9, background: r.ok ? "rgba(34,197,94,.07)" : "rgba(239,68,68,.07)", border: `1px solid ${r.ok ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)"}` }}>
-                {r.ok ? <CheckCircle2 size={15} color="#4ade80" /> : <XCircle size={15} color="#f87171" />}
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: ".75rem", padding: ".5rem .85rem", borderRadius: 9, background: r.ok ? "rgba(34,197,94,.07)" : "rgba(239,68,68,.07)", border: `1px solid ${r.ok ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)"}` }}>
+                {r.ok ? <CheckCircle2 size={14} color="#4ade80" /> : <XCircle size={14} color="#f87171" />}
                 <span style={{ fontSize: 13, fontWeight: 600, color: r.ok ? "#4ade80" : "#f87171" }}>@{r.username}</span>
                 {r.appName && <span style={{ fontSize: 11, color: "#444", padding: "2px 7px", borderRadius: 5, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.07)" }}>{r.appName}</span>}
-                {r.ok
-                  ? <span style={{ fontSize: 12, color: "#555", marginLeft: "auto" }}>Convite enviado ✓</span>
-                  : <span style={{ fontSize: 12, color: "#f87171", marginLeft: "auto" }}>{r.error}</span>}
+                <span style={{ fontSize: 12, color: r.ok ? "#555" : "#f87171", marginLeft: "auto" }}>
+                  {r.ok ? "Convite enviado ✓" : r.error}
+                </span>
               </div>
             ))}
           </div>
