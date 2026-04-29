@@ -5,6 +5,7 @@ import {
   Camera, Loader2, Download, Trash2, CheckCircle, XCircle,
   Play, Image as ImageIcon, Search, RefreshCw, Send, Users,
   Shuffle, Check, Square, CheckSquare, ChevronDown, ChevronUp,
+  UploadCloud,
 } from "lucide-react";
 
 interface StoryItem {
@@ -151,6 +152,11 @@ export default function StoriesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
+  // Upload state
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string>("");
+  const [dragging, setDragging] = useState(false);
+
   // Publish state
   const [selectable, setSelectable] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -182,6 +188,50 @@ export default function StoriesPage() {
 
   useEffect(() => { loadStories(); }, [loadStories]);
   useEffect(() => { loadAccounts(); }, [loadAccounts]);
+
+  async function uploadFiles(files: FileList | File[]) {
+    const allowed = ["image/jpeg", "image/png", "image/webp", "video/mp4", "video/quicktime", "video/webm"];
+    const valid = Array.from(files).filter(f => allowed.includes(f.type));
+    if (valid.length === 0) { showToast("error", "Apenas imagens (JPG/PNG) e vídeos (MP4) são suportados"); return; }
+    setUploading(true);
+    let done = 0;
+    for (const file of valid) {
+      setUploadProgress(`Enviando ${done + 1}/${valid.length}: ${file.name}`);
+      try {
+        const signRes = await fetch(`/api/media/sign-upload?filename=${encodeURIComponent(file.name)}&type=stories`);
+        const signData = await signRes.json() as { signedUrl?: string; storagePath?: string; publicUrl?: string; error?: string };
+        if (!signRes.ok || !signData.signedUrl) throw new Error(signData.error ?? "Erro ao gerar URL de upload");
+
+        const uploadRes = await fetch(signData.signedUrl, {
+          method: "PUT",
+          headers: { "Content-Type": file.type },
+          body: file,
+        });
+        if (!uploadRes.ok) throw new Error("Erro ao enviar arquivo");
+
+        await fetch("/api/media/upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            storagePath: signData.storagePath,
+            originalName: file.name,
+            sizeBytes: file.size,
+            mimeType: file.type,
+            publicUrl: signData.publicUrl,
+          }),
+        });
+        done++;
+      } catch (err) {
+        showToast("error", `Erro ao enviar ${file.name}: ${err instanceof Error ? err.message : "desconhecido"}`);
+      }
+    }
+    setUploading(false);
+    setUploadProgress("");
+    if (done > 0) {
+      showToast("success", `${done} arquivo(s) enviado(s) com sucesso`);
+      await loadStories();
+    }
+  }
 
   async function handleFetch() {
     const clean = username.replace(/^@/, "").trim();
@@ -382,6 +432,40 @@ export default function StoriesPage() {
         <p style={{ marginTop: ".875rem", fontSize: ".75rem", color: "#444" }}>
           Stories são salvos permanentemente na sua biblioteca. Perfis privados requerem acesso à conta.
         </p>
+      </div>
+
+      {/* Upload panel */}
+      <div
+        className="glass-panel"
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => { e.preventDefault(); setDragging(false); void uploadFiles(e.dataTransfer.files); }}
+        style={{ padding: "1.5rem", marginBottom: "2rem", border: dragging ? "1.5px dashed rgba(255,213,79,.6)" : "1.5px dashed rgba(255,255,255,.08)", background: dragging ? "rgba(255,213,79,.04)" : undefined, transition: "all .2s" }}
+      >
+        <p style={{ fontSize: ".8rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: "1rem" }}>
+          Enviar do Dispositivo
+        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+          <label style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: ".5rem", padding: "1.5rem", borderRadius: "10px", border: "1px dashed rgba(255,255,255,.12)", cursor: uploading ? "not-allowed" : "pointer", opacity: uploading ? .6 : 1 }}>
+            <input
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp,video/mp4,video/quicktime,video/webm"
+              style={{ display: "none" }}
+              disabled={uploading}
+              onChange={e => e.target.files && void uploadFiles(e.target.files)}
+            />
+            {uploading
+              ? <Loader2 size={24} color="var(--accent-gold)" style={{ animation: "spin 1s linear infinite" }} />
+              : <UploadCloud size={24} color="rgba(255,213,79,.5)" />}
+            <span style={{ fontSize: ".82rem", color: uploading ? "var(--accent-gold)" : "var(--text-secondary)", textAlign: "center" }}>
+              {uploading ? uploadProgress : "Clique ou arraste imagens/vídeos aqui"}
+            </span>
+            {!uploading && (
+              <span style={{ fontSize: ".7rem", color: "var(--text-muted)" }}>JPG · PNG · MP4 · múltiplos arquivos</span>
+            )}
+          </label>
+        </div>
       </div>
 
       {/* Publish panel — shown when selectable mode is on */}

@@ -20,7 +20,10 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const filename = searchParams.get("filename") ?? "video.mp4";
   const ext = filename.split(".").pop()?.toLowerCase() ?? "mp4";
-  const storagePath = `${user.id}/${uuidv4()}.${ext}`;
+  const type = searchParams.get("type");
+  const storagePath = type === "stories"
+    ? `stories/${user.id}/uploaded/${uuidv4()}.${ext}`
+    : `${user.id}/${uuidv4()}.${ext}`;
 
   const admin = storageAdmin();
   const { data, error } = await admin.storage
