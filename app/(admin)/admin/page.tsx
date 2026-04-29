@@ -813,6 +813,47 @@ function TestadoresTab() {
   const [longTokenResult, setLongTokenResult] = useState<{ longToken: string; expiresInDays: number; envKey: string } | null>(null);
   const [exchangeError, setExchangeError] = useState<string | null>(null);
 
+  // Cleanup duplicates
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupPreview, setCleanupPreview] = useState<{ wouldDelete: number; groups: number } | null>(null);
+  const [cleanupDone, setCleanupDone] = useState<number | null>(null);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+
+  async function handleCleanupPreview() {
+    setCleanupLoading(true);
+    setCleanupPreview(null);
+    setCleanupDone(null);
+    setCleanupError(null);
+    try {
+      const r = await fetch("/api/admin/cleanup-duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: true }),
+      });
+      const d = await r.json() as { wouldDelete?: number; groups?: number; error?: string };
+      if (!r.ok) { setCleanupError(d.error ?? "Erro"); return; }
+      setCleanupPreview({ wouldDelete: d.wouldDelete ?? 0, groups: d.groups ?? 0 });
+    } catch { setCleanupError("Erro de conexão"); }
+    finally { setCleanupLoading(false); }
+  }
+
+  async function handleCleanupConfirm() {
+    setCleanupLoading(true);
+    setCleanupError(null);
+    try {
+      const r = await fetch("/api/admin/cleanup-duplicates", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      const d = await r.json() as { deleted?: number; error?: string };
+      if (!r.ok) { setCleanupError(d.error ?? "Erro"); return; }
+      setCleanupDone(d.deleted ?? 0);
+      setCleanupPreview(null);
+    } catch { setCleanupError("Erro de conexão"); }
+    finally { setCleanupLoading(false); }
+  }
+
   async function handleExchange() {
     if (!shortToken.trim()) return;
     setExchanging(true);
@@ -946,6 +987,51 @@ function TestadoresTab() {
               : <><Send size={14} /> Enviar {names.length > 0 ? `${names.length} convite${names.length !== 1 ? "s" : ""}` : "convites"}</>}
           </button>
         </form>
+      </Panel>
+
+      {/* Cleanup duplicate scheduled posts */}
+      <Panel style={{ padding: "1.5rem", border: "1px solid rgba(239,68,68,.18)" }}>
+        <SectionLabel>Limpar Posts Duplicados</SectionLabel>
+        <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Remove posts <strong style={{ color: "#e0e0e0" }}>PENDENTES</strong> que já foram publicados (mesma legenda, mesma conta). Use quando um perfil foi clonado mais de uma vez e ficaram duplicatas na fila.
+        </p>
+        {cleanupError && <p style={{ fontSize: 12, color: "#f87171", marginBottom: ".5rem" }}>{cleanupError}</p>}
+        {cleanupDone !== null && (
+          <p style={{ fontSize: 12, color: "#4ade80", marginBottom: ".5rem" }}>{cleanupDone} posts duplicados removidos.</p>
+        )}
+        {cleanupPreview && (
+          <div style={{ marginBottom: ".75rem", padding: ".75rem 1rem", borderRadius: 9, background: "rgba(239,68,68,.07)", border: "1px solid rgba(239,68,68,.2)" }}>
+            <p style={{ fontSize: 12, color: "#fca5a5", marginBottom: ".5rem" }}>
+              Encontrados <strong>{cleanupPreview.wouldDelete}</strong> posts duplicados em {cleanupPreview.groups} grupos de legenda. Confirmar exclusão?
+            </p>
+            <div style={{ display: "flex", gap: ".5rem" }}>
+              <button
+                onClick={() => void handleCleanupConfirm()}
+                disabled={cleanupLoading}
+                style={{ padding: "7px 14px", borderRadius: 8, background: "rgba(239,68,68,.2)", border: "1px solid rgba(239,68,68,.4)", color: "#f87171", fontSize: 12, fontWeight: 700, cursor: cleanupLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)", display: "flex", alignItems: "center", gap: 5 }}
+              >
+                {cleanupLoading ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={12} />}
+                Confirmar exclusão
+              </button>
+              <button
+                onClick={() => setCleanupPreview(null)}
+                style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,.08)", color: "#666", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-sans)" }}
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+        {!cleanupPreview && cleanupDone === null && (
+          <button
+            onClick={() => void handleCleanupPreview()}
+            disabled={cleanupLoading}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 9, background: "rgba(239,68,68,.1)", border: "1px solid rgba(239,68,68,.25)", color: "#f87171", fontSize: 12, fontWeight: 700, cursor: cleanupLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}
+          >
+            {cleanupLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
+            Verificar duplicatas
+          </button>
+        )}
       </Panel>
 
       {results.length > 0 && (

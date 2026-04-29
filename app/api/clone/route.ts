@@ -197,12 +197,17 @@ async function processCloneJob(p: ProcessParams) {
       return;
     }
 
-    // Deduplicate: skip videos already posted or pending for each account
+    // Deduplicate: skip videos already posted or pending for each account.
+    // Uses three signals: rawVideoUrl (exact), library video hash, and caption
+    // (caption is stable across re-scrapes when CDN URLs change).
     const rawUrls = reelsRaw.map((r) => r.videoUrl);
     const urlHashes = rawUrls.map((u) => createHash("md5").update(u).digest("hex"));
     const storagePaths = urlHashes.map((h) => `cloned/${p.userId}/${h}.mp4`);
+    const meaningfulCaptions = [...new Set(
+      reelsRaw.map((r) => r.caption.trim()).filter((c) => c.length > 10)
+    )];
 
-    const [existingByUrl, existingLibVideos] = await Promise.all([
+    const [existingByUrl, existingLibVideos, existingByCaption] = await Promise.all([
       prisma.scheduledPost.findMany({
         where: {
           accountId: { in: p.accounts.map((a) => a.id) },
@@ -215,6 +220,14 @@ async function processCloneJob(p: ProcessParams) {
         where: { userId: p.userId, storagePath: { in: storagePaths } },
         select: { id: true, storagePath: true },
       }),
+      meaningfulCaptions.length > 0 ? prisma.scheduledPost.findMany({
+        where: {
+          accountId: { in: p.accounts.map((a) => a.id) },
+          status: { in: ["DONE", "PENDING", "RUNNING"] },
+          caption: { in: meaningfulCaptions },
+        },
+        select: { accountId: true, caption: true },
+      }) : Promise.resolve([]),
     ]);
 
     const pathToLibId = new Map(existingLibVideos.map((v) => [v.storagePath, v.id]));
@@ -228,12 +241,14 @@ async function processCloneJob(p: ProcessParams) {
       select: { accountId: true, videoId: true },
     }) : [];
 
-    // Per-account sets of already-scheduled rawVideoUrls and videoIds
+    // Per-account sets for quick lookup
     const seenUrls = new Map<string, Set<string>>();
     const seenVideoIds = new Map<string, Set<string>>();
+    const seenCaptions = new Map<string, Set<string>>();
     for (const a of p.accounts) {
       seenUrls.set(a.id, new Set());
       seenVideoIds.set(a.id, new Set());
+      seenCaptions.set(a.id, new Set());
     }
     for (const r of existingByUrl) {
       if (r.rawVideoUrl) seenUrls.get(r.accountId)?.add(r.rawVideoUrl);
@@ -241,14 +256,18 @@ async function processCloneJob(p: ProcessParams) {
     for (const r of existingByLibId) {
       if (r.videoId) seenVideoIds.get(r.accountId)?.add(r.videoId);
     }
+    for (const r of existingByCaption) {
+      if (r.caption) seenCaptions.get(r.accountId)?.add(r.caption.trim());
+    }
 
     // Create all posts immediately with rawVideoUrl (skipping duplicates per account)
     const postsToCreate = reelsRaw.flatMap((reel, i) =>
       p.accounts.flatMap((account, accountIdx) => {
-        const urls = seenUrls.get(account.id)!;
-        if (urls.has(reel.videoUrl)) return [];
+        if (seenUrls.get(account.id)!.has(reel.videoUrl)) return [];
         const libId = pathToLibId.get(storagePaths[i]);
         if (libId && seenVideoIds.get(account.id)!.has(libId)) return [];
+        const caption = reel.caption.trim();
+        if (caption.length > 10 && seenCaptions.get(account.id)!.has(caption)) return [];
         return [{
           userId: p.userId,
           accountId: account.id,
