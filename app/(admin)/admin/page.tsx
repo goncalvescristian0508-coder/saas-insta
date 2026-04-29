@@ -807,9 +807,88 @@ function TestadoresTab() {
   const okCount = results.filter(r => r.ok).length;
   const errCount = results.filter(r => !r.ok).length;
 
+  // Token exchange
+  const [shortToken, setShortToken] = useState("");
+  const [exchanging, setExchanging] = useState(false);
+  const [longTokenResult, setLongTokenResult] = useState<{ longToken: string; expiresInDays: number; envKey: string } | null>(null);
+  const [exchangeError, setExchangeError] = useState<string | null>(null);
+
+  async function handleExchange() {
+    if (!shortToken.trim()) return;
+    setExchanging(true);
+    setLongTokenResult(null);
+    setExchangeError(null);
+    try {
+      const r = await fetch("/api/admin/exchange-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shortToken: shortToken.trim(), appKey }),
+      });
+      const d = await r.json() as { longToken?: string; expiresInDays?: number; envKey?: string; error?: string };
+      if (!r.ok || !d.longToken) {
+        setExchangeError(d.error ?? "Erro ao extender token");
+      } else {
+        setLongTokenResult({ longToken: d.longToken, expiresInDays: d.expiresInDays ?? 60, envKey: d.envKey ?? "" });
+        setShortToken("");
+      }
+    } catch {
+      setExchangeError("Erro de conexão");
+    } finally {
+      setExchanging(false);
+    }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem", maxWidth: 640 }}>
       <PageHeader title="Testadores Instagram" subtitle="Adiciona usuários como Instagram Tester no app da Meta via API — em massa e em paralelo" />
+
+      {/* Token exchange panel */}
+      <Panel style={{ padding: "1.5rem", border: "1px solid rgba(96,165,250,.2)" }}>
+        <SectionLabel>Extender Token de Admin (60 dias)</SectionLabel>
+        <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Cole o token curto gerado no <strong style={{ color: "#e0e0e0" }}>Meta API Explorer</strong>. O servidor troca por um token longo (60 dias) usando as credenciais do app — sem expor o App Secret.
+        </p>
+        <div style={{ display: "flex", gap: ".5rem" }}>
+          <input
+            value={shortToken}
+            onChange={e => setShortToken(e.target.value)}
+            placeholder="EAAxxxxxxxx..."
+            style={{ flex: 1, padding: "9px 12px", borderRadius: 9, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#f0f0f0", fontSize: 12, outline: "none", fontFamily: "monospace" }}
+          />
+          <button
+            onClick={() => void handleExchange()}
+            disabled={exchanging || !shortToken.trim()}
+            style={{ padding: "9px 16px", borderRadius: 9, background: "rgba(96,165,250,.15)", border: "1px solid rgba(96,165,250,.3)", color: "#60a5fa", fontSize: 12, fontWeight: 700, cursor: exchanging || !shortToken.trim() ? "not-allowed" : "pointer", opacity: !shortToken.trim() ? 0.5 : 1, fontFamily: "var(--font-sans)", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5 }}
+          >
+            {exchanging ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
+            Extender
+          </button>
+        </div>
+        {exchangeError && (
+          <p style={{ marginTop: ".5rem", fontSize: 12, color: "#f87171" }}>{exchangeError}</p>
+        )}
+        {longTokenResult && (
+          <div style={{ marginTop: ".75rem", padding: ".75rem 1rem", borderRadius: 9, background: "rgba(34,197,94,.07)", border: "1px solid rgba(34,197,94,.2)" }}>
+            <p style={{ fontSize: 11, color: "#4ade80", fontWeight: 700, marginBottom: ".4rem" }}>
+              Token longo gerado — válido por {longTokenResult.expiresInDays} dias
+            </p>
+            <p style={{ fontSize: 11, color: "#555", marginBottom: ".5rem" }}>
+              Adicione no Vercel como: <strong style={{ color: "#e0e0e0" }}>{longTokenResult.envKey}</strong>
+            </p>
+            <div style={{ display: "flex", gap: ".4rem", alignItems: "center" }}>
+              <code style={{ flex: 1, fontSize: 10, color: "#60a5fa", background: "rgba(0,0,0,.4)", padding: ".4rem .6rem", borderRadius: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontFamily: "monospace" }}>
+                {longTokenResult.longToken}
+              </code>
+              <button
+                onClick={() => navigator.clipboard.writeText(longTokenResult.longToken)}
+                style={{ padding: "6px 10px", borderRadius: 6, background: "rgba(96,165,250,.15)", border: "1px solid rgba(96,165,250,.25)", color: "#60a5fa", fontSize: 11, cursor: "pointer", fontWeight: 700, fontFamily: "var(--font-sans)", whiteSpace: "nowrap" }}
+              >
+                Copiar
+              </button>
+            </div>
+          </div>
+        )}
+      </Panel>
 
       <Panel style={{ padding: "1.5rem" }}>
         <SectionLabel>Adicionar Testadores</SectionLabel>
