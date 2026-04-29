@@ -10,20 +10,12 @@ async function sendTesterInvite(
   appId: string,
   accessToken: string,
 ): Promise<{ username: string; ok: boolean; error?: string }> {
-  // Try to resolve IG username → numeric ID (fallback to username if it fails)
-  let userValue = clean;
-  try {
-    const igRes = await fetch(
-      `https://graph.instagram.com/v21.0/${clean}?fields=id&access_token=${accessToken}`,
-    );
-    if (igRes.ok) {
-      const igData = await igRes.json() as { id?: string };
-      if (igData.id) userValue = igData.id;
-    }
-  } catch { /* fallback to username */ }
-
+  // Pass the Instagram username directly — the /roles endpoint accepts it.
+  // Do NOT try to resolve to a numeric ID: the Instagram Graph API returns
+  // app-scoped IGSIDs that are unknown to the Facebook Graph API, causing
+  // "Object does not exist" errors.
   const body = new URLSearchParams({
-    user: userValue,
+    user: clean,
     role: "instagram_testers",
     access_token: accessToken,
   });
@@ -40,8 +32,7 @@ async function sendTesterInvite(
     const errMsg = data.error?.message ?? "Erro ao adicionar tester";
     const code = data.error?.code;
     let hint = "";
-    if (code === 100) hint = " — usuário não encontrado no Meta";
-    else if (code === 200 || code === 190) hint = " — verifique o App Secret";
+    if (code === 200 || code === 190) hint = " — verifique o App Secret";
     return { username: clean, ok: false, error: `${errMsg}${hint}` };
   }
 
