@@ -30,9 +30,10 @@ export async function POST(request: Request) {
     storyIds?: string[];
     accountIds?: string[];
     distribute?: boolean;
+    links?: Record<string, string>;
   };
 
-  const { storyIds = [], accountIds = [], distribute = true } = body;
+  const { storyIds = [], accountIds = [], distribute = true, links = {} } = body;
 
   if (storyIds.length === 0)
     return NextResponse.json({ error: "Selecione ao menos 1 story" }, { status: 400 });
@@ -66,11 +67,13 @@ export async function POST(request: Request) {
     pairs.map(async ({ account, story }) => {
       try {
         const accessToken = decryptAccountPassword(account.accessTokenEnc);
+        const storyUrl = links[account.id]?.trim() || undefined;
         const result = await publishStoryFromUrl({
           igUserId: account.instagramUserId,
           accessToken,
           mediaUrl: story.publicUrl,
           isVideo: story.mimeType === "video/mp4",
+          storyUrl,
         });
         return {
           accountId: account.id,

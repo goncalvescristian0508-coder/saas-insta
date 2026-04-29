@@ -250,8 +250,9 @@ export async function publishStoryFromUrl(params: {
   accessToken: string;
   mediaUrl: string;
   isVideo: boolean;
+  storyUrl?: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { igUserId, accessToken, mediaUrl, isVideo } = params;
+  const { igUserId, accessToken, mediaUrl, isVideo, storyUrl } = params;
 
   const createUrl = new URL(`${GRAPH}/${igUserId}/media`);
   if (isVideo) {
@@ -260,6 +261,7 @@ export async function publishStoryFromUrl(params: {
   } else {
     createUrl.searchParams.set("image_url", mediaUrl);
   }
+  if (storyUrl) createUrl.searchParams.set("story_url", storyUrl);
   createUrl.searchParams.set("access_token", accessToken);
 
   const createRes = await fetch(createUrl.toString(), { method: "POST" });

@@ -163,6 +163,7 @@ export default function StoriesPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
   const [distribute, setDistribute] = useState(true);
+  const [accountLinks, setAccountLinks] = useState<Record<string, string>>({});
   const [publishing, setPublishing] = useState(false);
   const [publishResults, setPublishResults] = useState<PublishResult[] | null>(null);
   const [showAccounts, setShowAccounts] = useState(false);
@@ -290,6 +291,11 @@ export default function StoriesPage() {
     setSelectable(v => !v);
     setSelectedIds(new Set());
     setPublishResults(null);
+    setAccountLinks({});
+  }
+
+  function setLink(accountId: string, url: string) {
+    setAccountLinks(prev => ({ ...prev, [accountId]: url }));
   }
 
   function toggleStory(id: string) {
@@ -331,6 +337,7 @@ export default function StoriesPage() {
           storyIds: Array.from(selectedIds),
           accountIds: Array.from(selectedAccountIds),
           distribute,
+          links: accountLinks,
         }),
       });
       const d = await res.json();
@@ -552,6 +559,28 @@ export default function StoriesPage() {
               <p style={{ fontSize: ".8rem", color: "var(--text-muted)", marginTop: ".5rem", padding: ".5rem" }}>Nenhuma conta ativa encontrada.</p>
             )}
           </div>
+
+          {/* Per-account links — shown when accounts are selected */}
+          {selectedAccountIds.size > 0 && (
+            <div style={{ marginBottom: "1rem" }}>
+              <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".6rem" }}>
+                Link por conta <span style={{ color: "#555", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(opcional)</span>
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: ".35rem", maxHeight: "260px", overflowY: "auto" }}>
+                {accounts.filter(a => selectedAccountIds.has(a.id)).map(acc => (
+                  <div key={acc.id} style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
+                    <span style={{ fontSize: ".78rem", color: "var(--text-secondary)", minWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
+                    <input
+                      value={accountLinks[acc.id] ?? ""}
+                      onChange={e => setLink(acc.id, e.target.value)}
+                      placeholder="https://..."
+                      style={{ flex: 1, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: "7px", padding: ".35rem .6rem", fontSize: ".78rem", color: "#f0f0f0", outline: "none", fontFamily: "var(--font-sans)" }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Publish button */}
           <button
