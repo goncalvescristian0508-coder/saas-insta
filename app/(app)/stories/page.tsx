@@ -382,20 +382,18 @@ export default function StoriesPage() {
               </span>
             </div>
           )}
-          {stories.length > 0 && (
-            <button
-              onClick={toggleSelectMode}
-              style={{
-                display: "flex", alignItems: "center", gap: ".4rem",
-                padding: ".5rem .9rem", borderRadius: "8px", fontSize: ".8rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)",
-                background: selectable ? "rgba(255,213,79,.15)" : "rgba(255,255,255,.05)",
-                border: selectable ? "1px solid rgba(255,213,79,.35)" : "1px solid rgba(255,255,255,.1)",
-                color: selectable ? "#FFD54F" : "var(--text-secondary)",
-              }}
-            >
-              <Send size={13} /> {selectable ? "Cancelar" : "Publicar Stories"}
-            </button>
-          )}
+          <button
+            onClick={toggleSelectMode}
+            style={{
+              display: "flex", alignItems: "center", gap: ".4rem",
+              padding: ".5rem .9rem", borderRadius: "8px", fontSize: ".8rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)",
+              background: selectable ? "rgba(255,213,79,.15)" : "rgba(255,255,255,.05)",
+              border: selectable ? "1px solid rgba(255,213,79,.35)" : "1px solid rgba(255,255,255,.1)",
+              color: selectable ? "#FFD54F" : "var(--text-secondary)",
+            }}
+          >
+            <Send size={13} /> {selectable ? "Cancelar" : "Publicar Stories"}
+          </button>
           <button onClick={loadStories} style={{ padding: ".5rem", borderRadius: "8px", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", color: "#666", cursor: "pointer", display: "flex" }}>
             <RefreshCw size={14} />
           </button>
