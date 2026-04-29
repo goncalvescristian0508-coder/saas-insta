@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import { sendPushToUser } from "@/lib/sendPush";
 
 function storageAdmin() {
@@ -116,9 +116,42 @@ async function runCron() {
 
       let videoUrl: string;
       if (post.rawVideoUrl) {
-        const rehosted = await rehostVideo(post.rawVideoUrl);
-        videoUrl = rehosted.publicUrl;
-        rehostPath = rehosted.storagePath;
+        // 1. Check if background download already saved to library (by URL hash)
+        const urlHash = createHash("md5").update(post.rawVideoUrl).digest("hex");
+        const storagePath = `cloned/${post.userId}/${urlHash}.mp4`;
+        const libVideo = await prisma.libraryVideo.findFirst({
+          where: { userId: post.userId, storagePath },
+        });
+        if (libVideo) {
+          // Relink post to library video and clear the expired CDN reference
+          await prisma.scheduledPost.update({
+            where: { id: post.id },
+            data: { videoId: libVideo.id, rawVideoUrl: null },
+          });
+          videoUrl = libVideo.publicUrl;
+        } else {
+          // 2. Try to re-host from CDN (may fail if URL expired)
+          try {
+            const rehosted = await rehostVideo(post.rawVideoUrl);
+            videoUrl = rehosted.publicUrl;
+            rehostPath = rehosted.storagePath;
+          } catch {
+            if (post.video?.publicUrl) {
+              videoUrl = post.video.publicUrl;
+            } else {
+              // CDN URL expired with no fallback — fail permanently to stop retry loop
+              await prisma.scheduledPost.update({
+                where: { id: post.id },
+                data: {
+                  status: "FAILED",
+                  errorMsg: "Vídeo fonte expirado. Re-agende com um vídeo da biblioteca.",
+                  retryCount: 3,
+                },
+              });
+              return { id: post.id, status: "failed", error: "Vídeo fonte expirado" };
+            }
+          }
+        }
       } else if (post.video?.publicUrl) {
         videoUrl = post.video.publicUrl;
       } else {

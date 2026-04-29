@@ -197,10 +197,59 @@ async function processCloneJob(p: ProcessParams) {
       return;
     }
 
-    // Create all posts immediately with rawVideoUrl
-    await prisma.scheduledPost.createMany({
-      data: reelsRaw.flatMap((reel, i) =>
-        p.accounts.map((account, accountIdx) => ({
+    // Deduplicate: skip videos already posted or pending for each account
+    const rawUrls = reelsRaw.map((r) => r.videoUrl);
+    const urlHashes = rawUrls.map((u) => createHash("md5").update(u).digest("hex"));
+    const storagePaths = urlHashes.map((h) => `cloned/${p.userId}/${h}.mp4`);
+
+    const [existingByUrl, existingLibVideos] = await Promise.all([
+      prisma.scheduledPost.findMany({
+        where: {
+          accountId: { in: p.accounts.map((a) => a.id) },
+          status: { in: ["DONE", "PENDING", "RUNNING"] },
+          rawVideoUrl: { in: rawUrls },
+        },
+        select: { accountId: true, rawVideoUrl: true },
+      }),
+      prisma.libraryVideo.findMany({
+        where: { userId: p.userId, storagePath: { in: storagePaths } },
+        select: { id: true, storagePath: true },
+      }),
+    ]);
+
+    const pathToLibId = new Map(existingLibVideos.map((v) => [v.storagePath, v.id]));
+    const libVideoIds = [...pathToLibId.values()];
+    const existingByLibId = libVideoIds.length > 0 ? await prisma.scheduledPost.findMany({
+      where: {
+        accountId: { in: p.accounts.map((a) => a.id) },
+        status: { in: ["DONE", "PENDING", "RUNNING"] },
+        videoId: { in: libVideoIds },
+      },
+      select: { accountId: true, videoId: true },
+    }) : [];
+
+    // Per-account sets of already-scheduled rawVideoUrls and videoIds
+    const seenUrls = new Map<string, Set<string>>();
+    const seenVideoIds = new Map<string, Set<string>>();
+    for (const a of p.accounts) {
+      seenUrls.set(a.id, new Set());
+      seenVideoIds.set(a.id, new Set());
+    }
+    for (const r of existingByUrl) {
+      if (r.rawVideoUrl) seenUrls.get(r.accountId)?.add(r.rawVideoUrl);
+    }
+    for (const r of existingByLibId) {
+      if (r.videoId) seenVideoIds.get(r.accountId)?.add(r.videoId);
+    }
+
+    // Create all posts immediately with rawVideoUrl (skipping duplicates per account)
+    const postsToCreate = reelsRaw.flatMap((reel, i) =>
+      p.accounts.flatMap((account, accountIdx) => {
+        const urls = seenUrls.get(account.id)!;
+        if (urls.has(reel.videoUrl)) return [];
+        const libId = pathToLibId.get(storagePaths[i]);
+        if (libId && seenVideoIds.get(account.id)!.has(libId)) return [];
+        return [{
           userId: p.userId,
           accountId: account.id,
           videoId: null,
@@ -208,9 +257,12 @@ async function processCloneJob(p: ProcessParams) {
           caption: reel.caption,
           scheduledAt: new Date(p.start.getTime() + i * p.intervalMs + accountIdx * 60_000),
           cloneJobId: p.cloneJobId,
-        }))
-      ),
-    });
+        }];
+      })
+    );
+    if (postsToCreate.length > 0) {
+      await prisma.scheduledPost.createMany({ data: postsToCreate });
+    }
 
     // Update job with final data — totalReels > 0 signals "done" to frontend
     await prisma.cloneJob.update({
