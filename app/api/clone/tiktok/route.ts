@@ -35,31 +35,57 @@ async function processJob(params: {
   try {
     const { cloneJobId, userId, accounts, tokens, username, start, intervalMs, postLimit } = params;
 
+    // Try multiple actors in order of preference
+    const ACTORS = [
+      { id: "clockworks/tiktok-scraper",         input: (u: string, limit: number) => ({ profiles: [u], resultsPerPage: limit, shouldDownloadVideos: false }) },
+      { id: "apify/tiktok-scraper",              input: (u: string, limit: number) => ({ profiles: [`@${u}`], videosPerProfile: limit }) },
+      { id: "clockworks/free-tiktok-scraper",    input: (u: string, limit: number) => ({ profiles: [u], resultsPerPage: limit }) },
+    ];
+
     let items: Record<string, unknown>[] = [];
+    let lastError = "";
     for (const t of tokens) {
-      try {
-        items = await apifyRun(t, "clockworks/tiktok-scraper", {
-          profiles: [username],
-          resultsPerPage: postLimit ?? 9999,
-          shouldDownloadVideos: false,
-        });
-        break;
-      } catch (err) {
-        const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-        if (msg.includes("monthly") || msg.includes("limit") || msg.includes("billing") || msg.includes("quota") || msg.includes("401") || msg.includes("402")) {
+      for (const actor of ACTORS) {
+        try {
+          const limit = postLimit ?? 500;
+          items = await apifyRun(t, actor.id, actor.input(username, limit));
+          if (items.length > 0) break;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err);
+          const msg = lastError.toLowerCase();
+          if (msg.includes("monthly") || msg.includes("limit") || msg.includes("billing") || msg.includes("quota") || msg.includes("401") || msg.includes("402")) {
+            break; // try next token
+          }
+          // actor not found or other error — try next actor
           continue;
         }
-        throw err;
       }
+      if (items.length > 0) break;
+    }
+
+    console.log(`[tiktok-clone] username=${username} items=${items.length} lastError=${lastError}`);
+
+    // Extract video URL from multiple possible field locations
+    function extractVideoUrl(r: Record<string, unknown>): string {
+      const video = r.video as Record<string, unknown> | undefined;
+      return String(
+        r.videoUrl ??
+        r.playUrl ??
+        r.downloadUrl ??
+        video?.downloadAddr ??
+        video?.playAddr ??
+        r.contentUrl ??
+        ""
+      );
     }
 
     const seen = new Set<string>();
     const reels = items
-      .filter((r) => r.videoUrl)
       .map((r) => ({
-        videoUrl: String(r.videoUrl),
-        caption: String(r.text ?? r.description ?? r.title ?? ""),
+        videoUrl: extractVideoUrl(r),
+        caption: String(r.text ?? r.description ?? r.title ?? r.caption ?? ""),
       }))
+      .filter((r) => r.videoUrl && r.videoUrl !== "undefined" && r.videoUrl.startsWith("http"))
       .filter((r) => {
         if (seen.has(r.videoUrl)) return false;
         seen.add(r.videoUrl);
@@ -68,7 +94,11 @@ async function processJob(params: {
       .slice(0, postLimit ?? undefined);
 
     if (reels.length === 0) {
-      await prisma.cloneJob.delete({ where: { id: cloneJobId } }).catch(() => null);
+      // Save error info before deleting so the frontend can show it
+      await prisma.cloneJob.update({
+        where: { id: cloneJobId },
+        data: { totalReels: -1 }, // -1 = error sentinel
+      }).catch(() => null);
       return;
     }
 

@@ -82,6 +82,9 @@ export default function ClonarTikTokPage() {
       if (!job) {
         setError("Erro ao buscar vídeos do perfil. Verifique o username e tente novamente.");
         setProcessingJobId(null);
+      } else if (job.totalReels === -1) {
+        setError("Nenhum vídeo encontrado. Verifique se o perfil é público e o username está correto.");
+        setProcessingJobId(null);
       } else if (job.posts.total > 0) {
         setResult({ created: job.posts.total });
         setProcessingJobId(null);
