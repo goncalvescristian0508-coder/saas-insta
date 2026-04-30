@@ -7,102 +7,95 @@ import { createHash } from "crypto";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-async function apifyRun(token: string, actorId: string, input: object): Promise<Record<string, unknown>[]> {
-  const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${token}&timeout=240&memory=512`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(input),
-    signal: AbortSignal.timeout(250_000),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
-    throw new Error(err.error?.message || `Apify HTTP ${res.status}`);
+interface TikwmVideo {
+  video_id: string;
+  title: string;
+  play: string;
+  wmplay: string;
+  download: string; // no watermark
+  cover: string;
+  duration: number;
+  play_count: number;
+  digg_count: number;
+  create_time: number;
+}
+
+interface TikwmResponse {
+  code: number;
+  msg: string;
+  data?: {
+    videos: TikwmVideo[];
+    cursor: number;
+    hasMore: boolean;
+  };
+}
+
+async function fetchTikTokVideos(username: string, limit: number): Promise<{ videoUrl: string; caption: string }[]> {
+  const results: { videoUrl: string; caption: string }[] = [];
+  let cursor = 0;
+  const pageSize = Math.min(limit, 20);
+
+  while (results.length < limit) {
+    const url = `https://www.tikwm.com/api/user/posts?unique_id=${encodeURIComponent(username)}&count=${pageSize}&cursor=${cursor}`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: AbortSignal.timeout(30_000),
+    });
+
+    if (!res.ok) throw new Error(`tikwm HTTP ${res.status}`);
+
+    const data = await res.json() as TikwmResponse;
+
+    if (data.code !== 0 || !data.data?.videos?.length) break;
+
+    for (const v of data.data.videos) {
+      const videoUrl = v.download || v.play;
+      if (videoUrl && videoUrl.startsWith("http")) {
+        results.push({ videoUrl, caption: v.title ?? "" });
+      }
+      if (results.length >= limit) break;
+    }
+
+    if (!data.data.hasMore || data.data.videos.length === 0) break;
+    cursor = data.data.cursor;
   }
-  return res.json() as Promise<Record<string, unknown>[]>;
+
+  return results;
 }
 
 async function processJob(params: {
   cloneJobId: string;
   userId: string;
   accounts: Array<{ id: string }>;
-  tokens: string[];
   username: string;
   start: Date;
   intervalMs: number;
   postLimit: number | null | undefined;
 }) {
+  const { cloneJobId, userId, accounts, username, start, intervalMs, postLimit } = params;
   try {
-    const { cloneJobId, userId, accounts, tokens, username, start, intervalMs, postLimit } = params;
+    const limit = postLimit ?? 500;
+    const rawReels = await fetchTikTokVideos(username, limit);
 
-    // Try multiple actors in order of preference
-    const ACTORS = [
-      { id: "clockworks/tiktok-scraper",         input: (u: string, limit: number) => ({ profiles: [u], resultsPerPage: limit, shouldDownloadVideos: false }) },
-      { id: "apify/tiktok-scraper",              input: (u: string, limit: number) => ({ profiles: [`@${u}`], videosPerProfile: limit }) },
-      { id: "clockworks/free-tiktok-scraper",    input: (u: string, limit: number) => ({ profiles: [u], resultsPerPage: limit }) },
-    ];
+    console.log(`[tiktok-clone] username=${username} fetched=${rawReels.length}`);
 
-    let items: Record<string, unknown>[] = [];
-    let lastError = "";
-    for (const t of tokens) {
-      for (const actor of ACTORS) {
-        try {
-          const limit = postLimit ?? 500;
-          items = await apifyRun(t, actor.id, actor.input(username, limit));
-          if (items.length > 0) break;
-        } catch (err) {
-          lastError = err instanceof Error ? err.message : String(err);
-          const msg = lastError.toLowerCase();
-          if (msg.includes("monthly") || msg.includes("limit") || msg.includes("billing") || msg.includes("quota") || msg.includes("401") || msg.includes("402")) {
-            break; // try next token
-          }
-          // actor not found or other error — try next actor
-          continue;
-        }
-      }
-      if (items.length > 0) break;
-    }
-
-    console.log(`[tiktok-clone] username=${username} items=${items.length} lastError=${lastError}`);
-
-    // Extract video URL from multiple possible field locations
-    function extractVideoUrl(r: Record<string, unknown>): string {
-      const video = r.video as Record<string, unknown> | undefined;
-      return String(
-        r.videoUrl ??
-        r.playUrl ??
-        r.downloadUrl ??
-        video?.downloadAddr ??
-        video?.playAddr ??
-        r.contentUrl ??
-        ""
-      );
-    }
-
-    const seen = new Set<string>();
-    const reels = items
-      .map((r) => ({
-        videoUrl: extractVideoUrl(r),
-        caption: String(r.text ?? r.description ?? r.title ?? r.caption ?? ""),
-      }))
-      .filter((r) => r.videoUrl && r.videoUrl !== "undefined" && r.videoUrl.startsWith("http"))
-      .filter((r) => {
-        if (seen.has(r.videoUrl)) return false;
-        seen.add(r.videoUrl);
-        return true;
-      })
-      .slice(0, postLimit ?? undefined);
-
-    if (reels.length === 0) {
-      // Save error info before deleting so the frontend can show it
+    if (rawReels.length === 0) {
       await prisma.cloneJob.update({
         where: { id: cloneJobId },
-        data: { totalReels: -1 }, // -1 = error sentinel
+        data: { totalReels: -1 },
       }).catch(() => null);
       return;
     }
 
-    // Dedup by caption per account (same logic as Instagram clone)
+    // Dedup videos
+    const seen = new Set<string>();
+    const reels = rawReels.filter((r) => {
+      if (seen.has(r.videoUrl)) return false;
+      seen.add(r.videoUrl);
+      return true;
+    });
+
+    // Dedup against already-scheduled/published posts per account
     const meaningfulCaptions = [...new Set(reels.map((r) => r.caption.trim()).filter((c) => c.length > 10))];
     const rawUrls = reels.map((r) => r.videoUrl);
     const urlHashes = rawUrls.map((u) => createHash("md5").update(u).digest("hex"));
@@ -171,7 +164,10 @@ async function processJob(params: {
     });
   } catch (err) {
     console.error("[clone/tiktok]", err instanceof Error ? err.message : err);
-    await prisma.cloneJob.delete({ where: { id: params.cloneJobId } }).catch(() => null);
+    await prisma.cloneJob.update({
+      where: { id: cloneJobId },
+      data: { totalReels: -1 },
+    }).catch(() => null);
   }
 }
 
@@ -194,23 +190,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }
 
-    const userTokenRecords = await prisma.userApifyToken.findMany({
-      where: { userId: user.id, isActive: true },
-      select: { token: true },
-    });
-    const userTokens = userTokenRecords.map((r) => r.token);
-    const systemTokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
-      .split(",").map((t) => t.trim()).filter(Boolean);
-    const tokens = [...userTokens, ...systemTokens];
-    if (tokens.length === 0) return NextResponse.json({ error: "Token Apify não configurado. Adicione em Integrações." }, { status: 500 });
-
     const accounts = await prisma.instagramOAuthAccount.findMany({
       where: { id: { in: accountIds }, userId: user.id },
       select: { id: true },
     });
     if (accounts.length === 0) return NextResponse.json({ error: "Nenhuma conta válida" }, { status: 404 });
 
-    const cleanUsername = username.replace("@", "").trim();
+    // Extract username from URL if pasted
+    const cleanUsername = username
+      .replace(/https?:\/\/(www\.)?tiktok\.com\/@?/, "")
+      .replace(/^@/, "")
+      .split("?")[0]
+      .split("/")[0]
+      .trim();
+
     const cloneJob = await prisma.cloneJob.create({
       data: {
         userId: user.id,
@@ -227,7 +220,6 @@ export async function POST(request: Request) {
       cloneJobId: cloneJob.id,
       userId: user.id,
       accounts,
-      tokens,
       username: cleanUsername,
       start: new Date(startAt),
       intervalMs: intervalMinutes * 60_000,
