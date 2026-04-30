@@ -232,6 +232,33 @@ async function runCron() {
       const accountName = post.account.username ?? "conta";
       const isRateLimit = msgLower.includes("too many actions") || msgLower.includes("rate limit");
 
+      // Detect invalid/expired token — requires user to reconnect
+      const isTokenInvalid =
+        msgLower.includes("error validating access token") ||
+        msgLower.includes("invalid oauth access token") ||
+        msgLower.includes("access token has expired") ||
+        msgLower.includes("the user must be a confirmed user") ||
+        msgLower.includes("not a confirmed user") ||
+        msgLower.includes("sessions for the user are not allowed") ||
+        (msgLower.includes("oauth") && msgLower.includes("token") && msgLower.includes("invalid"));
+
+      if (isTokenInvalid) {
+        await prisma.instagramOAuthAccount.update({
+          where: { id: post.accountId },
+          data: { accountStatus: "SUSPENDED", lastError: msg },
+        });
+        await prisma.scheduledPost.updateMany({
+          where: { accountId: post.accountId, status: "PENDING" },
+          data: { status: "FAILED", errorMsg: "Token inválido — reconecte a conta." },
+        });
+        await sendPushToUser(post.userId, {
+          title: "⚠️ Reconecte a conta",
+          body: `@${accountName}: token expirado ou revogado pelo Instagram. Acesse Contas e reconecte.`,
+          url: "/accounts",
+        });
+        return { id: post.id, status: "token_invalid" };
+      }
+
       // Detect suspended account
       const isSuspended =
         msgLower.includes("suspended") ||
