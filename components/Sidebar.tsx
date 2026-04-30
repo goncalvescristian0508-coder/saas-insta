@@ -18,6 +18,7 @@ const navItems = [
   { name: "Postagem em massa", href: "/postagem-massa",  icon: Send },
   { name: "Inspirações",       href: "/inspiracoes",    icon: Search },
   { name: "Clonar Perfil",     href: "/clonar",         icon: Copy },
+  { name: "Clonar TikTok",    href: "/clonar-ttk",     icon: Copy },
   { name: "Biblioteca",        href: "/library",        icon: Clapperboard },
   { name: "Stories",           href: "/stories",        icon: Camera },
   { name: "Saúde",             href: "/saude",          icon: Activity },
