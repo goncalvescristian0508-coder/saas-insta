@@ -11,6 +11,7 @@ import {
 } from "@/lib/instagramService";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 export async function GET() {
   const { userId, created } = await getOrCreateRequestUserId();

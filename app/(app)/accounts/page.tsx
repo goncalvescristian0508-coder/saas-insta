@@ -172,7 +172,7 @@ function AccountsPageInner() {
         body: JSON.stringify({ username: u, password: directPassword.trim() }),
       });
       const d = await res.json();
-      if (!res.ok) { setDirectError(d.error ?? "Erro ao fazer login."); return; }
+      if (!res.ok) { setDirectError((d.error ?? "Erro ao fazer login.") + (d.debug ? `\n\n${d.debug}` : "")); return; }
       setShowDirectLogin(false);
       setDirectUsername("");
       setDirectPassword("");
@@ -396,7 +396,7 @@ function AccountsPageInner() {
                 style={{ padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.88rem", outline: "none" }}
               />
             </div>
-            {directError && <p style={{ fontSize: "0.78rem", color: "#f87171", marginBottom: "0.75rem" }}>{directError}</p>}
+            {directError && <p style={{ fontSize: "0.72rem", color: "#f87171", marginBottom: "0.75rem", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{directError}</p>}
             <div style={{ display: "flex", gap: "0.75rem" }}>
               <button onClick={() => setShowDirectLogin(false)} style={{ flex: 1, padding: "0.6rem", borderRadius: "8px", background: "none", border: "1px solid var(--border-color)", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.85rem" }}>Cancelar</button>
               <button
