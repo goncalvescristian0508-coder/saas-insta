@@ -254,17 +254,21 @@ export async function publishStoryFromUrl(params: {
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const { igUserId, accessToken, mediaUrl, isVideo, storyUrl } = params;
 
-  const createUrl = new URL(`${GRAPH}/${igUserId}/media`);
-  createUrl.searchParams.set("media_type", "STORIES");
+  const createBody = new URLSearchParams();
+  createBody.set("media_type", "STORIES");
   if (isVideo) {
-    createUrl.searchParams.set("video_url", mediaUrl);
+    createBody.set("video_url", mediaUrl);
   } else {
-    createUrl.searchParams.set("image_url", mediaUrl);
+    createBody.set("image_url", mediaUrl);
   }
-  if (storyUrl) createUrl.searchParams.set("link_sticker_link", storyUrl);
-  createUrl.searchParams.set("access_token", accessToken);
+  if (storyUrl) createBody.set("link_sticker_link", storyUrl);
+  createBody.set("access_token", accessToken);
 
-  const createRes = await fetch(createUrl.toString(), { method: "POST" });
+  const createRes = await fetch(`${GRAPH}/${igUserId}/media`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: createBody.toString(),
+  });
   const createData = await createRes.json() as { id?: string; error?: { message?: string } };
 
   if (!createRes.ok || !createData.id) {
