@@ -22,6 +22,8 @@ interface Account {
   id: string;
   username: string;
   profilePictureUrl: string | null;
+  source: "oauth" | "private";
+  supportsLinkSticker: boolean;
 }
 
 interface PublishResult {
@@ -583,18 +585,22 @@ export default function StoriesPage() {
                           style={{ width: 18, height: 18, borderRadius: "4px", background: selected ? "#FFD54F" : "rgba(255,255,255,.08)", border: selected ? "none" : "1px solid rgba(255,255,255,.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
                           {selected && <Check size={10} color="#000" strokeWidth={3} />}
                         </button>
-                        {/* Username */}
-                        <span style={{ fontSize: ".8rem", color: selected ? "#fff" : "var(--text-secondary)", minWidth: "130px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
+                        {/* Username + badge */}
+                        <span style={{ fontSize: ".8rem", color: selected ? "#fff" : "var(--text-secondary)", minWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
+                        {acc.supportsLinkSticker && (
+                          <span style={{ fontSize: ".6rem", padding: "1px 5px", borderRadius: "4px", background: "rgba(74,222,128,.12)", border: "1px solid rgba(74,222,128,.25)", color: "#4ade80", fontWeight: 700, flexShrink: 0 }}>🔗 link</span>
+                        )}
                         {/* Link input — only when "com link" */}
                         {useLinks && (
                           <input
                             value={link}
                             onChange={e => setLink(acc.id, e.target.value)}
-                            placeholder="https://..."
-                            style={{ flex: 1, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: "6px", padding: ".3rem .5rem", fontSize: ".72rem", color: link ? "#60a5fa" : "var(--text-muted)", outline: "none", fontFamily: "var(--font-sans)" }}
+                            placeholder={acc.supportsLinkSticker ? "https://..." : "sem suporte (OAuth)"}
+                            disabled={!acc.supportsLinkSticker}
+                            style={{ flex: 1, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: "6px", padding: ".3rem .5rem", fontSize: ".72rem", color: link ? "#60a5fa" : "var(--text-muted)", outline: "none", fontFamily: "var(--font-sans)", opacity: acc.supportsLinkSticker ? 1 : 0.35 }}
                           />
                         )}
-                        {useLinks && link && <CheckCircle size={12} color="#4ade80" style={{ flexShrink: 0 }} />}
+                        {useLinks && link && acc.supportsLinkSticker && <CheckCircle size={12} color="#4ade80" style={{ flexShrink: 0 }} />}
                       </div>
                     );
                   })}

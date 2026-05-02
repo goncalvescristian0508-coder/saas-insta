@@ -286,3 +286,36 @@ export async function postarEmMassa(
   );
   return resultados;
 }
+
+export async function publishStoryPrivate(params: {
+  prisma: PrismaClient;
+  accountId: string;
+  mediaUrl: string;
+  isVideo: boolean;
+  link?: string;
+}): Promise<{ ok: boolean; username: string; error?: string }> {
+  const row = await params.prisma.privateInstagramAccount.findUnique({ where: { id: params.accountId } });
+  if (!row) return { ok: false, username: "", error: "Conta não encontrada." };
+
+  try {
+    const ig = await createIgClientFromRow(params.prisma, params.accountId);
+
+    const mediaRes = await fetch(params.mediaUrl);
+    if (!mediaRes.ok) throw new Error("Falha ao baixar mídia para story.");
+    const mediaBuffer = Buffer.from(await mediaRes.arrayBuffer());
+
+    if (params.isVideo) {
+      const coverImage = await extractVideoCoverJpeg(mediaBuffer);
+      await ig.publish.story({ video: mediaBuffer, coverImage, link: params.link });
+    } else {
+      await ig.publish.story({ file: mediaBuffer, link: params.link });
+    }
+
+    await persistSession(params.prisma, params.accountId, ig);
+    return { ok: true, username: row.username };
+  } catch (err: unknown) {
+    const msg = mapInstagramError(err);
+    await params.prisma.privateInstagramAccount.update({ where: { id: params.accountId }, data: { lastError: msg } });
+    return { ok: false, username: row.username, error: msg };
+  }
+}

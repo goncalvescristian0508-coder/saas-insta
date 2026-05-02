@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { publishStoryFromUrl } from "@/lib/instagramGraphPublish";
+import { publishStoryPrivate } from "@/lib/instagramService";
 
 export const runtime = "nodejs";
 export const maxDuration = 240;
@@ -12,11 +13,23 @@ export async function GET() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
-  const accounts = await prisma.instagramOAuthAccount.findMany({
-    where: { userId: user.id, accountStatus: "ACTIVE" },
-    orderBy: { username: "asc" },
-    select: { id: true, username: true, profilePictureUrl: true },
-  });
+  const [oauthRows, privateRows] = await Promise.all([
+    prisma.instagramOAuthAccount.findMany({
+      where: { userId: user.id, accountStatus: "ACTIVE" },
+      orderBy: { username: "asc" },
+      select: { id: true, username: true, profilePictureUrl: true },
+    }),
+    prisma.privateInstagramAccount.findMany({
+      where: { userId: user.id },
+      orderBy: { username: "asc" },
+      select: { id: true, username: true },
+    }),
+  ]);
+
+  const accounts = [
+    ...oauthRows.map(a => ({ ...a, source: "oauth" as const, supportsLinkSticker: false })),
+    ...privateRows.map(a => ({ id: a.id, username: a.username, profilePictureUrl: null, source: "private" as const, supportsLinkSticker: true })),
+  ].sort((a, b) => a.username.localeCompare(b.username));
 
   return NextResponse.json({ accounts });
 }
@@ -47,27 +60,52 @@ export async function POST(request: Request) {
   if (stories.length === 0)
     return NextResponse.json({ error: "Stories não encontrados" }, { status: 404 });
 
-  const accounts = await prisma.instagramOAuthAccount.findMany({
-    where: { id: { in: accountIds }, userId: user.id, accountStatus: "ACTIVE" },
-    select: { id: true, username: true, instagramUserId: true, accessTokenEnc: true },
-  });
-  if (accounts.length === 0)
+  const [oauthAccounts, privateAccounts] = await Promise.all([
+    prisma.instagramOAuthAccount.findMany({
+      where: { id: { in: accountIds }, userId: user.id, accountStatus: "ACTIVE" },
+      select: { id: true, username: true, instagramUserId: true, accessTokenEnc: true },
+    }),
+    prisma.privateInstagramAccount.findMany({
+      where: { id: { in: accountIds }, userId: user.id },
+      select: { id: true, username: true },
+    }),
+  ]);
+
+  const allAccounts = [
+    ...oauthAccounts.map(a => ({ ...a, source: "oauth" as const })),
+    ...privateAccounts.map(a => ({ ...a, source: "private" as const, instagramUserId: "", accessTokenEnc: "" })),
+  ];
+
+  if (allAccounts.length === 0)
     return NextResponse.json({ error: "Nenhuma conta ativa encontrada" }, { status: 404 });
 
-  // Map each account to a story
-  const pairs = accounts.map((account, idx) => ({
+  const pairs = allAccounts.map((account, idx) => ({
     account,
-    story: distribute
-      ? stories[idx % stories.length]  // each account gets a different story (round-robin)
-      : stories[0],                     // all accounts get the same story
+    story: distribute ? stories[idx % stories.length] : stories[0],
   }));
 
-  // Post all in parallel (each handles its own polling timeout)
   const results = await Promise.all(
     pairs.map(async ({ account, story }) => {
       try {
-        const accessToken = decryptAccountPassword(account.accessTokenEnc);
         const storyUrl = links[account.id]?.trim() || undefined;
+
+        if (account.source === "private") {
+          const result = await publishStoryPrivate({
+            prisma,
+            accountId: account.id,
+            mediaUrl: story.publicUrl,
+            isVideo: story.mimeType === "video/mp4",
+            link: storyUrl,
+          });
+          return {
+            accountId: account.id,
+            username: account.username,
+            status: result.ok ? "ok" : "error",
+            error: result.ok ? undefined : result.error,
+          };
+        }
+
+        const accessToken = decryptAccountPassword(account.accessTokenEnc);
         const result = await publishStoryFromUrl({
           igUserId: account.instagramUserId,
           accessToken,
