@@ -50,6 +50,11 @@ function AccountsPageInner() {
   const [warmupTarget, setWarmupTarget] = useState(30);
   const [warmupInterval, setWarmupInterval] = useState(120);
   const [warmupSaving, setWarmupSaving] = useState(false);
+  const [showDirectLogin, setShowDirectLogin] = useState(false);
+  const [directUsername, setDirectUsername] = useState("");
+  const [directPassword, setDirectPassword] = useState("");
+  const [directLoading, setDirectLoading] = useState(false);
+  const [directError, setDirectError] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
   const searchParams = useSearchParams();
 
@@ -155,6 +160,30 @@ function AccountsPageInner() {
     }
   };
 
+  const handleDirectLogin = async () => {
+    const u = directUsername.replace("@", "").trim();
+    if (!u || !directPassword.trim()) { setDirectError("Preencha usuário e senha."); return; }
+    setDirectLoading(true);
+    setDirectError("");
+    try {
+      const res = await fetch("/api/private-ig/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: u, password: directPassword.trim() }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setDirectError(d.error ?? "Erro ao fazer login."); return; }
+      setShowDirectLogin(false);
+      setDirectUsername("");
+      setDirectPassword("");
+      await loadAccounts();
+    } catch {
+      setDirectError("Erro de conexão.");
+    } finally {
+      setDirectLoading(false);
+    }
+  };
+
   const oauthAccounts = accounts.filter((a) => a.source === "oauth");
   const privateAccounts = accounts.filter((a) => a.source === "private");
   const expiredAccounts = oauthAccounts.filter((a) => a.tokenExpired);
@@ -208,6 +237,17 @@ function AccountsPageInner() {
           >
             {copiedLink ? <CheckCircle size={15} /> : <Folder size={15} />}
             {copiedLink ? "Copiado!" : "Pasta"}
+          </button>
+          <button
+            onClick={() => { setShowDirectLogin(true); setDirectError(""); }}
+            style={{
+              display: "flex", alignItems: "center", gap: "0.4rem",
+              padding: "0.5rem 0.9rem", borderRadius: "8px",
+              background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.25)",
+              color: "#4ade80", cursor: "pointer", fontSize: "0.82rem", fontWeight: 700,
+            }}
+          >
+            <Shield size={14} /> Login Direto
           </button>
           <button
             onClick={() => metaApps.length > 0 ? setShowAppModal(true) : handleConnectApp("")}
@@ -323,6 +363,51 @@ function AccountsPageInner() {
               ))}
             </>
           )}
+        </div>
+      )}
+
+      {/* Direct login modal */}
+      {showDirectLogin && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem" }}>
+          <div style={{ background: "rgba(14,16,26,0.98)", border: "1px solid var(--border-color)", borderRadius: "16px", width: "100%", maxWidth: "380px", padding: "1.5rem", backdropFilter: "blur(24px)" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <Shield size={16} color="#4ade80" />
+                <h2 style={{ fontSize: "1rem", fontWeight: 700 }}>Login Direto</h2>
+              </div>
+              <button onClick={() => setShowDirectLogin(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)" }}><X size={20} /></button>
+            </div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-secondary)", marginBottom: "1.25rem", lineHeight: 1.5 }}>
+              Conecta com usuário e senha. Suporta <strong style={{ color: "#4ade80" }}>link sticker nos stories</strong>. Conta não pode ter 2FA ativo.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1rem" }}>
+              <input
+                value={directUsername}
+                onChange={e => setDirectUsername(e.target.value)}
+                placeholder="@usuario"
+                style={{ padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.88rem", outline: "none" }}
+              />
+              <input
+                type="password"
+                value={directPassword}
+                onChange={e => setDirectPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && void handleDirectLogin()}
+                placeholder="Senha"
+                style={{ padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.88rem", outline: "none" }}
+              />
+            </div>
+            {directError && <p style={{ fontSize: "0.78rem", color: "#f87171", marginBottom: "0.75rem" }}>{directError}</p>}
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <button onClick={() => setShowDirectLogin(false)} style={{ flex: 1, padding: "0.6rem", borderRadius: "8px", background: "none", border: "1px solid var(--border-color)", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.85rem" }}>Cancelar</button>
+              <button
+                onClick={() => void handleDirectLogin()}
+                disabled={directLoading}
+                style={{ flex: 1, padding: "0.6rem", borderRadius: "8px", background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.35)", color: "#4ade80", cursor: directLoading ? "not-allowed" : "pointer", fontWeight: 700, fontSize: "0.85rem", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem" }}
+              >
+                {directLoading ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Conectando…</> : "Conectar"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
