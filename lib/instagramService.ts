@@ -79,6 +79,7 @@ export async function createIgClientFromRow(
 
   const ig = new IgApiClient();
   ig.state.generateDevice(row.username);
+  if (row.proxyUrl) ig.state.proxyUrl = row.proxyUrl;
 
   if (row.sessionJson) {
     try {
@@ -101,14 +102,17 @@ export async function createIgClientFromRow(
 export async function validateLoginAndSerialize(
   username: string,
   password: string,
+  proxyUrl?: string,
 ): Promise<string> {
   const ig = new IgApiClient();
   ig.state.generateDevice(username);
+  if (proxyUrl) ig.state.proxyUrl = proxyUrl;
   try {
     await ig.account.login(username, password);
   } catch (err) {
     // retry with simulation flow if direct login fails
     ig.state.generateDevice(username + "_retry");
+    if (proxyUrl) ig.state.proxyUrl = proxyUrl;
     await ig.simulate.preLoginFlow();
     await ig.account.login(username, password);
     await ig.simulate.postLoginFlow();

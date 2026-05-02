@@ -53,6 +53,7 @@ function AccountsPageInner() {
   const [showDirectLogin, setShowDirectLogin] = useState(false);
   const [directUsername, setDirectUsername] = useState("");
   const [directPassword, setDirectPassword] = useState("");
+  const [directProxy, setDirectProxy] = useState("");
   const [directLoading, setDirectLoading] = useState(false);
   const [directError, setDirectError] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
@@ -169,13 +170,14 @@ function AccountsPageInner() {
       const res = await fetch("/api/private-ig/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: u, password: directPassword.trim() }),
+        body: JSON.stringify({ username: u, password: directPassword.trim(), proxyUrl: directProxy.trim() || undefined }),
       });
       const d = await res.json();
       if (!res.ok) { setDirectError((d.error ?? "Erro ao fazer login.") + (d.debug ? `\n\n${d.debug}` : "")); return; }
       setShowDirectLogin(false);
       setDirectUsername("");
       setDirectPassword("");
+      setDirectProxy("");
       await loadAccounts();
     } catch {
       setDirectError("Erro de conexão.");
@@ -391,9 +393,15 @@ function AccountsPageInner() {
                 type="password"
                 value={directPassword}
                 onChange={e => setDirectPassword(e.target.value)}
-                onKeyDown={e => e.key === "Enter" && void handleDirectLogin()}
                 placeholder="Senha"
                 style={{ padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.88rem", outline: "none" }}
+              />
+              <input
+                value={directProxy}
+                onChange={e => setDirectProxy(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && void handleDirectLogin()}
+                placeholder="Proxy (opcional): http://user:pass@host:port"
+                style={{ padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border-color)", color: "#fff", fontSize: "0.82rem", outline: "none", fontFamily: "monospace" }}
               />
             </div>
             {directError && <p style={{ fontSize: "0.72rem", color: "#f87171", marginBottom: "0.75rem", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{directError}</p>}

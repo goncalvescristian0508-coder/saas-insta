@@ -83,6 +83,7 @@ export async function POST(request: Request) {
     const body = await request.json();
     const username = body?.username;
     const password = body?.password;
+    const proxyUrl = body?.proxyUrl ? String(body.proxyUrl).trim() : null;
 
     if (!username || !password) {
       return NextResponse.json(
@@ -96,14 +97,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Username inválido." }, { status: 400 });
     }
 
-    const sessionJson = await validateLoginAndSerialize(u, String(password));
+    const sessionJson = await validateLoginAndSerialize(u, String(password), proxyUrl ?? undefined);
     const passwordEnc = encryptAccountPassword(String(password));
 
     const { userId } = await getOrCreateRequestUserId();
     const acc = await prisma.privateInstagramAccount.upsert({
       where: { username: u },
-      create: { userId, username: u, passwordEnc, sessionJson },
-      update: { userId, passwordEnc, sessionJson, lastError: null },
+      create: { userId, username: u, passwordEnc, sessionJson, proxyUrl },
+      update: { userId, passwordEnc, sessionJson, lastError: null, proxyUrl },
     });
 
     return NextResponse.json({
