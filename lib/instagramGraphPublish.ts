@@ -251,7 +251,7 @@ export async function publishStoryFromUrl(params: {
   mediaUrl: string;
   isVideo: boolean;
   storyUrl?: string;
-}): Promise<{ ok: true } | { ok: false; error: string }> {
+}): Promise<{ ok: true; debug?: string } | { ok: false; error: string }> {
   const { igUserId, accessToken, mediaUrl, isVideo, storyUrl } = params;
 
   const createBody = new URLSearchParams();
@@ -269,7 +269,7 @@ export async function publishStoryFromUrl(params: {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: createBody.toString(),
   });
-  const createData = await createRes.json() as { id?: string; error?: { message?: string } };
+  const createData = await createRes.json() as { id?: string; error?: { message?: string }; [key: string]: unknown };
 
   if (!createRes.ok || !createData.id) {
     return { ok: false, error: createData.error?.message || JSON.stringify(createData) };
@@ -293,7 +293,11 @@ export async function publishStoryFromUrl(params: {
     return { ok: false, error: pubData.error?.message || JSON.stringify(pubData) };
   }
 
-  return { ok: true };
+  const rawKeys = Object.keys(createData).filter(k => k !== "id");
+  const debug = storyUrl
+    ? `container=${containerId} keys=${rawKeys.join(",") || "none"} raw=${JSON.stringify(createData)}`
+    : undefined;
+  return { ok: true, debug };
 }
 
 export async function publishReelFromBuffer(params: {

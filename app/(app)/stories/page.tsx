@@ -29,6 +29,7 @@ interface PublishResult {
   username: string;
   status: "ok" | "error";
   error?: string;
+  debug?: string;
 }
 
 function formatBytes(bytes: number) {
@@ -621,6 +622,7 @@ export default function StoriesPage() {
                     {r.status === "ok" ? <CheckCircle size={12} color="#4ade80" /> : <XCircle size={12} color="#f87171" />}
                     <span style={{ fontSize: ".78rem", color: r.status === "ok" ? "#4ade80" : "#f87171", fontWeight: 600 }}>@{r.username}</span>
                     {r.error && <span style={{ fontSize: ".7rem", color: "var(--text-muted)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>— {r.error}</span>}
+                    {r.debug && <span style={{ fontSize: ".65rem", color: "#888", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.debug}>🔍 {r.debug}</span>}
                   </div>
                 ))}
               </div>

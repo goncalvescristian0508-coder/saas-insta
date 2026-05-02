@@ -80,6 +80,7 @@ export async function POST(request: Request) {
           username: account.username,
           status: result.ok ? "ok" : "error",
           error: result.ok ? undefined : result.error,
+          debug: result.ok ? result.debug : undefined,
         };
       } catch (err) {
         return {
