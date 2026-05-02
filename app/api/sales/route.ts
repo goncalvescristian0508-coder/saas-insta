@@ -4,23 +4,34 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
+const BRAZIL_OFFSET_MS = 3 * 60 * 60 * 1000; // UTC-3
+
+function getBrazilStartOfDay(daysAgo = 0): Date {
+  const now = new Date();
+  // Shift UTC to Brazil time for correct calendar date extraction
+  const brazilNow = new Date(now.getTime() - BRAZIL_OFFSET_MS);
+  const base = Date.UTC(brazilNow.getUTCFullYear(), brazilNow.getUTCMonth(), brazilNow.getUTCDate());
+  // Add offset back: midnight Brazil = 03:00 UTC
+  return new Date(base + BRAZIL_OFFSET_MS - daysAgo * 86_400_000);
+}
+
 function getDateFilter(period: string): { gte?: Date; lt?: Date } | undefined {
   const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startOfToday = getBrazilStartOfDay();
 
   switch (period) {
     case "hoje":
-      return { gte: startOfDay };
+      return { gte: startOfToday };
     case "ontem": {
-      const yesterday = new Date(startOfDay.getTime() - 86_400_000);
-      return { gte: yesterday, lt: startOfDay };
+      const startOfYesterday = getBrazilStartOfDay(1);
+      return { gte: startOfYesterday, lt: startOfToday };
     }
     case "7dias":
       return { gte: new Date(now.getTime() - 7 * 86_400_000) };
     case "1mes":
       return { gte: new Date(now.getTime() - 30 * 86_400_000) };
     default:
-      return undefined; // maximo = no date filter
+      return undefined;
   }
 }
 
