@@ -105,6 +105,8 @@ export async function GET(request: Request) {
         tokenExpiresAt,
         appKey: appKey || "1",
         lastError: null,
+        accountStatus: "ACTIVE",
+        quarantinedUntil: null,
       },
       update: {
         username: profile.username,
@@ -113,6 +115,8 @@ export async function GET(request: Request) {
         tokenExpiresAt,
         appKey: appKey || "1",
         lastError: null,
+        accountStatus: "ACTIVE",
+        quarantinedUntil: null,
       },
     });
 

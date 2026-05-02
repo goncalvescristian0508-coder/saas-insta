@@ -42,7 +42,7 @@ export async function GET(request: Request) {
       _sum: { amount: true },
       _count: { id: true },
     }),
-    prisma.sale.count({ where: { userId: user.id, status: "PENDING" } }),
+    prisma.sale.count({ where: { userId: user.id, status: "PENDING", ...periodWhere } }),
     prisma.sale.count({ where: { userId: user.id, ...periodWhere } }),
     prisma.sale.groupBy({
       by: ["igUsername"],
@@ -71,12 +71,15 @@ export async function GET(request: Request) {
     }),
   ]);
 
+  const uniqueAccountsInPeriod = topAccounts.length;
+
   return NextResponse.json({
     stats: {
       approvedCount: periodSales._count.id,
       approvedRevenue: periodSales._sum.amount ?? 0,
       pendingCount: pendingSales,
       totalCount,
+      uniqueAccounts: uniqueAccountsInPeriod,
       // Legacy fields for backward compat
       todayCount: period === "hoje" ? periodSales._count.id : 0,
       todayRevenue: period === "hoje" ? (periodSales._sum.amount ?? 0) : 0,

@@ -813,11 +813,73 @@ function TestadoresTab() {
   const [longTokenResult, setLongTokenResult] = useState<{ longToken: string; expiresInDays: number; envKey: string } | null>(null);
   const [exchangeError, setExchangeError] = useState<string | null>(null);
 
+  // Re-attribute sales by utm_source
+  const [reattribLoading, setReattribLoading] = useState(false);
+  const [reattribIg, setReattribIg] = useState("siqueiramonicaeduarda");
+  const [reattribPreview, setReattribPreview] = useState<{ changed: number; changes: { id: string; from: string; to: string }[] } | null>(null);
+  const [reattribDone, setReattribDone] = useState<number | null>(null);
+  const [reattribError, setReattribError] = useState<string | null>(null);
+
+  async function handleReattribPreview() {
+    setReattribLoading(true); setReattribPreview(null); setReattribDone(null); setReattribError(null);
+    try {
+      const r = await fetch("/api/admin/diag-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ igUsername: reattribIg, dryRun: true }) });
+      const d = await r.json() as { changed?: number; changes?: { id: string; from: string; to: string }[]; error?: string };
+      if (!r.ok) { setReattribError(d.error ?? "Erro"); return; }
+      setReattribPreview({ changed: d.changed ?? 0, changes: d.changes ?? [] });
+    } catch { setReattribError("Erro de conexão"); }
+    finally { setReattribLoading(false); }
+  }
+
+  async function handleReattribConfirm() {
+    setReattribLoading(true); setReattribError(null);
+    try {
+      const r = await fetch("/api/admin/diag-sales", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ igUsername: reattribIg, dryRun: false }) });
+      const d = await r.json() as { changed?: number; error?: string };
+      if (!r.ok) { setReattribError(d.error ?? "Erro"); return; }
+      setReattribDone(d.changed ?? 0); setReattribPreview(null);
+    } catch { setReattribError("Erro de conexão"); }
+    finally { setReattribLoading(false); }
+  }
+
   // Cleanup duplicates
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupPreview, setCleanupPreview] = useState<{ wouldDelete: number; groups: number } | null>(null);
   const [cleanupDone, setCleanupDone] = useState<number | null>(null);
   const [cleanupError, setCleanupError] = useState<string | null>(null);
+
+  // Fix sale igUsernames
+  const [fixSalesLoading, setFixSalesLoading] = useState(false);
+  const [fixSalesPreview, setFixSalesPreview] = useState<{ wouldFix: number } | null>(null);
+  const [fixSalesDone, setFixSalesDone] = useState<{ fixed: number; nulled: number } | null>(null);
+  const [fixSalesError, setFixSalesError] = useState<string | null>(null);
+
+  async function handleFixSalesPreview() {
+    setFixSalesLoading(true);
+    setFixSalesPreview(null);
+    setFixSalesDone(null);
+    setFixSalesError(null);
+    try {
+      const r = await fetch("/api/admin/fix-sale-usernames", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun: true }) });
+      const d = await r.json() as { wouldFix?: number; error?: string };
+      if (!r.ok) { setFixSalesError(d.error ?? "Erro"); return; }
+      setFixSalesPreview({ wouldFix: d.wouldFix ?? 0 });
+    } catch { setFixSalesError("Erro de conexão"); }
+    finally { setFixSalesLoading(false); }
+  }
+
+  async function handleFixSalesConfirm() {
+    setFixSalesLoading(true);
+    setFixSalesError(null);
+    try {
+      const r = await fetch("/api/admin/fix-sale-usernames", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dryRun: false }) });
+      const d = await r.json() as { fixed?: number; nulled?: number; error?: string };
+      if (!r.ok) { setFixSalesError(d.error ?? "Erro"); return; }
+      setFixSalesDone({ fixed: d.fixed ?? 0, nulled: d.nulled ?? 0 });
+      setFixSalesPreview(null);
+    } catch { setFixSalesError("Erro de conexão"); }
+    finally { setFixSalesLoading(false); }
+  }
 
   async function handleCleanupPreview() {
     setCleanupLoading(true);
@@ -989,6 +1051,46 @@ function TestadoresTab() {
         </form>
       </Panel>
 
+      {/* Re-atribuir vendas pelo utm_source */}
+      <Panel style={{ padding: "1.5rem", border: "1px solid rgba(234,179,8,.18)" }}>
+        <SectionLabel>Re-atribuir Vendas por UTM</SectionLabel>
+        <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Corrige vendas de uma conta (webhook genérico) redistribuindo pelo <code style={{ color: "#fde68a" }}>utm_source</code> real de cada venda.
+        </p>
+        <div style={{ display: "flex", gap: ".5rem", marginBottom: ".75rem" }}>
+          <input value={reattribIg} onChange={(e) => { setReattribIg(e.target.value); setReattribPreview(null); setReattribDone(null); }}
+            placeholder="username da conta (sem @)"
+            style={{ flex: 1, padding: "7px 12px", borderRadius: 8, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", color: "#e0e0e0", fontSize: 12, fontFamily: "var(--font-sans)" }} />
+        </div>
+        {reattribError && <p style={{ fontSize: 12, color: "#f87171", marginBottom: ".5rem" }}>{reattribError}</p>}
+        {reattribDone !== null && <p style={{ fontSize: 12, color: "#4ade80", marginBottom: ".5rem" }}>{reattribDone} vendas re-atribuídas.</p>}
+        {reattribPreview && (
+          <div style={{ marginBottom: ".75rem", padding: ".75rem 1rem", borderRadius: 9, background: "rgba(234,179,8,.07)", border: "1px solid rgba(234,179,8,.2)" }}>
+            <p style={{ fontSize: 12, color: "#fde68a", marginBottom: ".5rem" }}>
+              {reattribPreview.changed} vendas serão re-atribuídas. Exemplos:
+            </p>
+            {reattribPreview.changes.slice(0, 5).map((c) => (
+              <p key={c.id} style={{ fontSize: 11, color: "#888", marginBottom: 2 }}>{c.id.slice(0,8)} → <strong style={{ color: "#fde68a" }}>@{c.to}</strong></p>
+            ))}
+            <div style={{ display: "flex", gap: ".5rem", marginTop: ".5rem" }}>
+              <button onClick={() => void handleReattribConfirm()} disabled={reattribLoading}
+                style={{ padding: "7px 14px", borderRadius: 8, background: "rgba(234,179,8,.2)", border: "1px solid rgba(234,179,8,.4)", color: "#fde68a", fontSize: 12, fontWeight: 700, cursor: reattribLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)", display: "flex", alignItems: "center", gap: 5 }}>
+                {reattribLoading ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={12} />}
+                Confirmar
+              </button>
+              <button onClick={() => setReattribPreview(null)} style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,.08)", color: "#666", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-sans)" }}>Cancelar</button>
+            </div>
+          </div>
+        )}
+        {!reattribPreview && reattribDone === null && (
+          <button onClick={() => void handleReattribPreview()} disabled={reattribLoading}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 9, background: "rgba(234,179,8,.1)", border: "1px solid rgba(234,179,8,.25)", color: "#fde68a", fontSize: 12, fontWeight: 700, cursor: reattribLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}>
+            {reattribLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
+            Verificar vendas para re-atribuir
+          </button>
+        )}
+      </Panel>
+
       {/* Cleanup duplicate scheduled posts */}
       <Panel style={{ padding: "1.5rem", border: "1px solid rgba(239,68,68,.18)" }}>
         <SectionLabel>Limpar Posts Duplicados</SectionLabel>
@@ -1030,6 +1132,45 @@ function TestadoresTab() {
           >
             {cleanupLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Trash2 size={13} />}
             Verificar duplicatas
+          </button>
+        )}
+      </Panel>
+
+      {/* Fix Top Contas — wrong igUsername from trackingCode */}
+      <Panel style={{ padding: "1.5rem", border: "1px solid rgba(59,130,246,.18)" }}>
+        <SectionLabel>Corrigir Top Contas</SectionLabel>
+        <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
+          Corrige vendas onde <code style={{ color: "#93c5fd" }}>igUsername</code> está salvo como um código de rastreamento (ex: <code style={{ color: "#93c5fd" }}>sx</code>) em vez do username real da conta Instagram.
+        </p>
+        {fixSalesError && <p style={{ fontSize: 12, color: "#f87171", marginBottom: ".5rem" }}>{fixSalesError}</p>}
+        {fixSalesDone !== null && (
+          <p style={{ fontSize: 12, color: "#4ade80", marginBottom: ".5rem" }}>
+            {fixSalesDone.fixed} vendas corrigidas com username real · {fixSalesDone.nulled} zeradas (conta ambígua).
+          </p>
+        )}
+        {fixSalesPreview && (
+          <div style={{ marginBottom: ".75rem", padding: ".75rem 1rem", borderRadius: 9, background: "rgba(59,130,246,.07)", border: "1px solid rgba(59,130,246,.2)" }}>
+            <p style={{ fontSize: 12, color: "#93c5fd", marginBottom: ".5rem" }}>
+              {fixSalesPreview.wouldFix} vendas com username incorreto. Confirmar correção?
+            </p>
+            <div style={{ display: "flex", gap: ".5rem" }}>
+              <button onClick={() => void handleFixSalesConfirm()} disabled={fixSalesLoading}
+                style={{ padding: "7px 14px", borderRadius: 8, background: "rgba(59,130,246,.2)", border: "1px solid rgba(59,130,246,.4)", color: "#93c5fd", fontSize: 12, fontWeight: 700, cursor: fixSalesLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)", display: "flex", alignItems: "center", gap: 5 }}>
+                {fixSalesLoading ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={12} />}
+                Confirmar correção
+              </button>
+              <button onClick={() => setFixSalesPreview(null)}
+                style={{ padding: "7px 14px", borderRadius: 8, background: "transparent", border: "1px solid rgba(255,255,255,.08)", color: "#666", fontSize: 12, cursor: "pointer", fontFamily: "var(--font-sans)" }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
+        {!fixSalesPreview && fixSalesDone === null && (
+          <button onClick={() => void handleFixSalesPreview()} disabled={fixSalesLoading}
+            style={{ display: "flex", alignItems: "center", gap: 6, padding: "9px 16px", borderRadius: 9, background: "rgba(59,130,246,.1)", border: "1px solid rgba(59,130,246,.25)", color: "#93c5fd", fontSize: 12, fontWeight: 700, cursor: fixSalesLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}>
+            {fixSalesLoading ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
+            Verificar usernames incorretos
           </button>
         )}
       </Panel>

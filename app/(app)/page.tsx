@@ -21,8 +21,8 @@ export default async function Dashboard() {
   const { data: { user } } = await supabase.auth.getUser();
   const userId = user?.id ?? "anonymous";
 
-  const [accounts, schedules] = await Promise.all([
-    prisma.instagramOAuthAccount.count({ where: { userId } }),
+  const [, schedules] = await Promise.all([
+    Promise.resolve(),
     prisma.scheduledPost.findMany({
       where: { userId },
       include: {
@@ -41,7 +41,7 @@ export default async function Dashboard() {
     <div>
       {adminMessage && <AdminMessageBanner message={adminMessage} />}
       {/* Sales section — client component renders its own header row */}
-      <DashboardSales accounts={accounts} firstName={firstName} />
+      <DashboardSales firstName={firstName} />
 
       {/* Scheduled posts table */}
       <div className="panel" style={{ marginTop: 16 }}>

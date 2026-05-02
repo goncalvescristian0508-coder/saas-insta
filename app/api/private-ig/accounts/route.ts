@@ -36,6 +36,8 @@ export async function GET() {
         lastError: true,
         tokenExpiresAt: true,
         appKey: true,
+        accountStatus: true,
+        quarantinedUntil: true,
         createdAt: true,
       },
     }),
@@ -52,8 +54,8 @@ export async function GET() {
     tokenExpiresAt: r.tokenExpiresAt?.toISOString() ?? null,
     tokenExpired: r.tokenExpiresAt ? r.tokenExpiresAt < now : false,
     appKey: r.appKey ?? "1",
-    accountStatus: "ACTIVE",
-    quarantinedUntil: null,
+    accountStatus: r.accountStatus ?? "ACTIVE",
+    quarantinedUntil: r.quarantinedUntil?.toISOString() ?? null,
     createdAt: r.createdAt,
   }));
 

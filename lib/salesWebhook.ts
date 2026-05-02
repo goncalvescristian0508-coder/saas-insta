@@ -51,7 +51,7 @@ export function parseApexVips(body: Record<string, unknown>): ParsedSale | null 
   const customerEmail = String(customer.email ?? "");
 
   const tracking = (body.tracking ?? {}) as Record<string, unknown>;
-  const trackingCode = String(transaction.sale_code ?? tracking.slug ?? tracking.utm_source ?? "") || undefined;
+  const trackingCode = String(transaction.sale_code ?? tracking.utm_source ?? tracking.slug ?? "") || undefined;
   const planName = String(transaction.plan_name ?? transaction.category ?? "") || undefined;
 
   return {

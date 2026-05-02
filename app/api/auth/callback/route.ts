@@ -23,10 +23,10 @@ export async function GET(request: Request) {
       const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
       const isAdmin = user.email === adminEmail;
 
-      // Only apply approval logic to brand-new accounts (created < 5 min ago)
-      // Legacy users (approved === undefined) always pass through
+      // Apply approval logic to accounts created within 7 days (covers all realistic email verification delays)
+      // Legacy users created before the approval system was deployed have approved === undefined and age > 7d, so they pass through
       const ageMs = Date.now() - new Date(user.created_at).getTime();
-      const isNewSignup = ageMs < 5 * 60 * 1000;
+      const isNewSignup = ageMs < 7 * 24 * 60 * 60 * 1000;
 
       if (typeof user.app_metadata?.approved === "undefined" && isNewSignup) {
         if (isAdmin) {

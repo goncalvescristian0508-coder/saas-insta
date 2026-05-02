@@ -111,9 +111,16 @@ export async function PATCH() {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
+  // Only retry posts for accounts that are currently ACTIVE (reconnected)
+  const activeAccounts = await prisma.instagramOAuthAccount.findMany({
+    where: { userId: user.id, accountStatus: "ACTIVE" },
+    select: { id: true },
+  });
+  const activeIds = activeAccounts.map((a) => a.id);
+
   const { count } = await prisma.scheduledPost.updateMany({
-    where: { userId: user.id, status: "FAILED" },
-    data: { status: "PENDING", errorMsg: null },
+    where: { userId: user.id, status: "FAILED", accountId: { in: activeIds } },
+    data: { status: "PENDING", errorMsg: null, retryCount: 0 },
   });
 
   return NextResponse.json({ retried: count });

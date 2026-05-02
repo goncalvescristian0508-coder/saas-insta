@@ -1,6 +1,6 @@
 "use client";
 
-import { WifiOff, RefreshCw, Trash2, Loader2, AlertTriangle, ShieldOff, Clock } from "lucide-react";
+import { WifiOff, RefreshCw, Trash2, Loader2, AlertTriangle, ShieldOff, Clock, Link } from "lucide-react";
 import { useState, useEffect } from "react";
 
 interface FallenAccount {
@@ -11,6 +11,7 @@ interface FallenAccount {
   lastError: string;
   accountStatus?: string;
   quarantinedUntil?: string | null;
+  appKey?: string;
 }
 
 export default function ContasOffPage() {
@@ -120,13 +121,25 @@ export default function ContasOffPage() {
                   )}
                 </div>
               </div>
-              <button
-                onClick={() => void handleRemove(account.id, account.source)}
-                title="Remover conta"
-                style={{ background: "none", border: "none", cursor: "pointer", color, padding: "0.4rem", borderRadius: "8px", flexShrink: 0 }}
-              >
-                <Trash2 size={17} />
-              </button>
+              <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+                {account.source === "oauth" && (
+                  <button
+                    onClick={() => { window.location.assign(`/api/auth/instagram?app=${account.appKey ?? "1"}`); }}
+                    title="Reconectar conta"
+                    style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.75rem", borderRadius: "8px", background: "rgba(255,213,79,0.1)", border: "1px solid rgba(255,213,79,0.25)", color: "#FFD54F", cursor: "pointer", fontSize: "0.75rem", fontWeight: 600, fontFamily: "inherit" }}
+                  >
+                    <Link size={13} />
+                    Reconectar
+                  </button>
+                )}
+                <button
+                  onClick={() => void handleRemove(account.id, account.source)}
+                  title="Remover conta"
+                  style={{ background: "none", border: "none", cursor: "pointer", color, padding: "0.4rem", borderRadius: "8px" }}
+                >
+                  <Trash2 size={17} />
+                </button>
+              </div>
             </div>
             );
           })}

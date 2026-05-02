@@ -38,8 +38,8 @@ export async function POST(
         const transaction = (body.transaction ?? {}) as Record<string, unknown>;
         const gateway = String(transaction.payment_platform ?? "apexvips");
 
-        // If UTM tracking code present, use it as igUsername (multi-account UTM mode)
-        // Otherwise fall back to the account in the webhook URL
+        // Use utm_source (trackingCode) when present — multi-account UTM tracking
+        // Falls back to the account in the webhook URL when no utm_source
         const igOverride = parsed.trackingCode ? undefined : account.username;
         await processSaleWebhook(gateway, account.userId, parsed, raw, igOverride);
       } catch {}

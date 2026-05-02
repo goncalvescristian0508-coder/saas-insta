@@ -255,13 +255,13 @@ export async function publishStoryFromUrl(params: {
   const { igUserId, accessToken, mediaUrl, isVideo, storyUrl } = params;
 
   const createUrl = new URL(`${GRAPH}/${igUserId}/media`);
+  createUrl.searchParams.set("media_type", "STORIES");
   if (isVideo) {
-    createUrl.searchParams.set("media_type", "VIDEO");
     createUrl.searchParams.set("video_url", mediaUrl);
   } else {
     createUrl.searchParams.set("image_url", mediaUrl);
   }
-  if (storyUrl) createUrl.searchParams.set("story_url", storyUrl);
+  if (storyUrl) createUrl.searchParams.set("link_sticker_link", storyUrl);
   createUrl.searchParams.set("access_token", accessToken);
 
   const createRes = await fetch(createUrl.toString(), { method: "POST" });

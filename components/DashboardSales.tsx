@@ -33,13 +33,13 @@ interface Sale {
 }
 interface TopItem { igUsername?: string | null; planName?: string | null; count: number; revenue: number; }
 interface DashboardData {
-  stats: { approvedCount: number; approvedRevenue: number; pendingCount: number; totalCount: number };
+  stats: { approvedCount: number; approvedRevenue: number; pendingCount: number; totalCount: number; uniqueAccounts: number };
   sales: Sale[];
   topAccounts: TopItem[];
   topProducts: TopItem[];
 }
 
-export default function DashboardSales({ accounts, firstName }: { accounts: number; firstName: string }) {
+export default function DashboardSales({ firstName }: { firstName: string }) {
   const [period,    setPeriod]    = useState("hoje");
   const [data,      setData]      = useState<DashboardData | null>(null);
   const [loading,   setLoading]   = useState(true);
@@ -163,7 +163,7 @@ export default function DashboardSales({ accounts, firstName }: { accounts: numb
 
       {/* ── Stat cards ── */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 16 }}>
-        <StatCard icon={<IcContas />}   iconBg="rgba(59,130,246,0.12)"  value={String(accounts)}                           label="Contas Conectadas" />
+        <StatCard icon={<IcContas />}   iconBg="rgba(59,130,246,0.12)"  value={loading ? "—" : String(stats?.uniqueAccounts ?? 0)}  label="Contas com Vendas" />
         <StatCard icon={<IcSales />}    iconBg="rgba(34,197,94,0.12)"   value={loading ? "—" : String(stats?.approvedCount ?? 0)}  label="Vendas Aprovadas" />
         <StatCard icon={<IcPending />}  iconBg="rgba(255,213,79,0.12)"  value={loading ? "—" : String(stats?.pendingCount ?? 0)}    label="Vendas Pendentes" />
         <StatCard icon={<IcMoney />}    iconBg="rgba(255,213,79,0.08)"  value={loading ? "—" : fmtCurrency(stats?.approvedRevenue ?? 0)} label="Total do Período" />
