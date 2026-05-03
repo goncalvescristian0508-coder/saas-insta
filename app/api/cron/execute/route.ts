@@ -6,6 +6,10 @@ import { publishReelFromVideoUrl } from "@/lib/instagramGraphPublish";
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID, createHash } from "crypto";
 import { sendPushToUser } from "@/lib/sendPush";
+import { writeFile, readFile, unlink } from "fs/promises";
+import { join } from "path";
+import ffmpegStatic from "ffmpeg-static";
+import Ffmpeg from "fluent-ffmpeg";
 
 function storageAdmin() {
   return createClient(
@@ -14,10 +18,47 @@ function storageAdmin() {
   );
 }
 
+async function cleanVideoBuffer(input: Buffer): Promise<Buffer | null> {
+  const id = randomUUID();
+  const inputPath = join("/tmp", `${id}_in.mp4`);
+  const outputPath = join("/tmp", `${id}_out.mp4`);
+  try {
+    await writeFile(inputPath, input);
+    await new Promise<void>((resolve, reject) => {
+      Ffmpeg(inputPath)
+        .setFfmpegPath(ffmpegStatic!)
+        .outputOptions([
+          "-map_metadata -1",
+          "-map_chapters -1",
+          "-c:v libx264", "-crf 23", "-preset fast",
+          "-vf scale=trunc(iw/2)*2:trunc(ih/2)*2",
+          "-c:a aac", "-b:a 128k", "-ar 44100",
+          "-movflags +faststart",
+          "-metadata creation_time=",
+          "-metadata encoder=",
+          "-metadata:s:v handler_name=",
+          "-metadata:s:v vendor_id=",
+          "-metadata:s:a handler_name=",
+        ])
+        .save(outputPath)
+        .on("end", resolve)
+        .on("error", reject);
+    });
+    return await readFile(outputPath);
+  } catch {
+    return null;
+  } finally {
+    await unlink(inputPath).catch(() => {});
+    await unlink(outputPath).catch(() => {});
+  }
+}
+
 async function rehostVideo(rawUrl: string): Promise<{ publicUrl: string; storagePath: string }> {
   const res = await fetch(rawUrl, { signal: AbortSignal.timeout(90_000) });
   if (!res.ok) throw new Error(`Falha ao baixar vídeo clonado: HTTP ${res.status}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
+  const raw = Buffer.from(await res.arrayBuffer());
+  const buffer = (await cleanVideoBuffer(raw)) ?? raw;
+
   const storagePath = `_cloned/${randomUUID()}.mp4`;
   const admin = storageAdmin();
   const { error } = await admin.storage.from("library-videos").upload(storagePath, buffer, {
@@ -128,7 +169,33 @@ async function runCron() {
             where: { id: post.id },
             data: { videoId: libVideo.id, rawVideoUrl: null },
           });
-          videoUrl = libVideo.publicUrl;
+          // Re-encode locally: fix H.265→H.264 and strip all metadata
+          try {
+            const libRes = await fetch(libVideo.publicUrl, { signal: AbortSignal.timeout(90_000) });
+            if (libRes.ok) {
+              const raw = Buffer.from(await libRes.arrayBuffer());
+              const cleanBuf = await cleanVideoBuffer(raw);
+              if (cleanBuf) {
+                const tempPath = `_clean/${randomUUID()}.mp4`;
+                const { error: upErr } = await storageAdmin().storage
+                  .from("library-videos")
+                  .upload(tempPath, cleanBuf, { contentType: "video/mp4", upsert: false });
+                if (!upErr) {
+                  const { data: pub } = storageAdmin().storage.from("library-videos").getPublicUrl(tempPath);
+                  videoUrl = pub.publicUrl;
+                  rehostPath = tempPath;
+                } else {
+                  videoUrl = libVideo.publicUrl;
+                }
+              } else {
+                videoUrl = libVideo.publicUrl;
+              }
+            } else {
+              videoUrl = libVideo.publicUrl;
+            }
+          } catch {
+            videoUrl = libVideo.publicUrl;
+          }
         } else {
           // 2. Try to re-host from CDN (may fail if URL expired)
           try {
