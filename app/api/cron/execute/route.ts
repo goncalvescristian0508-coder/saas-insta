@@ -41,8 +41,8 @@ async function cleanVideoBuffer(input: Buffer): Promise<Buffer | null> {
           "-metadata:s:a handler_name=",
         ])
         .save(outputPath)
-        .on("end", resolve)
-        .on("error", reject);
+        .on("end", () => resolve())
+        .on("error", (err: Error) => reject(err));
     });
     return await readFile(outputPath);
   } catch {
