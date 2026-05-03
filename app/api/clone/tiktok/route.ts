@@ -7,60 +7,74 @@ import { createHash } from "crypto";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-interface TikwmVideo {
-  video_id: string;
-  title: string;
-  play: string;
-  wmplay: string;
-  download: string; // no watermark
-  cover: string;
-  duration: number;
-  play_count: number;
-  digg_count: number;
-  create_time: number;
+async function getApifyTokens(userId: string): Promise<string[]> {
+  const userRecords = await prisma.userApifyToken.findMany({
+    where: { userId, isActive: true },
+    select: { token: true },
+  });
+  const envTokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
+    .split(",").map((t) => t.trim()).filter(Boolean);
+  return [...userRecords.map((r) => r.token), ...envTokens];
 }
 
-interface TikwmResponse {
-  code: number;
-  msg: string;
-  data?: {
-    videos: TikwmVideo[];
-    cursor: number;
-    hasMore: boolean;
-  };
-}
+async function fetchTikTokVideos(
+  username: string,
+  limit: number,
+  tokens: string[],
+): Promise<{ videoUrl: string; caption: string }[]> {
+  if (tokens.length === 0) throw new Error("Nenhum token Apify configurado. Adicione um token em Configurações.");
 
-async function fetchTikTokVideos(username: string, limit: number): Promise<{ videoUrl: string; caption: string }[]> {
-  const results: { videoUrl: string; caption: string }[] = [];
-  let cursor = 0;
-  const pageSize = Math.min(limit, 20);
+  const token = tokens[0];
+  const actorId = "clockworks/tiktok-scraper";
+  const pageSize = Math.min(limit, 100);
 
-  while (results.length < limit) {
-    const url = `https://www.tikwm.com/api/user/posts?unique_id=${encodeURIComponent(username)}&count=${pageSize}&cursor=${cursor}`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: AbortSignal.timeout(30_000),
-    });
+  // Try multiple input formats — actor versions differ
+  const inputFormats = [
+    { profiles: [username], resultsPerPage: pageSize },
+    { profiles: [`@${username}`], resultsPerPage: pageSize },
+    { startUrls: [{ url: `https://www.tiktok.com/@${username}` }], resultsPerPage: pageSize },
+    { usernames: [username], maxItems: pageSize },
+  ];
 
-    if (!res.ok) throw new Error(`tikwm HTTP ${res.status}`);
+  let items: Record<string, unknown>[] = [];
 
-    const data = await res.json() as TikwmResponse;
-
-    if (data.code !== 0 || !data.data?.videos?.length) break;
-
-    for (const v of data.data.videos) {
-      const videoUrl = v.download || v.play;
-      if (videoUrl && videoUrl.startsWith("http")) {
-        results.push({ videoUrl, caption: v.title ?? "" });
-      }
-      if (results.length >= limit) break;
+  for (const input of inputFormats) {
+    try {
+      const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${token}&timeout=240&memory=1024`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(250_000),
+      });
+      if (!res.ok) continue;
+      const data = await res.json() as Record<string, unknown>[];
+      if (data.length > 0) { items = data; break; }
+    } catch {
+      continue;
     }
-
-    if (!data.data.hasMore || data.data.videos.length === 0) break;
-    cursor = data.data.cursor;
   }
 
-  return results;
+  return items
+    .slice(0, limit)
+    .map((item) => {
+      // Handle nested video object (some actor versions)
+      const videoObj = item.video as Record<string, unknown> | undefined;
+      const videoUrl = String(
+        item.videoUrl ??
+        item.video_url ??
+        videoObj?.downloadAddr ??
+        videoObj?.playAddr ??
+        item.downloadAddr ??
+        item.playAddr ??
+        ""
+      );
+      const caption = String(
+        item.text ?? item.desc ?? item.title ?? item.caption ?? ""
+      );
+      return { videoUrl, caption };
+    })
+    .filter((v) => v.videoUrl.startsWith("http"));
 }
 
 async function processJob(params: {
@@ -71,11 +85,12 @@ async function processJob(params: {
   start: Date;
   intervalMs: number;
   postLimit: number | null | undefined;
+  tokens: string[];
 }) {
-  const { cloneJobId, userId, accounts, username, start, intervalMs, postLimit } = params;
+  const { cloneJobId, userId, accounts, username, start, intervalMs, postLimit, tokens } = params;
   try {
     const limit = postLimit ?? 500;
-    const rawReels = await fetchTikTokVideos(username, limit);
+    const rawReels = await fetchTikTokVideos(username, limit, tokens);
 
     console.log(`[tiktok-clone] username=${username} fetched=${rawReels.length}`);
 
@@ -95,7 +110,6 @@ async function processJob(params: {
       return true;
     });
 
-    // Dedup against already-scheduled/published posts per account
     const meaningfulCaptions = [...new Set(reels.map((r) => r.caption.trim()).filter((c) => c.length > 10))];
     const rawUrls = reels.map((r) => r.videoUrl);
     const urlHashes = rawUrls.map((u) => createHash("md5").update(u).digest("hex"));
@@ -190,13 +204,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }
 
-    const accounts = await prisma.instagramOAuthAccount.findMany({
-      where: { id: { in: accountIds }, userId: user.id },
-      select: { id: true },
-    });
-    if (accounts.length === 0) return NextResponse.json({ error: "Nenhuma conta válida" }, { status: 404 });
+    const [accounts, tokens] = await Promise.all([
+      prisma.instagramOAuthAccount.findMany({
+        where: { id: { in: accountIds }, userId: user.id },
+        select: { id: true },
+      }),
+      getApifyTokens(user.id),
+    ]);
 
-    // Extract username from URL if pasted
+    if (accounts.length === 0) return NextResponse.json({ error: "Nenhuma conta válida" }, { status: 404 });
+    if (tokens.length === 0) return NextResponse.json({ error: "Nenhum token Apify configurado. Adicione um token em Configurações." }, { status: 400 });
+
     const cleanUsername = username
       .replace(/https?:\/\/(www\.)?tiktok\.com\/@?/, "")
       .replace(/^@/, "")
@@ -224,6 +242,7 @@ export async function POST(request: Request) {
       start: new Date(startAt),
       intervalMs: intervalMinutes * 60_000,
       postLimit,
+      tokens,
     }));
 
     return NextResponse.json({ ok: true, cloneJobId: cloneJob.id });

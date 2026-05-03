@@ -164,7 +164,7 @@ export default function ClonarTikTokPage() {
               style={{ width: "100%" }}
             />
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
-              O Apify vai raspar os vídeos do perfil público. Pode demorar 1-3 minutos.
+              Usa Apify para raspar os vídeos do perfil público. Pode demorar 1-3 minutos.
             </p>
           </div>
 
