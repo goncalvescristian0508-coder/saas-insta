@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard, Users, Tag, AlertTriangle,
-  Activity, Megaphone, LogOut, ChevronRight, Shield, ExternalLink, UserCheck, UserPlus,
+  Activity, Megaphone, LogOut, Shield, ExternalLink, UserCheck, UserPlus,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -21,12 +21,41 @@ const navItems = [
   { name: "Testadores IG",   tab: "testadores", icon: UserCheck },
 ];
 
+function AdminNavItem({
+  href, active, icon: Icon, label,
+}: {
+  href: string; active: boolean; icon: React.ElementType; label: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <NextLink
+      href={href}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "5px 10px 5px 8px", margin: "0 8px", borderRadius: 6,
+        borderLeft: active ? "2px solid #FFB800" : "2px solid transparent",
+        color: active ? "#FFB800" : hovered ? "#ededed" : "#a0a0a0",
+        background: active ? "rgba(255,184,0,0.08)" : hovered ? "rgba(255,255,255,0.04)" : "transparent",
+        fontWeight: active ? 500 : 400,
+        fontSize: 13,
+        transition: "background 0.1s, color 0.1s, border-color 0.1s",
+        textDecoration: "none",
+      }}
+    >
+      <Icon size={14} strokeWidth={active ? 2 : 1.75} color={active ? "#FFB800" : "currentColor"} style={{ flexShrink: 0, opacity: active ? 1 : hovered ? 0.8 : 0.6 }} />
+      <span>{label}</span>
+    </NextLink>
+  );
+}
+
 function SidebarInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const activeTab = searchParams.get("tab") ?? "dashboard";
-  const [userEmail, setUserEmail] = useState<string | null>(null);
-  const [userName,  setUserName]  = useState<string | null>(null);
+  const [userEmail,  setUserEmail]  = useState<string | null>(null);
+  const [userName,   setUserName]   = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
   useEffect(() => {
@@ -51,92 +80,108 @@ function SidebarInner() {
 
   return (
     <aside style={{
-      width: "260px",
-      background: "linear-gradient(180deg, rgba(8,10,16,0.96) 0%, rgba(6,8,14,0.92) 100%)",
-      backdropFilter: "blur(24px)",
-      WebkitBackdropFilter: "blur(24px)",
-      borderRight: "1px solid var(--border-color)",
-      boxShadow: "4px 0 32px rgba(0,0,0,0.4)",
+      width: 232,
+      background: "#0d0d0d",
+      borderRight: "1px solid rgba(255,255,255,0.06)",
       height: "100vh",
       position: "fixed", left: 0, top: 0,
       display: "flex", flexDirection: "column",
-      padding: "1.75rem 0.875rem",
       zIndex: 19,
+      overflow: "hidden",
     }}>
       {/* Logo */}
-      <div style={{ marginBottom: "2rem", paddingLeft: "0.75rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-          <div style={{ width: 36, height: 36, borderRadius: 9, background: "linear-gradient(135deg,rgba(255,213,79,.25),rgba(255,213,79,.08))", border: "1px solid rgba(255,213,79,.25)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <Shield size={16} color="#FFD54F" />
+      <div style={{ padding: "18px 16px 10px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{
+            width: 28, height: 28, borderRadius: 7,
+            background: "rgba(255,255,255,0.07)",
+            border: "1px solid rgba(255,255,255,0.09)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <Shield size={14} color="#A1A1AA" strokeWidth={1.75} />
           </div>
           <div>
-            <h1 style={{ fontFamily: "var(--font-sans)", fontSize: "1rem", fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1 }}>
-              <span style={{ color: "#FFD54F" }}>Painel</span> Admin
-            </h1>
-            <p style={{ fontSize: "0.65rem", color: "#555", marginTop: 2 }}>AutoPost</p>
+            <span style={{ fontSize: 15, fontWeight: 600, color: "#F4F4F5", letterSpacing: "-0.02em" }}>
+              Admin
+            </span>
+            <p style={{ fontSize: 10.5, color: "#52525B", marginTop: 1 }}>AutoPost</p>
           </div>
         </div>
       </div>
 
-      <p style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-muted)", paddingLeft: "0.75rem", marginBottom: "0.5rem" }}>
-        Gestão
-      </p>
-
       {/* Nav */}
-      <nav style={{ display: "flex", flexDirection: "column", gap: "0.25rem", flex: 1 }}>
-        {navItems.map((item) => {
-          const isActive = activeTab === item.tab;
-          return (
-            <NextLink key={item.tab} href={`/admin?tab=${item.tab}`}
-              style={{
-                display: "flex", alignItems: "center", gap: "0.75rem",
-                padding: "0.7rem 0.875rem", borderRadius: "10px",
-                color: isActive ? "#fff" : "var(--text-secondary)",
-                backgroundColor: isActive ? "rgba(255,213,79,0.11)" : "transparent",
-                border: isActive ? "1px solid rgba(255,213,79,0.2)" : "1px solid transparent",
-                transition: "all 0.18s", fontWeight: isActive ? 600 : 500,
-                fontSize: "0.875rem", textDecoration: "none",
-              }}
-              onMouseEnter={e => { if (!isActive) { e.currentTarget.style.backgroundColor = "rgba(255,213,79,0.055)"; e.currentTarget.style.color = "#fff"; } }}
-              onMouseLeave={e => { if (!isActive) { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = "var(--text-secondary)"; } }}
-            >
-              <item.icon size={17} color={isActive ? "#FFD54F" : "currentColor"} strokeWidth={isActive ? 2 : 1.75} />
-              <span style={{ flex: 1 }}>{item.name}</span>
-              {isActive && <ChevronRight size={14} color="#FFD54F" style={{ opacity: 0.6 }} />}
-            </NextLink>
-          );
-        })}
+      <nav style={{
+        flex: 1, overflowY: "auto", overflowX: "hidden",
+        padding: "4px 8px",
+        display: "flex", flexDirection: "column",
+      }}>
+        <p style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: "0.09em",
+          textTransform: "uppercase", color: "#52525B",
+          padding: "10px 10px 4px", lineHeight: 1,
+        }}>
+          Gestão
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {navItems.map((item) => (
+            <AdminNavItem
+              key={item.tab}
+              href={`/admin?tab=${item.tab}`}
+              active={activeTab === item.tab}
+              icon={item.icon}
+              label={item.name}
+            />
+          ))}
+        </div>
 
-        {/* Separator + link back to user app */}
-        <div style={{ height: 1, background: "rgba(255,255,255,0.05)", margin: "0.5rem 0.875rem" }} />
-        <NextLink href="/"
-          style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.7rem 0.875rem", borderRadius: "10px", color: "var(--text-muted)", border: "1px solid transparent", fontSize: "0.875rem", textDecoration: "none", fontWeight: 500 }}
-          onMouseEnter={e => { e.currentTarget.style.color = "#fff"; e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.04)"; }}
-          onMouseLeave={e => { e.currentTarget.style.color = "var(--text-muted)"; e.currentTarget.style.backgroundColor = "transparent"; }}
-        >
-          <ExternalLink size={17} strokeWidth={1.75} />
-          <span>Painel Usuário</span>
-        </NextLink>
+        <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "10px 8px" }} />
+
+        <AdminNavItem href="/" active={false} icon={ExternalLink} label="Painel Usuário" />
       </nav>
 
       {/* Bottom */}
-      <div style={{ marginTop: "1rem", borderTop: "1px solid var(--border-color)", paddingTop: "1rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.7rem", padding: "0.6rem 0", marginBottom: "0.25rem" }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: "linear-gradient(135deg,rgba(255,213,79,0.3),rgba(255,213,79,0.1))", border: "1px solid rgba(255,213,79,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.8rem", fontWeight: 700, color: "#FFD54F", flexShrink: 0 }}>
+      <div style={{
+        flexShrink: 0,
+        padding: "12px 14px 18px",
+        borderTop: "1px solid rgba(255,255,255,0.07)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 8 }}>
+          <div style={{
+            width: 30, height: 30, borderRadius: 8,
+            background: "rgba(255,255,255,0.07)",
+            border: "1px solid rgba(255,255,255,0.09)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            flexShrink: 0, fontSize: 11, fontWeight: 600, color: "#A1A1AA",
+          }}>
             {initials}
           </div>
           <div style={{ minWidth: 0, flex: 1 }}>
-            {userName && <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userName}</p>}
-            <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{userEmail ?? "..."}</p>
+            {userName && (
+              <p style={{ fontSize: 12.5, fontWeight: 500, color: "#E4E4E7", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {userName}
+              </p>
+            )}
+            <p style={{ fontSize: 11, color: "#52525B", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {userEmail ?? "..."}
+            </p>
           </div>
         </div>
-        <button onClick={handleLogout} disabled={loggingOut}
-          style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.25rem", borderRadius: "6px", background: "transparent", border: "none", color: "var(--text-secondary)", fontSize: "0.82rem", cursor: loggingOut ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}
-          onMouseEnter={e => { e.currentTarget.style.color = "#f87171"; }}
-          onMouseLeave={e => { e.currentTarget.style.color = "var(--text-secondary)"; }}
+        <button
+          onClick={handleLogout}
+          disabled={loggingOut}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", gap: 7,
+            padding: "5px 8px", borderRadius: 6,
+            background: "transparent", border: "none",
+            color: "#52525B", fontSize: 12.5,
+            cursor: loggingOut ? "not-allowed" : "pointer",
+            fontFamily: "inherit", transition: "color 0.15s",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "#F87171"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "#52525B"; }}
         >
-          <LogOut size={14} />
-          {loggingOut ? "Saindo..." : "Sair da conta"}
+          <LogOut size={13} />
+          {loggingOut ? "Saindo..." : "Sair"}
         </button>
       </div>
     </aside>

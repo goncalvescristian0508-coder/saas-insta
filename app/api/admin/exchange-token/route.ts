@@ -38,7 +38,10 @@ export async function POST(request: Request) {
   const data = await res.json() as { access_token?: string; expires_in?: number; error?: { message?: string } };
 
   if (!res.ok || !data.access_token) {
-    return NextResponse.json({ error: data.error?.message ?? "Erro ao extender token" }, { status: 400 });
+    return NextResponse.json({
+      error: data.error?.message ?? "Erro ao extender token",
+      debug: { key, appId, appSecretLen: appSecret.length, metaStatus: res.status },
+    }, { status: 400 });
   }
 
   const days = data.expires_in ? Math.round(data.expires_in / 86400) : 60;

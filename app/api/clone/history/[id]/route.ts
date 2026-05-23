@@ -4,21 +4,24 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
 
   const { id } = await params;
+  const cancelOnly = new URL(req.url).searchParams.get("cancelOnly") === "true";
 
   const job = await prisma.cloneJob.findFirst({ where: { id, userId: user.id } });
   if (!job) return NextResponse.json({ error: "Não encontrado" }, { status: 404 });
 
-  // Delete pending/failed posts then the job itself
   await prisma.scheduledPost.deleteMany({
     where: { cloneJobId: id, status: { in: ["PENDING", "FAILED"] } },
   });
-  await prisma.cloneJob.delete({ where: { id } });
+
+  if (!cancelOnly) {
+    await prisma.cloneJob.delete({ where: { id } });
+  }
 
   return NextResponse.json({ ok: true });
 }

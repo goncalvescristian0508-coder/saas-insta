@@ -301,25 +301,31 @@ export async function publishStoryPrivate(params: {
   const row = await params.prisma.privateInstagramAccount.findUnique({ where: { id: params.accountId } });
   if (!row) return { ok: false, username: "", error: "Conta não encontrada." };
 
-  try {
-    const ig = await createIgClientFromRow(params.prisma, params.accountId);
+  const { postStoryViaApi } = await import("@/lib/storyApi");
+  const password = decryptAccountPassword(row.passwordEnc);
+  const session = row.sessionJson ? JSON.parse(row.sessionJson) as Record<string, unknown> : null;
 
-    const mediaRes = await fetch(params.mediaUrl);
-    if (!mediaRes.ok) throw new Error("Falha ao baixar mídia para story.");
-    const mediaBuffer = Buffer.from(await mediaRes.arrayBuffer());
+  const result = await postStoryViaApi({
+    username: row.username,
+    password,
+    mediaUrl: params.mediaUrl,
+    isVideo: params.isVideo,
+    linkUrl: params.link,
+    proxyUrl: row.proxyUrl ?? undefined,
+    session,
+  });
 
-    if (params.isVideo) {
-      const coverImage = await extractVideoCoverJpeg(mediaBuffer);
-      await ig.publish.story({ video: mediaBuffer, coverImage, link: params.link });
-    } else {
-      await ig.publish.story({ file: mediaBuffer, link: params.link });
-    }
-
-    await persistSession(params.prisma, params.accountId, ig);
-    return { ok: true, username: row.username };
-  } catch (err: unknown) {
-    const msg = mapInstagramError(err);
-    await params.prisma.privateInstagramAccount.update({ where: { id: params.accountId }, data: { lastError: msg } });
-    return { ok: false, username: row.username, error: msg };
+  if (result.ok && result.session) {
+    await params.prisma.privateInstagramAccount.update({
+      where: { id: params.accountId },
+      data: { sessionJson: JSON.stringify(result.session), lastError: null },
+    });
+  } else if (!result.ok) {
+    await params.prisma.privateInstagramAccount.update({
+      where: { id: params.accountId },
+      data: { lastError: result.error ?? "Erro desconhecido" },
+    });
   }
+
+  return { ok: result.ok, username: row.username, error: result.error };
 }

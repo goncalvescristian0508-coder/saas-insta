@@ -65,7 +65,9 @@ function AccountsPageInner() {
       const res = await fetch("/api/private-ig/accounts", { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao carregar contas.");
-      setAccounts(data.accounts ?? []);
+      setAccounts((data.accounts ?? []).filter((a: OAuthAccount & { lastError?: string | null; accountStatus?: string }) =>
+        !a.lastError && a.accountStatus !== "SUSPENDED" && a.accountStatus !== "QUARANTINE"
+      ));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Erro ao carregar contas.");
     } finally {
@@ -201,67 +203,92 @@ function AccountsPageInner() {
     gap: "0.75rem",
   };
 
+  const iconBtn = {
+    width: 32, height: 32, borderRadius: 7,
+    background: "transparent", border: "1px solid rgba(255,255,255,0.07)",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: "pointer", color: "#555", transition: "all 0.12s",
+  };
+
   return (
     <div>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.5rem" }}>
-        <h1 className="page-title" style={{ marginBottom: 0 }}>Contas</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <div>
+          <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.025em", color: "#ededed", margin: 0 }}>
+            Contas
+          </h1>
+          <p style={{ fontSize: 12, color: "#444", marginTop: 3 }}>
+            {accounts.length} conta{accounts.length !== 1 ? "s" : ""} conectada{accounts.length !== 1 ? "s" : ""}
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {/* Icon group */}
           <button
             onClick={() => setShowPasswords((v) => !v)}
             title={showPasswords ? "Ocultar detalhes" : "Mostrar detalhes"}
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "0.4rem", borderRadius: "8px" }}
+            style={iconBtn}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.14)"; e.currentTarget.style.color = "#a0a0a0"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"; e.currentTarget.style.color = "#555"; }}
           >
-            {showPasswords ? <EyeOff size={17} /> : <Eye size={17} />}
-          </button>
-          <button
-            title="Segurança"
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "0.4rem", borderRadius: "8px" }}
-          >
-            <Shield size={17} />
+            {showPasswords ? <EyeOff size={14} /> : <Eye size={14} />}
           </button>
           <button
             onClick={() => void loadAccounts()}
             title="Recarregar"
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)", padding: "0.4rem", borderRadius: "8px" }}
+            style={iconBtn}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.14)"; e.currentTarget.style.color = "#a0a0a0"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"; e.currentTarget.style.color = "#555"; }}
           >
-            <RefreshCw size={17} />
+            <RefreshCw size={14} />
           </button>
+
+          <div style={{ width: 1, height: 20, background: "rgba(255,255,255,0.07)", margin: "0 4px" }} />
+
+          {/* Labeled buttons */}
           <button
             onClick={() => void handleGenerateLink()}
             disabled={generatingLink}
             style={{
-              display: "flex", alignItems: "center", gap: "0.4rem",
-              padding: "0.5rem 0.9rem", borderRadius: "8px",
-              background: "rgba(255,255,255,0.05)", border: "1px solid var(--border-color)",
-              color: copiedLink ? "#4ade80" : "var(--text-secondary)", cursor: "pointer", fontSize: "0.82rem", fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "0 14px", height: 32, borderRadius: 7,
+              background: "transparent", border: "1px solid rgba(255,255,255,0.08)",
+              color: copiedLink ? "#4ade80" : "#a0a0a0", cursor: "pointer",
+              fontSize: 12.5, fontWeight: 500, fontFamily: "inherit",
+              transition: "all 0.12s",
             }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.14)"; e.currentTarget.style.color = "#ededed"; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = copiedLink ? "#4ade80" : "#a0a0a0"; }}
           >
-            {copiedLink ? <CheckCircle size={15} /> : <Folder size={15} />}
+            {copiedLink ? <CheckCircle size={13} /> : <Folder size={13} />}
             {copiedLink ? "Copiado!" : "Pasta"}
           </button>
           <button
-            onClick={() => { setShowDirectLogin(true); setDirectError(""); }}
+            onClick={() => { setShowDirectLogin(true); setDirectError(""); fetch("/api/story-api/wake").catch(() => {}); }}
             style={{
-              display: "flex", alignItems: "center", gap: "0.4rem",
-              padding: "0.5rem 0.9rem", borderRadius: "8px",
-              background: "rgba(74,222,128,0.08)", border: "1px solid rgba(74,222,128,0.25)",
-              color: "#4ade80", cursor: "pointer", fontSize: "0.82rem", fontWeight: 700,
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "0 14px", height: 32, borderRadius: 7,
+              background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.2)",
+              color: "#4ade80", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
+              fontFamily: "inherit", transition: "all 0.12s",
             }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(74,222,128,0.12)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = "rgba(74,222,128,0.07)"; }}
           >
-            <Shield size={14} /> Login Direto
+            <Shield size={13} /> Login Direto
           </button>
           <button
             onClick={() => metaApps.length > 0 ? setShowAppModal(true) : handleConnectApp("")}
             disabled={isConnecting}
             style={{
-              display: "flex", alignItems: "center", gap: "0.4rem",
-              padding: "0.5rem 1rem", borderRadius: "8px",
+              display: "flex", alignItems: "center", gap: 6,
+              padding: "0 16px", height: 32, borderRadius: 7,
               background: "linear-gradient(135deg,#833ab4,#fd1d1d,#fcb045)",
-              border: "none", color: "#fff", cursor: "pointer", fontSize: "0.82rem", fontWeight: 700,
+              border: "none", color: "#fff", cursor: "pointer",
+              fontSize: 12.5, fontWeight: 600, fontFamily: "inherit",
             }}
           >
-            {isConnecting ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={15} />}
+            {isConnecting ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Plus size={13} />}
             Instagram
           </button>
         </div>
@@ -295,23 +322,6 @@ function AccountsPageInner() {
           <button type="button" onClick={() => setError("")} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer" }}>✕</button>
         </div>
       )}
-
-      {/* Info card */}
-      <div style={{
-        marginBottom: "1.5rem", padding: "1.25rem 1.5rem", borderRadius: "12px",
-        background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-color)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}>
-          <Users size={16} color="var(--accent-gold)" />
-          <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Gerenciamento de Contas e Postagem</span>
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem", fontSize: "0.82rem", color: "var(--text-secondary)" }}>
-          <p>• <strong>Status da Conta:</strong> Monitore o status de cada conta (Ativa, Erro, Bloqueada) para garantir a continuidade das postagens.</p>
-          <p>• <strong>Frequência de Postagem:</strong> Contas ativas postam conforme configurado. Verifique o histórico para entender o ritmo.</p>
-          <p>• <strong>Contas em Risco:</strong> Contas com status de erro ou bloqueio podem ter suas postagens interrompidas. Aja rapidamente.</p>
-          <p>• <strong>Dica de Ouro:</strong> Mantenha suas contas saudáveis e com boa atividade para otimizar o alcance e engajamento.</p>
-        </div>
-      </div>
 
       {loading ? (
         <div style={{ textAlign: "center", padding: "3rem", color: "var(--text-secondary)" }}>

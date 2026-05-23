@@ -4,6 +4,22 @@ import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
+// DELETE (no id) — bulk cancel: deletes all PENDING/FAILED posts, keeps jobs + DONE posts
+export async function DELETE() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const jobs = await prisma.cloneJob.findMany({ where: { userId: user.id }, select: { id: true } });
+  const jobIds = jobs.map((j) => j.id);
+
+  const { count } = await prisma.scheduledPost.deleteMany({
+    where: { cloneJobId: { in: jobIds }, status: { in: ["PENDING", "FAILED"] } },
+  });
+
+  return NextResponse.json({ ok: true, cancelled: count });
+}
+
 export async function GET() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();

@@ -1,10 +1,21 @@
 import { prisma } from "@/lib/prisma";
 import { mapInstagramError, postarReelBuffer } from "@/lib/instagramService";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
+  // Auth check
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) {
+    return new Response(
+      JSON.stringify({ error: "Não autorizado" }) + "\n",
+      { status: 401, headers: { "Content-Type": "application/x-ndjson" } },
+    );
+  }
+
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -50,12 +61,28 @@ export async function POST(request: Request) {
     );
   }
 
-  // Fetch video record from library
-  const libraryVideo = await prisma.libraryVideo.findUnique({ where: { id: videoId } });
+  // Verify video belongs to this user
+  const libraryVideo = await prisma.libraryVideo.findFirst({
+    where: { id: videoId, userId: user.id },
+  });
   if (!libraryVideo) {
     return new Response(
       JSON.stringify({ error: "Vídeo não encontrado na biblioteca." }) + "\n",
       { status: 404, headers: { "Content-Type": "application/x-ndjson" } },
+    );
+  }
+
+  // Verify all requested accounts belong to this user
+  const ownedAccounts = await prisma.instagramOAuthAccount.findMany({
+    where: { id: { in: accountIds }, userId: user.id },
+    select: { id: true },
+  });
+  const safeAccountIds = ownedAccounts.map(a => a.id);
+
+  if (safeAccountIds.length === 0) {
+    return new Response(
+      JSON.stringify({ error: "Nenhuma conta válida selecionada." }) + "\n",
+      { status: 400, headers: { "Content-Type": "application/x-ndjson" } },
     );
   }
 
@@ -81,7 +108,7 @@ export async function POST(request: Request) {
 
       try {
         await Promise.all(
-          accountIds.map(async (id) => {
+          safeAccountIds.map(async (id) => {
             try {
               const r = await postarReelBuffer(prisma, id, videoBuffer, caption, libraryVideo.publicUrl);
               push({ accountId: id, username: r.username, success: r.success, error: r.error });

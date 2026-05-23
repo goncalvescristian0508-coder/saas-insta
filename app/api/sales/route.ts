@@ -57,7 +57,11 @@ export async function GET(request: Request) {
     prisma.sale.count({ where: { userId: user.id, ...periodWhere } }),
     prisma.sale.groupBy({
       by: ["igUsername"],
-      where: { userId: user.id, status: "APPROVED", igUsername: { not: null }, ...periodWhere },
+      where: {
+        userId: user.id, status: "APPROVED",
+        igUsername: { not: null },
+        ...periodWhere,
+      },
       _sum: { amount: true },
       _count: { id: true },
       orderBy: { _sum: { amount: "desc" } },
@@ -82,16 +86,13 @@ export async function GET(request: Request) {
     }),
   ]);
 
-  const uniqueAccountsInPeriod = topAccounts.length;
-
   return NextResponse.json({
     stats: {
       approvedCount: periodSales._count.id,
       approvedRevenue: periodSales._sum.amount ?? 0,
       pendingCount: pendingSales,
       totalCount,
-      uniqueAccounts: uniqueAccountsInPeriod,
-      // Legacy fields for backward compat
+      uniqueAccounts: topAccounts.length,
       todayCount: period === "hoje" ? periodSales._count.id : 0,
       todayRevenue: period === "hoje" ? (periodSales._sum.amount ?? 0) : 0,
       totalRevenue: periodSales._sum.amount ?? 0,

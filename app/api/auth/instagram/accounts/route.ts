@@ -24,7 +24,7 @@ export async function GET() {
       },
     });
 
-    const response = NextResponse.json({ accounts: rows });
+    const response = NextResponse.json({ accounts: rows, userId });
     if (created) attachRequestUserCookie(response, userId);
     return response;
   } catch (error: any) {

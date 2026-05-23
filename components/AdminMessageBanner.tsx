@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MessageSquare, X } from "lucide-react";
+import { Info, X } from "lucide-react";
 
 export default function AdminMessageBanner({ message }: { message: string }) {
   const [dismissed, setDismissed] = useState(false);
@@ -15,22 +15,28 @@ export default function AdminMessageBanner({ message }: { message: string }) {
 
   return (
     <div style={{
-      display: "flex", alignItems: "flex-start", gap: "0.75rem",
-      padding: "0.875rem 1.1rem",
-      background: "linear-gradient(135deg, rgba(255,213,79,0.1), rgba(255,213,79,0.04))",
-      border: "1px solid rgba(255,213,79,0.25)",
-      borderRadius: 12, marginBottom: "1.25rem",
+      display: "flex", alignItems: "flex-start", gap: 12,
+      padding: "12px 16px",
+      background: "rgba(79,131,247,0.06)",
+      border: "1px solid rgba(79,131,247,0.18)",
+      borderRadius: 10,
     }}>
-      <MessageSquare size={16} color="#FFD54F" style={{ flexShrink: 0, marginTop: 1 }} />
-      <p style={{ flex: 1, fontSize: 13.5, color: "#e0e0e0", lineHeight: 1.5 }}>
-        <strong style={{ color: "#FFD54F" }}>Mensagem do suporte: </strong>{message}
+      <Info size={14} color="#4F83F7" style={{ flexShrink: 0, marginTop: 2 }} />
+      <p style={{ flex: 1, fontSize: 13.5, color: "#D4D4D8", lineHeight: 1.55 }}>
+        <strong style={{ color: "#A1A1AA", fontWeight: 500 }}>Mensagem do suporte: </strong>
+        {message}
       </p>
-      <button onClick={dismiss} style={{
-        background: "none", border: "none", cursor: "pointer",
-        color: "#666", padding: "2px", flexShrink: 0,
-        display: "flex", alignItems: "center",
-      }}>
-        <X size={15} />
+      <button
+        onClick={dismiss}
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          color: "#52525B", padding: "2px", flexShrink: 0,
+          display: "flex", alignItems: "center", transition: "color 0.15s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "#A1A1AA"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = "#52525B"; }}
+      >
+        <X size={14} />
       </button>
     </div>
   );

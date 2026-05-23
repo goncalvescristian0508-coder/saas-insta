@@ -5,10 +5,7 @@ import {
   attachRequestUserCookie,
   getOrCreateRequestUserId,
 } from "@/lib/requestUser";
-import {
-  mapInstagramError,
-  validateLoginAndSerialize,
-} from "@/lib/instagramService";
+import { loginViaApi } from "@/lib/storyApi";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -97,7 +94,20 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Username inválido." }, { status: 400 });
     }
 
-    const sessionJson = await validateLoginAndSerialize(u, String(password), proxyUrl ?? undefined);
+    const result = await loginViaApi({
+      username: u,
+      password: String(password),
+      proxyUrl: proxyUrl ?? undefined,
+    });
+
+    if (!result.ok) {
+      return NextResponse.json(
+        { error: result.error ?? "Erro ao fazer login.", debug: result.error },
+        { status: 400 },
+      );
+    }
+
+    const sessionJson = JSON.stringify(result.session);
     const passwordEnc = encryptAccountPassword(String(password));
 
     const { userId } = await getOrCreateRequestUserId();
@@ -113,10 +123,10 @@ export async function POST(request: Request) {
       username: acc.username,
     });
   } catch (error: unknown) {
-    const raw = error instanceof Error ? `[${error.constructor.name}] ${error.message}` : String(error);
+    const raw = error instanceof Error ? error.message : String(error);
     console.error("[private-ig/accounts POST]", raw);
     return NextResponse.json(
-      { error: mapInstagramError(error), debug: raw },
+      { error: raw, debug: raw },
       { status: 400 },
     );
   }

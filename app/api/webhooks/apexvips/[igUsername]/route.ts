@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { prisma } from "@/lib/prisma";
 import { parseApexVips, processSaleWebhook } from "@/lib/salesWebhook";
+import { verifyWebhookSecret } from "@/lib/webhookAuth";
 
 export const runtime = "nodejs";
 
@@ -13,10 +14,12 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ igUsername: string }> },
 ) {
-  // Clone body before responding (stream can only be read once)
+  if (!verifyWebhookSecret(request)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const raw = await request.text().catch(() => "");
 
-  // Respond 200 immediately — process in background so we never timeout
   waitUntil(
     (async () => {
       try {
@@ -26,11 +29,11 @@ export async function POST(
         let body: Record<string, unknown>;
         try { body = JSON.parse(raw); } catch { return; }
 
-        const account = await prisma.instagramOAuthAccount.findFirst({
+        const accounts = await prisma.instagramOAuthAccount.findMany({
           where: { username: { equals: igUsername, mode: "insensitive" } },
           select: { userId: true, username: true },
         });
-        if (!account) return;
+        if (!accounts.length) return;
 
         const parsed = parseApexVips(body);
         if (!parsed) return;
@@ -38,10 +41,11 @@ export async function POST(
         const transaction = (body.transaction ?? {}) as Record<string, unknown>;
         const gateway = String(transaction.payment_platform ?? "apexvips");
 
-        // Use utm_source (trackingCode) when present — multi-account UTM tracking
-        // Falls back to the account in the webhook URL when no utm_source
-        const igOverride = parsed.trackingCode ? undefined : account.username;
-        await processSaleWebhook(gateway, account.userId, parsed, raw, igOverride);
+        await Promise.all(
+          accounts.map(account =>
+            processSaleWebhook(gateway, account.userId, parsed, raw, account.username)
+          )
+        );
       } catch {}
     })()
   );

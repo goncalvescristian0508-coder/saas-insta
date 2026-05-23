@@ -395,10 +395,16 @@ function PlanosTab() {
 function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; recentPosts: RecentPost[]; onRefresh: () => void }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [modal, setModal] = useState<"message" | "delete" | null>(null);
+  const [modal, setModal] = useState<"message" | "delete" | "fakesales" | null>(null);
   const [msgText, setMsgText] = useState("");
   const [busy, setBusy] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [fakeCount, setFakeCount] = useState(5);
+  const [fakeInterval, setFakeInterval] = useState(3);
+  const [fakeMin, setFakeMin] = useState(49.90);
+  const [fakeMax, setFakeMax] = useState(197.00);
+  const [fakeAccount, setFakeAccount] = useState("");
+  const [fakeSent, setFakeSent] = useState(false);
 
   const filtered = users.filter(u =>
     !search ||
@@ -422,6 +428,17 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
     setBusy(true);
     await fetch("/api/admin/send-message", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: selUser.id }) });
     setBusy(false); setModal(null); onRefresh();
+  }
+
+  async function sendFakeSales() {
+    if (!selUser) return;
+    setBusy(true); setFakeSent(false);
+    await fetch("/api/admin/fake-sales", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: selUser.id, count: fakeCount, intervalSeconds: fakeInterval, minAmount: fakeMin, maxAmount: fakeMax, accountName: fakeAccount.trim() || undefined }),
+    });
+    setBusy(false); setFakeSent(true);
   }
 
   async function deleteUser() {
@@ -488,9 +505,12 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
               </div>
             </div>
 
-            <div style={{ display: "flex", gap: ".5rem", marginBottom: "1.1rem" }}>
+            <div style={{ display: "flex", gap: ".5rem", marginBottom: "1.1rem", flexWrap: "wrap" }}>
               <button onClick={() => setModal("message")} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px", borderRadius: 9, background: "rgba(255,213,79,.1)", border: "1px solid rgba(255,213,79,.2)", color: "#FFD54F", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
                 <MessageSquare size={13} /> {selUser.adminMessage ? "Editar msg" : "Enviar msg"}
+              </button>
+              <button onClick={() => { setFakeSent(false); setModal("fakesales"); }} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px", borderRadius: 9, background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.2)", color: "#4ade80", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+                <Zap size={13} /> Simular vendas
               </button>
               <button onClick={() => setModal("delete")} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px", borderRadius: 9, background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)", color: "#f87171", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
                 <Trash2 size={13} /> Deletar
@@ -583,6 +603,77 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
               {selUser.adminMessage && <button onClick={clearMessage} disabled={busy} style={{ padding: "7px 14px", borderRadius: 8, background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.1)", color: "#aaa", fontSize: 13, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>Remover</button>}
               <button onClick={sendMessage} disabled={busy || !msgText.trim()} style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 8, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
                 {busy ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <Send size={13} />} Enviar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fake sales modal */}
+      {modal === "fakesales" && selUser && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setModal(null)}>
+          <div style={{ background: "#1a1a1a", border: "1px solid rgba(255,255,255,.08)", borderRadius: 16, padding: "1.75rem", width: 440, maxWidth: "90vw" }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.25rem" }}>
+              <div>
+                <h3 style={{ fontSize: "1rem", fontWeight: 700 }}>Simular vendas</h3>
+                <p style={{ fontSize: 11, color: "#555", marginTop: 2 }}>{selUser.name ?? selUser.email}</p>
+              </div>
+              <button onClick={() => setModal(null)} style={{ background: "none", border: "none", color: "#666", cursor: "pointer" }}><X size={16} /></button>
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {/* Quantidade */}
+              <div>
+                <p style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Quantidade de notificações: <strong style={{ color: "#4ade80" }}>{fakeCount}</strong></p>
+                <input type="range" min={1} max={50} value={fakeCount} onChange={e => setFakeCount(Number(e.target.value))}
+                  style={{ width: "100%", accentColor: "#4ade80" }} />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#444" }}><span>1</span><span>50</span></div>
+              </div>
+
+              {/* Intervalo */}
+              <div>
+                <p style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Intervalo entre cada: <strong style={{ color: "#4ade80" }}>{fakeInterval}s</strong></p>
+                <input type="range" min={1} max={30} value={fakeInterval} onChange={e => setFakeInterval(Number(e.target.value))}
+                  style={{ width: "100%", accentColor: "#4ade80" }} />
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#444" }}><span>1s</span><span>30s</span></div>
+              </div>
+
+              {/* Valores */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: ".75rem" }}>
+                <div>
+                  <p style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 5 }}>Valor mínimo (R$)</p>
+                  <input type="number" value={fakeMin} onChange={e => setFakeMin(Number(e.target.value))} step={0.01} min={0}
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", color: "#f0f0f0", fontSize: 13, outline: "none", fontFamily: "var(--font-sans)" }} />
+                </div>
+                <div>
+                  <p style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 5 }}>Valor máximo (R$)</p>
+                  <input type="number" value={fakeMax} onChange={e => setFakeMax(Number(e.target.value))} step={0.01} min={0}
+                    style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", color: "#f0f0f0", fontSize: 13, outline: "none", fontFamily: "var(--font-sans)" }} />
+                </div>
+              </div>
+
+              {/* Conta IG */}
+              <div>
+                <p style={{ fontSize: 11, color: "#666", textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 5 }}>Conta IG (opcional)</p>
+                <input type="text" value={fakeAccount} onChange={e => setFakeAccount(e.target.value)} placeholder="ex: jeninovaki"
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 8, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", color: "#f0f0f0", fontSize: 13, outline: "none", fontFamily: "var(--font-sans)" }} />
+              </div>
+
+              {/* Preview */}
+              <div style={{ padding: ".75rem", borderRadius: 10, background: "rgba(34,197,94,.05)", border: "1px solid rgba(34,197,94,.15)", fontSize: 12, color: "#4ade80" }}>
+                {fakeCount}x notificação "Venda aprovada!" · R$ {fakeMin.toFixed(2)}–{fakeMax.toFixed(2)} · a cada {fakeInterval}s
+                {fakeAccount && ` · @${fakeAccount}`}
+              </div>
+
+              {fakeSent && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#4ade80", fontWeight: 600 }}>
+                  <CheckCircle2 size={14} /> Disparando {fakeCount} notificações em background...
+                </div>
+              )}
+
+              <button onClick={() => void sendFakeSales()} disabled={busy} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px", borderRadius: 10, background: "rgba(34,197,94,.15)", border: "1px solid rgba(34,197,94,.3)", color: "#4ade80", fontSize: 13, cursor: busy ? "not-allowed" : "pointer", fontWeight: 700, fontFamily: "var(--font-sans)" }}>
+                {busy ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Zap size={14} />}
+                {busy ? "Enviando..." : "Disparar notificações"}
               </button>
             </div>
           </div>
@@ -757,6 +848,10 @@ function TestadoresTab() {
   const [loading, setLoading] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [results, setResults] = useState<{ username: string; ok: boolean; error?: string; appName?: string }[]>([]);
+  const [diagResult, setDiagResult] = useState<Record<string, unknown> | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [portalStatus, setPortalStatus] = useState<{ configured: boolean; sessionValid?: boolean; sessionError?: string; cUser?: string; envKey?: string } | null>(null);
+  const [portalChecking, setPortalChecking] = useState(false);
 
   useEffect(() => {
     fetch("/api/admin/meta-apps")
@@ -767,6 +862,16 @@ function TestadoresTab() {
         if (list.length > 0) setAppKey(list[0].key);
       });
   }, []);
+
+  async function checkPortal(key: string) {
+    setPortalChecking(true);
+    setPortalStatus(null);
+    try {
+      const r = await fetch(`/api/admin/portal-status?key=${encodeURIComponent(key)}`);
+      setPortalStatus(await r.json() as typeof portalStatus);
+    } catch { setPortalStatus({ configured: false }); }
+    finally { setPortalChecking(false); }
+  }
 
   const names = input.split(/[\n,]+/).map(s => s.trim().replace(/^@/, "")).filter(Boolean);
 
@@ -916,6 +1021,16 @@ function TestadoresTab() {
     finally { setCleanupLoading(false); }
   }
 
+  async function handleDiag() {
+    setDiagLoading(true);
+    setDiagResult(null);
+    try {
+      const r = await fetch(`/api/admin/debug-token?key=${encodeURIComponent(appKey)}`);
+      setDiagResult(await r.json() as Record<string, unknown>);
+    } catch { setDiagResult({ error: "Erro de conexão" }); }
+    finally { setDiagLoading(false); }
+  }
+
   async function handleExchange() {
     if (!shortToken.trim()) return;
     setExchanging(true);
@@ -927,9 +1042,10 @@ function TestadoresTab() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ shortToken: shortToken.trim(), appKey }),
       });
-      const d = await r.json() as { longToken?: string; expiresInDays?: number; envKey?: string; error?: string };
+      const d = await r.json() as { longToken?: string; expiresInDays?: number; envKey?: string; error?: string; debug?: Record<string, unknown> };
       if (!r.ok || !d.longToken) {
-        setExchangeError(d.error ?? "Erro ao extender token");
+        const debugInfo = d.debug ? ` [key=${d.debug.key}, appId=${d.debug.appId}, secretLen=${d.debug.appSecretLen}]` : "";
+        setExchangeError((d.error ?? "Erro ao extender token") + debugInfo);
       } else {
         setLongTokenResult({ longToken: d.longToken, expiresInDays: d.expiresInDays ?? 60, envKey: d.envKey ?? "" });
         setShortToken("");
@@ -951,6 +1067,22 @@ function TestadoresTab() {
         <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
           Cole o token curto gerado no <strong style={{ color: "#e0e0e0" }}>Meta API Explorer</strong>. O servidor troca por um token longo (60 dias) usando as credenciais do app — sem expor o App Secret.
         </p>
+        {apps.length > 0 && (
+          <div style={{ marginBottom: ".75rem" }}>
+            <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".08em" }}>App do token</label>
+            <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }}>
+              {apps.map(app => (
+                <button key={app.key} type="button" onClick={() => setAppKey(app.key)} style={{
+                  padding: "5px 12px", borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                  background: appKey === app.key ? "rgba(96,165,250,.18)" : "rgba(255,255,255,.04)",
+                  border: appKey === app.key ? "1px solid rgba(96,165,250,.4)" : "1px solid rgba(255,255,255,.08)",
+                  color: appKey === app.key ? "#60a5fa" : "#888",
+                  transition: "all .15s", fontFamily: "var(--font-sans)",
+                }}>{app.name}</button>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ display: "flex", gap: ".5rem" }}>
           <input
             value={shortToken}
@@ -991,13 +1123,93 @@ function TestadoresTab() {
             </div>
           </div>
         )}
+
+        {/* Diagnostics */}
+        <div style={{ marginTop: ".75rem", borderTop: "1px solid rgba(255,255,255,.05)", paddingTop: ".75rem" }}>
+          <button
+            onClick={() => void handleDiag()}
+            disabled={diagLoading}
+            style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 8, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.09)", color: "#666", fontSize: 11, cursor: diagLoading ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}
+          >
+            {diagLoading ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Activity size={12} />}
+            Diagnóstico do token
+          </button>
+          {diagResult && (() => {
+            const dr = diagResult as {
+              tokenType?: string; adminTokenPresent?: boolean; adminTokenPreview?: string;
+              appTokenFallback?: boolean; appId?: string;
+              tokenTest?: { id?: string; name?: string; error?: { message?: string } };
+              rolesTest?: { data?: unknown; error?: { message?: string } };
+            };
+            return (
+              <div style={{ marginTop: ".5rem", padding: ".75rem 1rem", borderRadius: 9, background: "rgba(0,0,0,.3)", border: "1px solid rgba(255,255,255,.07)" }}>
+                <p style={{ fontSize: 11, color: "#555", marginBottom: ".4rem", fontWeight: 700 }}>
+                  Tipo de token: <span style={{ color: dr.adminTokenPresent ? "#4ade80" : dr.appTokenFallback ? "#f59e0b" : "#f87171" }}>
+                    {dr.tokenType ?? "none"}
+                  </span>
+                  {dr.adminTokenPresent && <> · <code style={{ color: "#60a5fa" }}>{dr.adminTokenPreview}</code></>}
+                  {!dr.adminTokenPresent && dr.appTokenFallback && <span style={{ color: "#f59e0b" }}> (App Token — pode não funcionar para Business apps)</span>}
+                  {!dr.adminTokenPresent && !dr.appTokenFallback && <span style={{ color: "#f87171" }}> — Nenhum token! Configure META_ADMIN_ACCESS_TOKEN no Vercel.</span>}
+                </p>
+                {dr.tokenTest && (
+                  <p style={{ fontSize: 11, color: dr.tokenTest.id ? "#4ade80" : "#f87171" }}>
+                    /me: {dr.tokenTest.id ? `✓ ${dr.tokenTest.name ?? "ok"}` : `✗ ${dr.tokenTest.error?.message ?? "falhou"}`}
+                  </p>
+                )}
+                {dr.rolesTest && (
+                  <p style={{ fontSize: 11, color: dr.rolesTest.data ? "#4ade80" : "#f87171" }}>
+                    /{dr.appId}/roles: {dr.rolesTest.data ? "✓ acesso confirmado" : `✗ ${dr.rolesTest.error?.message ?? "sem acesso"}`}
+                  </p>
+                )}
+              </div>
+            );
+          })()}
+        </div>
       </Panel>
 
-      <Panel style={{ padding: "1.5rem" }}>
+      <Panel style={{ padding: "1.5rem", border: "1px solid rgba(34,197,94,.15)" }}>
+        <SectionLabel>Sessão do Portal Meta</SectionLabel>
+        <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
+          O sistema usa a sessão do admin no portal Meta para adicionar testadores — funciona para todos os tipos de app, incluindo Instagram Login.
+          Configure <code style={{ color: "#4ade80" }}>META_PORTAL_COOKIES</code> no Vercel com os cookies do teu browser.
+        </p>
+        <div style={{ padding: ".75rem 1rem", borderRadius: 9, background: "rgba(0,0,0,.3)", border: "1px solid rgba(255,255,255,.07)", marginBottom: "1rem", fontSize: 11, color: "#666", lineHeight: 1.8 }}>
+          <strong style={{ color: "#e0e0e0" }}>Como obter os cookies:</strong><br />
+          1. Abre <code style={{ color: "#60a5fa" }}>developers.facebook.com</code> no Chrome<br />
+          2. DevTools → Network → filtra por <code style={{ color: "#60a5fa" }}>graphql</code> → clica em qualquer requisição<br />
+          3. Headers → Request Headers → copia o valor de <strong style={{ color: "#e0e0e0" }}>Cookie</strong><br />
+          4. Cola em Vercel como <code style={{ color: "#4ade80" }}>META_PORTAL_COOKIES</code>{" "}
+          {appKey && <>(ou <code style={{ color: "#4ade80" }}>META_PORTAL_COOKIES_{appKey}</code> para este app específico)</>}
+        </div>
+        <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+          <button
+            onClick={() => void checkPortal(appKey)}
+            disabled={portalChecking}
+            style={{ display: "flex", alignItems: "center", gap: 5, padding: "7px 14px", borderRadius: 8, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.25)", color: "#4ade80", fontSize: 11, cursor: portalChecking ? "not-allowed" : "pointer", fontWeight: 700, fontFamily: "var(--font-sans)" }}
+          >
+            {portalChecking ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <Activity size={12} />}
+            Testar sessão
+          </button>
+          {portalStatus && (
+            <span style={{ fontSize: 12, color: portalStatus.configured && portalStatus.sessionValid ? "#4ade80" : portalStatus.configured ? "#f59e0b" : "#f87171", fontWeight: 600 }}>
+              {!portalStatus.configured
+                ? "META_PORTAL_COOKIES não configurado"
+                : portalStatus.sessionValid
+                  ? `✓ Sessão válida (user ${portalStatus.cUser ?? "?"})`
+                  : `⚠ ${portalStatus.sessionError ?? "Sessão inválida"}`}
+            </span>
+          )}
+        </div>
+      </Panel>
+
+      <Panel style={{ padding: "1.5rem", border: "1px solid rgba(234,179,8,.15)" }}>
         <SectionLabel>Adicionar Testadores</SectionLabel>
         <p style={{ fontSize: 12, color: "#555", marginBottom: "1rem", lineHeight: 1.6 }}>
-          Cole os @usernames do Instagram (um por linha ou separado por vírgula). Todos são enviados em paralelo de uma vez. O usuário receberá um convite em{" "}
-          <strong style={{ color: "#e0e0e0" }}>Instagram → Configurações → Apps e Sites</strong> para aceitar.
+          O usuário receberá convite em{" "}
+          <strong style={{ color: "#e0e0e0" }}>Instagram → Configurações → Apps e Sites</strong>.
+          {portalStatus?.configured && portalStatus?.sessionValid
+            ? <strong style={{ color: "#4ade80" }}> Usando sessão do portal (modo automático).</strong>
+            : <span style={{ color: "#f59e0b" }}> Configure META_PORTAL_COOKIES acima para activar o modo automático.</span>}
         </p>
         <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: ".75rem" }}>
           {/* App selector */}

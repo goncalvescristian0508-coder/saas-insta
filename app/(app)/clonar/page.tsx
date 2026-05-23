@@ -70,6 +70,8 @@ export default function ClonarPage() {
   const [cloneBio, setCloneBio] = useState(true);
   const [cloneStories, setCloneStories] = useState(false);
   const [cloneHighlights, setCloneHighlights] = useState(false);
+  const [alternateSequence, setAlternateSequence] = useState(false);
+  const [groupSize, setGroupSize] = useState(5);
   const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [cloning, setCloning] = useState(false);
@@ -125,9 +127,22 @@ export default function ClonarPage() {
 
   const handleCancelJob = async (e: React.MouseEvent, jobId: string) => {
     e.stopPropagation();
-    if (!confirm("Cancelar este clone? Posts pendentes serão removidos.")) return;
+    if (!confirm("Cancelar posts pendentes deste clone? O histórico de publicados será mantido.")) return;
+    await fetch(`/api/clone/history/${jobId}?cancelOnly=true`, { method: "DELETE" });
+    setJobs((prev) => prev.map((j) => j.id !== jobId ? j : { ...j, posts: { ...j.posts, pending: 0, failed: 0 } }));
+  };
+
+  const handleRemoveJob = async (e: React.MouseEvent, jobId: string) => {
+    e.stopPropagation();
+    if (!confirm("Remover este clone do histórico?")) return;
     await fetch(`/api/clone/history/${jobId}`, { method: "DELETE" });
     setJobs((prev) => prev.filter((j) => j.id !== jobId));
+  };
+
+  const handleCancelAll = async () => {
+    if (!confirm("Cancelar todos os posts pendentes de todos os clones? O histórico de publicados será mantido.")) return;
+    await fetch("/api/clone/history", { method: "DELETE" });
+    setJobs((prev) => prev.map((j) => ({ ...j, posts: { ...j.posts, pending: 0, failed: 0 } })));
   };
 
   const loadJobs = useCallback(async () => {
@@ -292,6 +307,8 @@ export default function ClonarPage() {
           cloneStories,
           cloneHighlights,
           startAt,
+          alternateSequence,
+          groupSize,
         }),
       });
       const data = await res.json();
@@ -381,9 +398,13 @@ export default function ClonarPage() {
         </div>
       )}
 
-      <div style={{ marginBottom: "2rem" }}>
-        <h1 className="page-title">Clonar Perfil</h1>
-        <p className="page-subtitle">Copie reels, bio e foto de qualquer perfil público para suas contas</p>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.025em", color: "#ededed", margin: 0 }}>
+          Clonar Perfil
+        </h1>
+        <p style={{ fontSize: 12, color: "#444", marginTop: 3 }}>
+          Copie reels, bio e foto de qualquer perfil público para suas contas
+        </p>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem", alignItems: "start" }}>
@@ -610,6 +631,37 @@ export default function ClonarPage() {
             </div>
           </div>
 
+          {/* Alternate sequence */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Sequência de vídeos</label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.7rem", borderRadius: "8px", cursor: "pointer", background: alternateSequence ? "rgba(249,115,22,0.07)" : "rgba(255,255,255,0.02)", border: `1px solid ${alternateSequence ? "rgba(249,115,22,0.25)" : "transparent"}` }}>
+              <input type="checkbox" checked={alternateSequence} onChange={() => setAlternateSequence(!alternateSequence)} style={{ accentColor: "#f97316" }} />
+              <span style={{ fontSize: "0.85rem" }}>Alternar sequência por grupo de contas</span>
+            </label>
+            {alternateSequence && (
+              <div style={{ marginTop: "0.75rem", padding: "0.75rem", borderRadius: "8px", background: "rgba(249,115,22,0.05)", border: "1px solid rgba(249,115,22,0.15)" }}>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.5rem", lineHeight: 1.5 }}>
+                  Cada grupo começa por um vídeo diferente — contas do mesmo grupo postam o mesmo vídeo, grupos diferentes postam vídeos diferentes ao mesmo tempo.
+                </p>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <span style={{ fontSize: "0.8rem", color: "var(--text-secondary)", whiteSpace: "nowrap" }}>Contas por grupo:</span>
+                  <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                    {[1, 2, 3, 5, 10].map((n) => (
+                      <button key={n} onClick={() => setGroupSize(n)} style={{ padding: "0.3rem 0.7rem", borderRadius: "7px", border: `1px solid ${groupSize === n ? "rgba(249,115,22,0.5)" : "rgba(255,255,255,0.1)"}`, background: groupSize === n ? "rgba(249,115,22,0.15)" : "transparent", color: groupSize === n ? "#fb923c" : "var(--text-secondary)", fontWeight: groupSize === n ? 700 : 400, fontSize: "0.82rem", cursor: "pointer" }}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {selectedCount > 0 && (
+                  <p style={{ fontSize: "0.72rem", color: "#fb923c", marginTop: "0.4rem" }}>
+                    {selectedCount} contas → {Math.ceil(selectedCount / groupSize)} grupo(s) de {groupSize}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
           {/* Post limit */}
           <div style={{ marginBottom: "1.25rem" }}>
             <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Quantidade de posts</label>
@@ -737,9 +789,16 @@ export default function ClonarPage() {
       <div style={{ marginTop: "2.5rem" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1.25rem" }}>
           <h2 style={{ fontSize: "1.1rem", fontWeight: 700 }}>Histórico de Clones</h2>
-          <button onClick={loadJobs} disabled={loadingJobs} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "var(--text-secondary)", fontSize: "0.8rem", cursor: "pointer" }}>
-            <RefreshCw size={13} style={loadingJobs ? { animation: "spin 1s linear infinite" } : {}} /> Atualizar
-          </button>
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            {jobs.some((j) => j.posts.pending > 0) && (
+              <button onClick={() => void handleCancelAll()} style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.8rem", borderRadius: "8px", border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.07)", color: "#f87171", fontSize: "0.8rem", cursor: "pointer", fontWeight: 600 }}>
+                <XCircle size={13} /> Cancelar todas
+              </button>
+            )}
+            <button onClick={loadJobs} disabled={loadingJobs} style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 0.8rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "var(--text-secondary)", fontSize: "0.8rem", cursor: "pointer" }}>
+              <RefreshCw size={13} style={loadingJobs ? { animation: "spin 1s linear infinite" } : {}} /> Atualizar
+            </button>
+          </div>
         </div>
 
         {loadingJobs && jobs.length === 0 ? (
@@ -816,15 +875,21 @@ export default function ClonarPage() {
                       </div>
                     )}
                     {job.posts.pending > 0 && (
-                      <button
-                        type="button"
-                        onClick={(e) => void handleCancelJob(e, job.id)}
-                        title="Cancelar clone"
-                        style={{ background: "none", border: "1px solid rgba(239,68,68,0.25)", borderRadius: "8px", cursor: "pointer", color: "var(--text-secondary)", padding: "0.35rem 0.5rem", transition: "all 0.2s", display: "flex", alignItems: "center" }}
-                        onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.5)"; e.currentTarget.style.background = "rgba(239,68,68,0.08)"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; e.currentTarget.style.borderColor = "rgba(239,68,68,0.25)"; e.currentTarget.style.background = "none"; }}
+                      <button type="button" onClick={(e) => void handleCancelJob(e, job.id)} title="Cancelar posts pendentes"
+                        style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.3rem 0.6rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.25)", background: "rgba(239,68,68,0.07)", color: "#f87171", fontSize: "0.72rem", fontWeight: 600, cursor: "pointer" }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.14)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.07)"; }}
                       >
-                        <Trash2 size={15} />
+                        <XCircle size={12} /> Cancelar
+                      </button>
+                    )}
+                    {job.posts.pending === 0 && (
+                      <button type="button" onClick={(e) => void handleRemoveJob(e, job.id)} title="Remover do histórico"
+                        style={{ display: "flex", alignItems: "center", gap: "0.3rem", padding: "0.3rem 0.6rem", borderRadius: "7px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "var(--text-muted)", fontSize: "0.72rem", cursor: "pointer" }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+                      >
+                        <Trash2 size={12} /> Remover
                       </button>
                     )}
                   </div>

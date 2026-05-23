@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Users, Film, CalendarClock, CheckCircle, Send, Search } from "lucide-react";
+import { useState } from "react";
 
 interface StatsProps {
   accounts: number;
@@ -12,103 +13,104 @@ interface StatsProps {
 
 export function StatCards({ accounts, videos, pending, done }: StatsProps) {
   const stats = [
-    { label: "Contas Conectadas", value: accounts, icon: Users,        href: "/accounts", iconColor: "#60a5fa", iconBg: "rgba(59,130,246,0.12)" },
-    { label: "Vídeos na Biblioteca", value: videos, icon: Film,        href: "/library",  iconColor: "#8b5cf6", iconBg: "rgba(139,92,246,0.12)" },
-    { label: "Posts Pendentes",    value: pending,  icon: CalendarClock, href: "/schedule", iconColor: "#FFD54F", iconBg: "rgba(255,213,79,0.12)" },
-    { label: "Publicados",         value: done,     icon: CheckCircle,   href: "/schedule", iconColor: "#22c55e", iconBg: "rgba(34,197,94,0.12)" },
+    { label: "Contas Conectadas",   value: accounts, icon: Users,        href: "/accounts" },
+    { label: "Vídeos na Biblioteca", value: videos,   icon: Film,        href: "/library" },
+    { label: "Posts Pendentes",      value: pending,  icon: CalendarClock, href: "/schedule" },
+    { label: "Publicados",           value: done,     icon: CheckCircle,  href: "/schedule" },
   ];
 
   return (
     <div style={{
       display: "grid",
       gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-      gap: 12, marginBottom: 16,
+      gap: 10, marginBottom: 14,
     }}>
       {stats.map((stat) => (
-        <Link key={stat.label} href={stat.href} style={{ textDecoration: "none" }}>
-          <div style={{
-            background: "#141414",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 12, padding: "18px 20px",
-            transition: "border-color 0.15s",
-            cursor: "pointer",
-          }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,213,79,0.15)"; }}
-            onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.borderColor = "rgba(255,255,255,0.06)"; }}
-          >
-            <div style={{
-              width: 36, height: 36, borderRadius: 9,
-              background: stat.iconBg,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              marginBottom: 14,
-            }}>
-              <stat.icon size={17} color={stat.iconColor} />
-            </div>
-            <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1 }}>
-              {stat.value}
-            </div>
-            <div style={{ fontSize: 12, color: "#555", marginTop: 6, fontWeight: 500 }}>
-              {stat.label}
-            </div>
-          </div>
-        </Link>
+        <StatCard key={stat.label} stat={stat} />
       ))}
     </div>
   );
 }
 
+function StatCard({ stat }: { stat: { label: string; value: number; icon: React.ElementType; href: string } }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Link href={stat.href} style={{ textDecoration: "none" }}>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          background: "#18181B",
+          border: `1px solid ${hovered ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)"}`,
+          borderRadius: 10,
+          padding: "18px 20px",
+          cursor: "pointer",
+          transition: "border-color 0.15s",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <span style={{ fontSize: 12, color: "#71717A", fontWeight: 500 }}>{stat.label}</span>
+          <stat.icon size={13} color="#3F3F46" strokeWidth={1.75} />
+        </div>
+        <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.025em", color: "#F4F4F5", lineHeight: 1 }}>
+          {stat.value}
+        </div>
+      </div>
+    </Link>
+  );
+}
+
 export function QuickActions() {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-      <Link href="/postagem-massa" style={{ textDecoration: "none" }}>
-        <div style={{
-          padding: "16px 18px", borderRadius: 12,
-          background: "rgba(255,213,79,0.07)",
-          border: "1px solid rgba(255,213,79,0.15)",
-          display: "flex", alignItems: "center", gap: 14, cursor: "pointer",
-          transition: "background 0.15s",
-        }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(255,213,79,0.12)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(255,213,79,0.07)"; }}
-        >
-          <div style={{
-            width: 40, height: 40, borderRadius: 10,
-            background: "rgba(255,213,79,0.12)", border: "1px solid rgba(255,213,79,0.2)",
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            <Send size={18} color="#FFD54F" />
-          </div>
-          <div>
-            <p style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>Postagem em Massa</p>
-            <p style={{ fontSize: 12, color: "#555" }}>Poste em várias contas ao mesmo tempo</p>
-          </div>
-        </div>
-      </Link>
-
-      <Link href="/inspiracoes" style={{ textDecoration: "none" }}>
-        <div style={{
-          padding: "16px 18px", borderRadius: 12,
-          background: "rgba(139,92,246,0.06)",
-          border: "1px solid rgba(139,92,246,0.15)",
-          display: "flex", alignItems: "center", gap: 14, cursor: "pointer",
-          transition: "background 0.15s",
-        }}
-          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(139,92,246,0.1)"; }}
-          onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "rgba(139,92,246,0.06)"; }}
-        >
-          <div style={{
-            width: 40, height: 40, borderRadius: 10,
-            background: "rgba(139,92,246,0.12)", border: "1px solid rgba(139,92,246,0.2)",
-            display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-          }}>
-            <Search size={18} color="#8b5cf6" />
-          </div>
-          <div>
-            <p style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>Buscar Inspirações</p>
-            <p style={{ fontSize: 12, color: "#555" }}>Baixe reels de perfis públicos</p>
-          </div>
-        </div>
-      </Link>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+      <QuickActionCard
+        href="/postagem-massa"
+        icon={Send}
+        title="Postagem em Massa"
+        description="Poste em várias contas ao mesmo tempo"
+      />
+      <QuickActionCard
+        href="/inspiracoes"
+        icon={Search}
+        title="Buscar Inspirações"
+        description="Baixe reels de perfis públicos"
+      />
     </div>
+  );
+}
+
+function QuickActionCard({
+  href, icon: Icon, title, description,
+}: {
+  href: string; icon: React.ElementType; title: string; description: string;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Link href={href} style={{ textDecoration: "none" }}>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          padding: "16px 18px", borderRadius: 10,
+          background: hovered ? "rgba(255,255,255,0.04)" : "transparent",
+          border: `1px solid ${hovered ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.07)"}`,
+          display: "flex", alignItems: "center", gap: 14,
+          cursor: "pointer", transition: "all 0.15s",
+        }}
+      >
+        <div style={{
+          width: 36, height: 36, borderRadius: 9,
+          background: "rgba(255,255,255,0.06)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        }}>
+          <Icon size={16} color="#A1A1AA" strokeWidth={1.75} />
+        </div>
+        <div>
+          <p style={{ fontWeight: 500, fontSize: 13.5, color: "#E4E4E7", marginBottom: 2 }}>{title}</p>
+          <p style={{ fontSize: 12, color: "#71717A" }}>{description}</p>
+        </div>
+      </div>
+    </Link>
   );
 }

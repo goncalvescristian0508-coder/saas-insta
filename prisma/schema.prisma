@@ -181,7 +181,7 @@ model Sale {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
-  @@unique([gateway, gatewayOrderId])
+  @@unique([userId, gateway, gatewayOrderId])
   @@index([userId, createdAt])
   @@index([igUsername])
 }

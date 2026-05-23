@@ -5,8 +5,6 @@ import { createClient } from "@/lib/supabase/server";
 
 export const runtime = "nodejs";
 
-const MAX_PER_APP = Number(process.env.META_APP_MAX_USERS ?? "25");
-
 export async function GET() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -32,7 +30,7 @@ export async function GET() {
     apps: apps.map((a) => ({
       ...a,
       count: countMap[a.key] ?? 0,
-      isLotado: (countMap[a.key] ?? 0) >= MAX_PER_APP,
+      isLotado: false,
     })),
   });
 }

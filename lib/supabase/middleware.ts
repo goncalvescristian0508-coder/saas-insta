@@ -36,8 +36,10 @@ export async function updateSession(request: NextRequest) {
 
   const isApiAuthCallback =
     request.nextUrl.pathname.startsWith("/api/auth/callback") ||
+    request.nextUrl.pathname.startsWith("/api/auth/register") ||
     request.nextUrl.pathname.startsWith("/api/auth/instagram") ||
-    request.nextUrl.pathname.startsWith("/connect/");
+    request.nextUrl.pathname.startsWith("/connect/") ||
+    request.nextUrl.pathname.startsWith("/api/webhooks/");
 
   const isPendingApprovalPage = request.nextUrl.pathname.startsWith("/pending-approval");
 

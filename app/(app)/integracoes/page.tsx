@@ -1,11 +1,12 @@
 "use client";
 
-import { Plug, Save, Loader2, CheckCircle, Copy, AtSign, Bell, Plus, Trash2, Key, ToggleLeft, ToggleRight } from "lucide-react";
+import { Plug, Save, Loader2, CheckCircle, Copy, AtSign, Bell, Plus, Trash2, Key, ToggleLeft, ToggleRight, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 
 const WEBHOOK_BASE = typeof window !== "undefined" ? window.location.origin : "";
 
 interface IgAccount { id: string; username: string; }
+interface AccountsResponse { accounts: IgAccount[]; userId: string; }
 
 interface ApifyToken { id: string; label: string; tokenMasked: string; isActive: boolean; createdAt: string; }
 
@@ -17,11 +18,15 @@ export default function IntegracoesPage() {
   const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<IgAccount[]>([]);
+  const [userId, setUserId] = useState<string>("");
   const [apifyTokens, setApifyTokens] = useState<ApifyToken[]>([]);
   const [newToken, setNewToken] = useState("");
   const [newLabel, setNewLabel] = useState("");
   const [addingToken, setAddingToken] = useState(false);
   const [addTokenError, setAddTokenError] = useState("");
+  const [fixingUtm, setFixingUtm] = useState(false);
+  const [fixUtmResult, setFixUtmResult] = useState<{ fixed: number } | null>(null);
+  const [fixUtmError, setFixUtmError] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -31,7 +36,8 @@ export default function IntegracoesPage() {
     ]).then(([intData, accData, apifyData]) => {
       setConfigs(intData.integrations ?? {});
       setDrafts(intData.integrations ?? {});
-      setAccounts(accData.accounts ?? []);
+      setAccounts((accData as AccountsResponse).accounts ?? []);
+      setUserId((accData as AccountsResponse).userId ?? "");
       setApifyTokens(apifyData.tokens ?? []);
     }).finally(() => setLoading(false));
   }, []);
@@ -94,6 +100,19 @@ export default function IntegracoesPage() {
 
   const setField = (type: string, key: string, value: string) => {
     setDrafts((prev) => ({ ...prev, [type]: { ...(prev[type] ?? {}), [key]: value } }));
+  };
+
+  const handleFixUtm = async () => {
+    setFixingUtm(true);
+    setFixUtmError("");
+    setFixUtmResult(null);
+    try {
+      const res = await fetch("/api/sales/fix-utm", { method: "POST" });
+      const data = await res.json() as { fixed?: number; error?: string };
+      if (!res.ok) { setFixUtmError(data.error ?? "Erro"); return; }
+      setFixUtmResult({ fixed: data.fixed ?? 0 });
+    } catch { setFixUtmError("Erro de conexão"); }
+    finally { setFixingUtm(false); }
   };
 
   const copyUrl = (url: string) => {
@@ -191,26 +210,25 @@ export default function IntegracoesPage() {
       {/* ApexVips */}
       <Section title="ApexVips — Rastreio por Conta" color="#f97316" badge="Tracking">
         <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>
-          Você tem um bot rodando em várias contas. Configure <strong style={{ color: "#fff" }}>um único webhook</strong> na ApexVips e cada conta usa um link personalizado com <code style={{ color: "#93c5fd", fontSize: "0.75rem" }}>?utm_source=</code> para rastrear de onde veio a venda.
+          Configure <strong style={{ color: "#fff" }}>um único webhook</strong> na ApexVips. O SaaS identifica automaticamente de qual conta veio a venda pelo <code style={{ color: "#93c5fd", fontSize: "0.75rem" }}>utm_source</code> do link de oferta.
         </p>
 
         {accounts.length === 0 ? (
           <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhuma conta IG conectada. Conecte contas primeiro em <a href="/accounts" style={{ color: "var(--accent-gold)" }}>Contas</a>.</p>
         ) : (
           <>
-            {/* Step 1: one webhook URL */}
+            {/* Step 1: single stable webhook URL */}
             <div style={{ marginBottom: "1rem" }}>
               <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
                 Passo 1 — Cole este webhook na ApexVips (único para todas as contas)
               </p>
               {(() => {
-                const mainAcc = accounts[0];
-                const url = `${WEBHOOK_BASE}/api/webhooks/apexvips/${mainAcc.username}`;
+                const webhookUrl = `${WEBHOOK_BASE}/api/webhooks/apexvips/u/${userId}`;
                 return (
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-                    <code style={{ flex: 1, fontSize: "0.75rem", color: "#93c5fd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{url}</code>
-                    <button onClick={() => copyUrl(url)} style={{ padding: "0.4rem", borderRadius: "6px", background: "none", border: "1px solid var(--border-color)", color: copiedUrl === url ? "#4ade80" : "var(--text-secondary)", cursor: "pointer", flexShrink: 0 }}>
-                      {copiedUrl === url ? <CheckCircle size={13} /> : <Copy size={13} />}
+                    <code style={{ flex: 1, fontSize: "0.75rem", color: "#93c5fd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{webhookUrl}</code>
+                    <button onClick={() => copyUrl(webhookUrl)} style={{ padding: "0.4rem", borderRadius: "6px", background: "none", border: "1px solid var(--border-color)", color: copiedUrl === webhookUrl ? "#4ade80" : "var(--text-secondary)", cursor: "pointer", flexShrink: 0 }}>
+                      {copiedUrl === webhookUrl ? <CheckCircle size={13} /> : <Copy size={13} />}
                     </button>
                   </div>
                 );
@@ -227,7 +245,7 @@ export default function IntegracoesPage() {
                 onChange={(v) => setField("apexvips", "offerUrl", v)} />
             </div>
 
-            {/* Step 3: per-account links */}
+            {/* Step 3: per-account offer links */}
             <div>
               <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
                 Passo 3 — Cada conta usa este link ao divulgar a oferta
@@ -259,10 +277,37 @@ export default function IntegracoesPage() {
         )}
 
         <div style={{ marginTop: "1rem", padding: "0.75rem", borderRadius: "8px", background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.15)", fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.6 }}>
-          <strong style={{ color: "var(--text-secondary)" }}>Eventos:</strong> ative <code style={{ color: "#93c5fd" }}>Payment Created</code> e <code style={{ color: "#93c5fd" }}>Payment Approved</code> no webhook da Apex. A venda será atribuída à conta do link usado.
+          <strong style={{ color: "var(--text-secondary)" }}>Eventos:</strong> ative <code style={{ color: "#93c5fd" }}>Payment Created</code> e <code style={{ color: "#93c5fd" }}>Payment Approved</code> no webhook da Apex. A venda será atribuída à conta cujo link de oferta foi usado (via <code style={{ color: "#93c5fd" }}>utm_source</code>).
         </div>
 
         <SaveButton type="apexvips" saving={saving} saved={saved} onSave={handleSave} />
+
+        {/* UTM fix */}
+        <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "0.35rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+            Corrigir atribuição por UTM
+          </p>
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.75rem", lineHeight: 1.5 }}>
+            Re-atribui vendas que chegaram pelo webhook genérico ao perfil correto usando o <code style={{ color: "#93c5fd" }}>utm_source</code> de cada transação.
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <button
+              onClick={() => void handleFixUtm()}
+              disabled={fixingUtm}
+              style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.5rem 1rem", borderRadius: "8px", background: "rgba(249,115,22,0.12)", border: "1px solid rgba(249,115,22,0.25)", color: "#fb923c", fontSize: "0.82rem", fontWeight: 700, cursor: fixingUtm ? "not-allowed" : "pointer" }}
+            >
+              {fixingUtm ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />}
+              Corrigir todas as UTMs
+            </button>
+            {fixUtmResult && (
+              <span style={{ fontSize: "0.8rem", color: "#4ade80", fontWeight: 600 }}>
+                <CheckCircle size={13} style={{ display: "inline", marginRight: "0.3rem" }} />
+                {fixUtmResult.fixed} venda(s) corrigida(s)
+              </span>
+            )}
+            {fixUtmError && <span style={{ fontSize: "0.8rem", color: "#f87171" }}>{fixUtmError}</span>}
+          </div>
+        </div>
       </Section>
 
       {/* Notificações Push */}

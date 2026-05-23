@@ -85,16 +85,12 @@ function StatPill({
   );
 }
 
-type PushResult = { endpoint: string; ok: boolean; status?: number; message?: string; body?: string };
-
 export default function SaudePage() {
   const [data, setData]       = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
   const [unlocking, setUnlocking] = useState(false);
   const [lastRead, setLastRead]   = useState<Date | null>(null);
   const [filter, setFilter]       = useState("");
-  const [pushLoading, setPushLoading] = useState(false);
-  const [pushResults, setPushResults] = useState<PushResult[] | null>(null);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const load = useCallback(async () => {
@@ -114,27 +110,6 @@ export default function SaudePage() {
     intervalRef.current = setInterval(load, 30_000);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [load]);
-
-  async function handleTestPush() {
-    setPushLoading(true);
-    setPushResults(null);
-    try {
-      const r = await fetch("/api/push/test", { method: "POST" });
-      let json: { results?: PushResult[]; error?: string };
-      try {
-        json = await r.json();
-      } catch {
-        setPushResults([{ endpoint: "—", ok: false, message: `HTTP ${r.status} — resposta não é JSON` }]);
-        return;
-      }
-      if (json.results) setPushResults(json.results);
-      else setPushResults([{ endpoint: "—", ok: false, message: json.error ?? `HTTP ${r.status}` }]);
-    } catch (err) {
-      setPushResults([{ endpoint: "—", ok: false, message: err instanceof Error ? err.message : String(err) }]);
-    } finally {
-      setPushLoading(false);
-    }
-  }
 
   async function handleUnlock() {
     setUnlocking(true);
@@ -188,37 +163,6 @@ export default function SaudePage() {
           <RefreshCw size={14} style={{ animation: loading ? "spin 1s linear infinite" : "none" }} />
           Atualizar
         </button>
-      </div>
-
-      {/* Push test */}
-      <div style={{ ...panel, marginBottom: "1.5rem" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.75rem" }}>
-          <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "#fff" }}>🔔 Testar notificação push</span>
-          <button onClick={handleTestPush} disabled={pushLoading} style={{
-            padding: "0.5rem 1rem", borderRadius: "8px",
-            background: pushLoading ? "rgba(255,213,79,0.4)" : "#FFD54F",
-            color: "#000", fontWeight: 700, fontSize: "0.8rem",
-            border: "none", cursor: pushLoading ? "not-allowed" : "pointer",
-          }}>
-            {pushLoading ? "Enviando..." : "Enviar teste"}
-          </button>
-        </div>
-        {pushResults && (
-          <div style={{ marginTop: "0.75rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-            {pushResults.map((r, i) => (
-              <div key={i} style={{
-                fontSize: "0.75rem", padding: "0.5rem 0.75rem", borderRadius: "8px",
-                background: r.ok ? "rgba(74,222,128,0.08)" : "rgba(255,100,100,0.08)",
-                border: `1px solid ${r.ok ? "rgba(74,222,128,0.2)" : "rgba(255,100,100,0.2)"}`,
-                color: r.ok ? "#4ade80" : "#ff6b6b", wordBreak: "break-all",
-              }}>
-                {r.ok ? "✅ Enviado" : `❌ Erro ${r.status ?? ""}: ${r.message ?? ""}`}
-                {r.body && <div style={{ marginTop: "0.25rem", opacity: 0.7 }}>{r.body}</div>}
-                <div style={{ opacity: 0.5, marginTop: "0.2rem" }}>{r.endpoint}</div>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
       {/* Unlock stuck queue */}

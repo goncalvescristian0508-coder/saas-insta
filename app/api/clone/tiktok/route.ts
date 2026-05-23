@@ -25,34 +25,57 @@ async function fetchTikTokVideos(
   if (tokens.length === 0) throw new Error("Nenhum token Apify configurado. Adicione um token em Configurações.");
 
   const token = tokens[0];
-  const actorId = "clockworks/tiktok-scraper";
   const pageSize = Math.min(limit, 100);
 
-  // Try multiple input formats — actor versions differ
-  const inputFormats = [
-    { profiles: [username], resultsPerPage: pageSize },
-    { profiles: [`@${username}`], resultsPerPage: pageSize },
-    { startUrls: [{ url: `https://www.tiktok.com/@${username}` }], resultsPerPage: pageSize },
-    { usernames: [username], maxItems: pageSize },
+  const actorAttempts = [
+    {
+      actor: "clockworks/tiktok-scraper",
+      inputs: [
+        { profiles: [username], resultsPerPage: pageSize },
+        { profiles: [`@${username}`], resultsPerPage: pageSize },
+        { startUrls: [{ url: `https://www.tiktok.com/@${username}` }], resultsPerPage: pageSize },
+        { usernames: [username], maxItems: pageSize },
+      ],
+    },
+    {
+      actor: "clockworks/free-tiktok-scraper",
+      inputs: [
+        { profiles: [username], resultsPerPage: pageSize },
+        { profiles: [`@${username}`], resultsPerPage: pageSize },
+        { startUrls: [{ url: `https://www.tiktok.com/@${username}` }], resultsPerPage: pageSize },
+      ],
+    },
   ];
 
   let items: Record<string, unknown>[] = [];
+  let apifyError = "";
 
-  for (const input of inputFormats) {
-    try {
-      const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${token}&timeout=240&memory=1024`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-        signal: AbortSignal.timeout(250_000),
-      });
-      if (!res.ok) continue;
-      const data = await res.json() as Record<string, unknown>[];
-      if (data.length > 0) { items = data; break; }
-    } catch {
-      continue;
+  outer: for (const { actor, inputs } of actorAttempts) {
+    for (const input of inputs) {
+      try {
+        const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?token=${token}&timeout=240&memory=1024`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+          signal: AbortSignal.timeout(250_000),
+        });
+        if (!res.ok) {
+          if (!apifyError) {
+            try { const b = await res.json() as { error?: { message?: string } }; apifyError = b?.error?.message ?? `HTTP ${res.status}`; } catch { apifyError = `HTTP ${res.status}`; }
+          }
+          continue;
+        }
+        const data = await res.json() as Record<string, unknown>[];
+        if (data.length > 0) { items = data; break outer; }
+      } catch {
+        continue;
+      }
     }
+  }
+
+  if (apifyError && items.length === 0) {
+    throw new Error(`Apify: ${apifyError}`);
   }
 
   return items

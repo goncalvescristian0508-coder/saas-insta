@@ -117,7 +117,7 @@ export async function processSaleWebhook(
   const igUsername = igUsernameOverride ?? parsed.trackingCode?.replace("@", "") ?? undefined;
 
   const sale = await prisma.sale.upsert({
-    where: { gateway_gatewayOrderId: { gateway, gatewayOrderId: parsed.gatewayOrderId } },
+    where: { userId_gateway_gatewayOrderId: { userId, gateway, gatewayOrderId: parsed.gatewayOrderId } },
     create: {
       userId,
       gateway,

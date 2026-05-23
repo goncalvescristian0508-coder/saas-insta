@@ -229,25 +229,26 @@ export default function InspiracoesPage() {
   return (
     <div>
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.5rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <div style={{
-            width: "48px", height: "48px", borderRadius: "12px",
-            background: "linear-gradient(135deg, #3b82f6, #8b5cf6)",
-            display: "flex", justifyContent: "center", alignItems: "center",
-          }}>
-            <Sparkles size={24} color="#fff" />
-          </div>
-          <div>
-            <h1 className="page-title" style={{ marginBottom: 0 }}>Inspirações</h1>
-            <p className="page-subtitle" style={{ marginBottom: 0 }}>Modelos importados e seus conteúdos</p>
-          </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1.5rem" }}>
+        <div>
+          <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.025em", color: "#ededed", margin: 0 }}>
+            Inspirações
+          </h1>
+          <p style={{ fontSize: 12, color: "#444", marginTop: 3 }}>
+            Modelos importados e seus conteúdos
+          </p>
         </div>
-        <button className="btn btn-primary" onClick={() => { setShowSearch(true); setSearchError(""); }} style={{
-          background: "linear-gradient(135deg, #3b82f6, #2563eb)",
-          border: "none", borderRadius: "20px", padding: "0.7rem 1.5rem",
-        }}>
-          <Plus size={18} /> Adicionar Modelo
+        <button
+          onClick={() => { setShowSearch(true); setSearchError(""); }}
+          style={{
+            display: "flex", alignItems: "center", gap: 6,
+            padding: "0 16px", height: 32, borderRadius: 7,
+            background: "rgba(96,165,250,0.1)", border: "1px solid rgba(96,165,250,0.2)",
+            color: "#60a5fa", cursor: "pointer", fontSize: 12.5, fontWeight: 500,
+            fontFamily: "inherit",
+          }}
+        >
+          <Plus size={13} /> Adicionar Modelo
         </button>
       </div>
 

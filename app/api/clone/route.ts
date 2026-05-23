@@ -156,6 +156,8 @@ interface ProcessParams {
   cloneBio: boolean;
   cloneStories: boolean;
   cloneHighlights: boolean;
+  alternateSequence: boolean;
+  groupSize: number;
 }
 
 async function processCloneJob(p: ProcessParams) {
@@ -263,17 +265,23 @@ async function processCloneJob(p: ProcessParams) {
     // Create all posts immediately with rawVideoUrl (skipping duplicates per account)
     const postsToCreate = reelsRaw.flatMap((reel, i) =>
       p.accounts.flatMap((account, accountIdx) => {
-        if (acctSeenUrls.get(account.id)!.has(reel.videoUrl)) return [];
-        const libId = pathToLibId.get(storagePaths[i]);
+        // Alternate sequence: each group of accounts starts from a different video
+        const effectiveI = p.alternateSequence
+          ? (i + Math.floor(accountIdx / p.groupSize)) % reelsRaw.length
+          : i;
+        const effectiveReel = p.alternateSequence ? reelsRaw[effectiveI] : reel;
+
+        if (acctSeenUrls.get(account.id)!.has(effectiveReel.videoUrl)) return [];
+        const libId = pathToLibId.get(storagePaths[effectiveI]);
         if (libId && acctSeenVideoIds.get(account.id)!.has(libId)) return [];
-        const caption = reel.caption.trim();
+        const caption = effectiveReel.caption.trim();
         if (caption.length > 10 && acctSeenCaptions.get(account.id)!.has(caption)) return [];
         return [{
           userId: p.userId,
           accountId: account.id,
           videoId: null,
-          rawVideoUrl: reel.videoUrl,
-          caption: reel.caption,
+          rawVideoUrl: effectiveReel.videoUrl,
+          caption: effectiveReel.caption,
           scheduledAt: new Date(p.start.getTime() + i * p.intervalMs + accountIdx * 60_000),
           cloneJobId: p.cloneJobId,
         }];
@@ -330,9 +338,11 @@ export async function POST(request: Request) {
       cloneStories?: boolean;
       cloneHighlights?: boolean;
       startAt?: string;
+      alternateSequence?: boolean;
+      groupSize?: number;
     };
 
-    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, cloneStories = false, cloneHighlights = false, startAt } = body;
+    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, cloneStories = false, cloneHighlights = false, startAt, alternateSequence = false, groupSize = 5 } = body;
     if (!username || !accountIds?.length || !startAt) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }
@@ -384,6 +394,8 @@ export async function POST(request: Request) {
       cloneBio,
       cloneStories,
       cloneHighlights,
+      alternateSequence,
+      groupSize: Math.max(1, groupSize),
     }));
 
     // Respond immediately — client polls for completion

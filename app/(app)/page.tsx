@@ -1,19 +1,33 @@
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
-import { Clock, Share2 } from "lucide-react";
+import { Clock, CalendarClock } from "lucide-react";
 import Link from "next/link";
 import DashboardSales from "@/components/DashboardSales";
 import AdminMessageBanner from "@/components/AdminMessageBanner";
 
-const statusConfig = {
-  PENDING: { label: "Aguardando", color: "#FFD54F",  bg: "rgba(255,213,79,0.1)" },
-  RUNNING: { label: "Postando",   color: "#60a5fa",  bg: "rgba(96,165,250,0.1)" },
-  DONE:    { label: "Publicado",  color: "#22c55e",  bg: "rgba(34,222,128,0.1)" },
-  FAILED:  { label: "Falhou",     color: "#ef4444",  bg: "rgba(248,113,113,0.1)" },
+const STATUS_CFG = {
+  PENDING: { label: "Aguardando", cls: "amber" },
+  RUNNING: { label: "Postando",   cls: "blue"  },
+  DONE:    { label: "Publicado",  cls: "green" },
+  FAILED:  { label: "Falhou",     cls: "red"   },
 } as const;
 
-function formatDateTime(iso: Date) {
+const STATUS_DOTS: Record<string, string> = {
+  PENDING: "#FFB800",
+  RUNNING: "#60a5fa",
+  DONE:    "#4ade80",
+  FAILED:  "#f87171",
+};
+
+function fmtDT(iso: Date) {
   return iso.toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+
+const AVATAR_COLORS = ["#7c3aed","#0ea5e9","#10b981","#f59e0b","#ef4444","#ec4899","#6366f1","#14b8a6"];
+function avatarColor(str: string) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
 
 export default async function Dashboard() {
@@ -34,84 +48,101 @@ export default async function Dashboard() {
     }),
   ]);
 
-  const firstName = user?.user_metadata?.name?.split(" ")[0] ?? "Usuário";
+  const firstName    = user?.user_metadata?.name?.split(" ")[0] ?? "Usuário";
   const adminMessage = user?.user_metadata?.adminMessage ?? null;
 
   return (
-    <div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       {adminMessage && <AdminMessageBanner message={adminMessage} />}
-      {/* Sales section — client component renders its own header row */}
+
       <DashboardSales firstName={firstName} />
 
-      {/* Scheduled posts table */}
-      <div className="panel" style={{ marginTop: 16 }}>
+      {/* ── Agendamentos recentes ── */}
+      <div style={{
+        background: "#0d0d0d",
+        border: "1px solid rgba(255,255,255,0.06)",
+        borderRadius: 9, overflow: "hidden",
+        marginLeft: 0,
+      }}>
         <div style={{
-          padding: "14px 18px",
+          padding: "11px 18px",
           borderBottom: "1px solid rgba(255,255,255,0.05)",
           display: "flex", alignItems: "center", justifyContent: "space-between",
         }}>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: "#e0e0e0" }}>
-            Posts Recentes & Agendados
-          </div>
-          <Link href="/schedule" style={{ fontSize: 12, color: "#FFD54F", fontWeight: 500 }}>
-            Ver todos
-          </Link>
+          <span style={{ fontSize: 12.5, fontWeight: 500, color: "#d4d4d4" }}>Agendamentos Recentes</span>
+          <Link href="/schedule" style={{ fontSize: 11, color: "#444" }}>Ver todos</Link>
         </div>
 
         {schedules.length === 0 ? (
-          <div style={{ padding: "40px 18px", textAlign: "center" }}>
-            <p style={{ color: "#444", fontSize: 13 }}>
-              Nenhum post agendado.{" "}
-              <Link href="/schedule" style={{ color: "#FFD54F" }}>Criar agendamento</Link>
-            </p>
+          <div style={{ padding: "28px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+            <div style={{
+              width: 36, height: 36, borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)",
+              display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 2,
+            }}>
+              <CalendarClock size={16} color="#444" strokeWidth={1.5} />
+            </div>
+            <span style={{ fontSize: 13, fontWeight: 500, color: "#6c6c6c" }}>Nenhum post agendado</span>
+            <span style={{ fontSize: 12, color: "#333", textAlign: "center", maxWidth: 260, lineHeight: 1.5 }}>
+              Agende posts nas suas contas do Instagram para eles aparecerem aqui.
+            </span>
+            <Link href="/schedule" style={{
+              marginTop: 4, padding: "5px 11px", borderRadius: 6,
+              background: "#111", border: "1px solid rgba(255,255,255,0.06)",
+              fontSize: 12.5, color: "#a0a0a0", fontWeight: 500,
+            }}>
+              Criar agendamento
+            </Link>
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <table className="data-table">
               <thead>
                 <tr>
-                  {["Conta", "Vídeo", "Data/Hora", "Status"].map((h) => (
-                    <th key={h} style={{
-                      padding: "10px 16px", textAlign: "left",
-                      fontSize: 11, fontWeight: 600, color: "#444",
-                      textTransform: "uppercase", letterSpacing: "0.07em",
-                      borderBottom: "1px solid rgba(255,255,255,0.05)",
-                    }}>
-                      {h}
-                    </th>
-                  ))}
+                  {["Conta", "Vídeo", "Data / Hora", "Status"].map(h => <th key={h}>{h}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {schedules.map((s, i) => {
-                  const cfg = statusConfig[s.status as keyof typeof statusConfig] ?? statusConfig.PENDING;
+                {schedules.map(s => {
+                  const cfg = STATUS_CFG[s.status as keyof typeof STATUS_CFG] ?? STATUS_CFG.PENDING;
+                  const dot = STATUS_DOTS[s.status] ?? STATUS_DOTS.PENDING;
+                  const uname = s.account.username;
+                  const color = avatarColor(uname);
                   return (
-                    <tr key={s.id} style={{ borderBottom: i < schedules.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
-                      <td style={{ padding: "13px 16px" }}>
+                    <tr key={s.id}>
+                      <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                          <Share2 size={13} color="#FFD54F" />
-                          <span style={{ fontSize: 13, fontWeight: 500 }}>@{s.account.username}</span>
+                          <div style={{
+                            width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                            background: color, display: "flex", alignItems: "center", justifyContent: "center",
+                            fontSize: 9.5, fontWeight: 700, color: "#fff",
+                          }}>
+                            {uname.slice(0,2).toUpperCase()}
+                          </div>
+                          <span style={{ fontSize: 12.5, fontWeight: 500, color: "#d4d4d4" }}>
+                            @{uname}
+                          </span>
                         </div>
                       </td>
-                      <td style={{ padding: "13px 16px" }}>
-                        <span style={{ fontSize: 13, color: "#888", maxWidth: 180, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block" }}>
+                      <td>
+                        <span style={{
+                          fontSize: 12.5, color: "#6c6c6c",
+                          maxWidth: 200, overflow: "hidden",
+                          textOverflow: "ellipsis", whiteSpace: "nowrap", display: "block",
+                        }}>
                           {s.video?.originalName ?? (s.rawVideoUrl ? "Reel clonado" : "—")}
                         </span>
                       </td>
-                      <td style={{ padding: "13px 16px" }}>
+                      <td>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <Clock size={12} color="#444" />
-                          <span style={{ fontSize: 13, color: "#555" }}>{formatDateTime(s.scheduledAt)}</span>
+                          <Clock size={11} color="#333" />
+                          <span style={{ fontSize: 12, color: "#444", fontFamily: "var(--font-mono)" }}>
+                            {fmtDT(s.scheduledAt)}
+                          </span>
                         </div>
                       </td>
-                      <td style={{ padding: "13px 16px" }}>
-                        <span style={{
-                          display: "inline-flex", alignItems: "center", gap: 5,
-                          padding: "3px 10px", borderRadius: 20,
-                          fontSize: 11.5, fontWeight: 600,
-                          color: cfg.color, background: cfg.bg,
-                        }}>
-                          <span style={{ width: 5, height: 5, borderRadius: "50%", background: cfg.color, display: "inline-block" }} />
+                      <td>
+                        <span className={`pill ${cfg.cls}`}>
+                          <span className="pill-dot" style={{ background: dot }} />
                           {cfg.label}
                         </span>
                       </td>

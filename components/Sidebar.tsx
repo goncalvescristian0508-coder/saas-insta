@@ -4,30 +4,57 @@ import NextLink from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
-  Search, Send, LogOut, ChevronRight, Shield, Copy, Menu, X,
-  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp,
+  Send, LogOut, Shield, Copy, Menu, X,
+  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp, Search,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
 const ADMIN_EMAIL = "goncalvescristian0508@gmail.com";
 
-const navItems = [
-  { name: "Dashboard",         href: "/",               icon: LayoutDashboard },
-  { name: "Contas",            href: "/accounts",       icon: Users },
-  { name: "Postagem em massa", href: "/postagem-massa",  icon: Send },
-  { name: "Inspirações",       href: "/inspiracoes",    icon: Search },
-  { name: "Clonar Perfil",     href: "/clonar",         icon: Copy },
-  { name: "Clonar TikTok",    href: "/clonar-ttk",     icon: Copy },
-  { name: "Biblioteca",        href: "/library",        icon: Clapperboard },
-  { name: "Stories",           href: "/stories",        icon: Camera },
-  { name: "Saúde",             href: "/saude",          icon: Activity },
-  { name: "Agendamento",       href: "/schedule",       icon: CalendarClock },
-  { name: "Aquecimento",       href: "/aquecimento",    icon: Flame },
-  { name: "Contas Off",        href: "/contas-off",     icon: WifiOff },
-  { name: "Engajamento",        href: "/engajamento",    icon: TrendingUp },
-  { name: "Vendas",            href: "/vendas",         icon: BarChart2 },
-  { name: "Integrações",       href: "/integracoes",    icon: Plug },
+type NavItemDef = { name: string; href: string; icon: React.ElementType };
+
+const navGroups: { label?: string; items: NavItemDef[] }[] = [
+  {
+    items: [{ name: "Dashboard", href: "/", icon: LayoutDashboard }],
+  },
+  {
+    label: "Automação",
+    items: [
+      { name: "Contas",            href: "/accounts",       icon: Users },
+      { name: "Postagem em massa", href: "/postagem-massa", icon: Send },
+      { name: "Agendamento",       href: "/schedule",       icon: CalendarClock },
+    ],
+  },
+  {
+    label: "Conteúdo",
+    items: [
+      { name: "Biblioteca",  href: "/library",     icon: Clapperboard },
+      { name: "Stories",     href: "/stories",     icon: Camera },
+      { name: "Inspirações", href: "/inspiracoes", icon: Search },
+    ],
+  },
+  {
+    label: "Ferramentas",
+    items: [
+      { name: "Clonar Perfil",  href: "/clonar",      icon: Copy },
+      { name: "Clonar TikTok",  href: "/clonar-ttk",  icon: Copy },
+      { name: "Aquecimento",    href: "/aquecimento",  icon: Flame },
+      { name: "Contas Off",     href: "/contas-off",   icon: WifiOff },
+    ],
+  },
+  {
+    label: "Analytics",
+    items: [
+      { name: "Engajamento", href: "/engajamento", icon: TrendingUp },
+      { name: "Vendas",      href: "/vendas",      icon: BarChart2 },
+      { name: "Saúde",       href: "/saude",       icon: Activity },
+    ],
+  },
+  {
+    label: "Sistema",
+    items: [{ name: "Integrações", href: "/integracoes", icon: Plug }],
+  },
 ];
 
 const MILESTONES = [0, 10_000, 50_000, 100_000, 500_000, 1_000_000];
@@ -35,12 +62,11 @@ const MILESTONES = [0, 10_000, 50_000, 100_000, 500_000, 1_000_000];
 function getMilestoneInfo(rev: number) {
   for (let i = 0; i < MILESTONES.length - 1; i++) {
     if (rev < MILESTONES[i + 1]) {
-      const from = MILESTONES[i];
-      const to   = MILESTONES[i + 1];
-      return { from, to, pct: Math.min(((rev - from) / (to - from)) * 100, 100) };
+      const from = MILESTONES[i], to = MILESTONES[i + 1];
+      return { to, pct: Math.min(((rev - from) / (to - from)) * 100, 100) };
     }
   }
-  return { from: MILESTONES[MILESTONES.length - 1], to: MILESTONES[MILESTONES.length - 1], pct: 100 };
+  return { to: MILESTONES[MILESTONES.length - 1], pct: 100 };
 }
 
 function fmtMilestone(v: number) {
@@ -49,18 +75,61 @@ function fmtMilestone(v: number) {
   return `R$ ${v}`;
 }
 
-function fmtCurrency(v: number) {
+function fmtCurrencyShort(v: number) {
+  if (v >= 1_000_000) return `R$ ${(v / 1_000_000).toFixed(1)}M`;
+  if (v >= 1_000)     return `R$ ${(v / 1_000).toFixed(v % 1_000 === 0 ? 0 : 1)}k`;
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
+function hashColor(str: string) {
+  const palette = ["#7c3aed","#0ea5e9","#10b981","#f59e0b","#ef4444","#ec4899","#6366f1","#14b8a6"];
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  return palette[Math.abs(hash) % palette.length];
+}
+
+function SidebarItem({ item, isActive, onClose }: { item: NavItemDef; isActive: boolean; onClose: () => void }) {
+  const [hov, setHov] = useState(false);
+  return (
+    <NextLink
+      href={item.href}
+      onClick={onClose}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: "5px 10px 5px 8px",
+        margin: "0 8px",
+        borderRadius: 6,
+        borderLeft: isActive ? "2px solid #FFB800" : "2px solid transparent",
+        color: isActive ? "#FFB800" : hov ? "#ededed" : "#a0a0a0",
+        background: isActive ? "rgba(255,184,0,0.08)" : hov ? "rgba(255,255,255,0.04)" : "transparent",
+        fontWeight: isActive ? 500 : 400,
+        fontSize: 13,
+        transition: "background 0.1s, color 0.1s, border-color 0.1s",
+        textDecoration: "none",
+        lineHeight: 1,
+      }}
+    >
+      <item.icon
+        size={14}
+        strokeWidth={isActive ? 2 : 1.75}
+        color={isActive ? "#FFB800" : "currentColor"}
+        style={{ flexShrink: 0, opacity: isActive ? 1 : hov ? 0.8 : 0.6 }}
+      />
+      <span style={{ flex: 1 }}>{item.name}</span>
+    </NextLink>
+  );
+}
+
 export default function Sidebar() {
-  const pathname  = usePathname();
-  const router    = useRouter();
+  const pathname   = usePathname();
+  const router     = useRouter();
   const [userEmail,  setUserEmail]  = useState<string | null>(null);
   const [userName,   setUserName]   = useState<string | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [revenue,    setRevenue]    = useState<number>(0);
+  const [revenue,    setRevenue]    = useState(0);
 
   useEffect(() => {
     const supabase = createClient();
@@ -70,10 +139,9 @@ export default function Sidebar() {
         setUserName(data.user.user_metadata?.name ?? null);
       }
     });
-    // fetch total revenue
     fetch("/api/sales?period=maximo&limit=1")
-      .then((r) => r.json())
-      .then((d) => setRevenue(d?.stats?.approvedRevenue ?? 0))
+      .then(r => r.json())
+      .then(d => setRevenue(d?.stats?.approvedRevenue ?? 0))
       .catch(() => {});
   }, []);
 
@@ -89,153 +157,150 @@ export default function Sidebar() {
     ? userName.split(" ").map((n: string) => n[0]).slice(0, 2).join("").toUpperCase()
     : userEmail?.[0]?.toUpperCase() ?? "U";
 
-  const allNav = [
-    ...navItems,
-    ...(userEmail === ADMIN_EMAIL ? [{ name: "Admin", href: "/admin", icon: Shield }] : []),
-  ];
-
+  const avatarColor = hashColor(userEmail ?? "user");
+  const isAdmin     = userEmail === ADMIN_EMAIL;
   const { to, pct } = getMilestoneInfo(revenue);
 
   return (
     <>
       {/* ── Mobile top bar ── */}
       <div className="mobile-topbar" style={{
-        display: "none", position: "fixed",
-        top: 0, left: 0, right: 0, height: "56px",
-        background: "rgba(8,10,16,0.96)", backdropFilter: "blur(20px)",
-        borderBottom: "1px solid var(--border-color)",
+        display: "none", position: "fixed", top: 0, left: 0, right: 0,
+        height: 52, background: "#0d0d0d",
+        borderBottom: "1px solid rgba(255,255,255,0.06)",
+        backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)",
         alignItems: "center", justifyContent: "space-between",
         padding: "0 1rem", zIndex: 20,
       }}>
-        <span style={{ fontWeight: 800, fontSize: "1rem", color: "#fff" }}>
-          <span style={{ color: "#FFD54F" }}>Auto</span>Post
-        </span>
-        <button onClick={() => setMobileOpen((v) => !v)}
-          style={{ background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer", padding: "0.4rem" }}>
-          {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+        <NextLink href="/" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <img src="/logo.png" alt="AutoPost" style={{ width: 22, height: 22, borderRadius: 5, objectFit: "cover" }} />
+          <span style={{ fontWeight: 600, fontSize: 14, color: "#ededed", letterSpacing: "-0.02em" }}>AutoPost</span>
+        </NextLink>
+        <button onClick={() => setMobileOpen(v => !v)}
+          style={{ background: "none", border: "none", color: "#6c6c6c", cursor: "pointer", padding: "0.4rem", display: "flex" }}>
+          {mobileOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
       </div>
 
-      {/* ── Overlay ── */}
+      {/* ── Mobile overlay ── */}
       {mobileOpen && (
         <div className="mobile-overlay" onClick={() => setMobileOpen(false)}
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 18, display: "none" }} />
       )}
 
-      <aside className={mobileOpen ? "sidebar-open" : ""} style={{
-        width: "260px",
-        background: "linear-gradient(180deg, rgba(8,10,16,0.96) 0%, rgba(6,8,14,0.92) 100%)",
-        backdropFilter: "blur(24px)",
-        WebkitBackdropFilter: "blur(24px)",
-        borderRight: "1px solid var(--border-color)",
-        boxShadow: "4px 0 32px rgba(0,0,0,0.4)",
-        height: "100vh",
-        position: "fixed", left: 0, top: 0,
-        display: "flex", flexDirection: "column",
-        padding: "1.75rem 0.875rem",
-        zIndex: 19,
-      }}>
-
-        {/* Logo */}
-        <div style={{ marginBottom: "2rem", paddingLeft: "0.75rem" }}>
-          <NextLink href="/" style={{ display: "flex", alignItems: "center", gap: "0.6rem", textDecoration: "none" }}>
-            <img src="/logo.png" alt="AutoPost"
-              style={{ width: "36px", height: "36px", borderRadius: "9px", objectFit: "cover" }} />
-            <h1 style={{ fontFamily: "var(--font-sans)", fontSize: "1.2rem", fontWeight: 800, color: "#fff", letterSpacing: "-0.02em", lineHeight: 1 }}>
-              <span style={{ color: "#FFD54F" }}>Auto</span>Post
-            </h1>
+      {/* ── Sidebar ── */}
+      <aside
+        className={mobileOpen ? "sidebar-open" : ""}
+        style={{
+          width: 232,
+          background: "#0d0d0d",
+          borderRight: "1px solid rgba(255,255,255,0.06)",
+          height: "100vh",
+          position: "fixed", left: 0, top: 0,
+          display: "flex", flexDirection: "column",
+          zIndex: 19, overflow: "hidden",
+        }}
+      >
+        {/* Brand */}
+        <div style={{ padding: "16px 16px 10px", flexShrink: 0 }}>
+          <NextLink href="/" style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <img src="/logo.png" alt="AutoPost" style={{ width: 24, height: 24, borderRadius: 6, objectFit: "cover" }} />
+            <span style={{ fontWeight: 600, fontSize: 14, color: "#ededed", letterSpacing: "-0.02em" }}>AutoPost</span>
           </NextLink>
         </div>
 
-        {/* Section label */}
-        <p style={{ fontSize: "0.65rem", fontWeight: 700, letterSpacing: "0.14em", textTransform: "uppercase",
-          color: "var(--text-muted)", paddingLeft: "0.75rem", marginBottom: "0.5rem" }}>
-          Menu
-        </p>
-
         {/* Nav */}
-        <nav style={{ display: "flex", flexDirection: "column", gap: "0.3rem", flex: 1 }}>
-          {allNav.map((item) => {
-            const isActive = pathname === item.href;
-            return (
-              <NextLink key={item.name} href={item.href} onClick={() => setMobileOpen(false)}
-                style={{
-                  display: "flex", alignItems: "center", gap: "0.75rem",
-                  padding: "0.7rem 0.875rem", borderRadius: "10px",
-                  color: isActive ? "#fff" : "var(--text-secondary)",
-                  backgroundColor: isActive ? "rgba(255,213,79,0.11)" : "transparent",
-                  border: isActive ? "1px solid rgba(255,213,79,0.2)" : "1px solid transparent",
-                  transition: "all 0.18s",
-                  fontWeight: isActive ? 600 : 500,
-                  fontSize: "0.875rem",
-                  textDecoration: "none",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.backgroundColor = "rgba(255,213,79,0.055)";
-                    e.currentTarget.style.color = "#fff";
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (!isActive) {
-                    e.currentTarget.style.backgroundColor = "transparent";
-                    e.currentTarget.style.color = "var(--text-secondary)";
-                  }
-                }}
-              >
-                <item.icon size={17} color={isActive ? "#FFD54F" : "currentColor"} strokeWidth={isActive ? 2 : 1.75} />
-                <span style={{ flex: 1 }}>{item.name}</span>
-                {isActive && <ChevronRight size={14} color="#FFD54F" style={{ opacity: 0.6 }} />}
-              </NextLink>
-            );
-          })}
+        <nav style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: "2px 0", display: "flex", flexDirection: "column" }}>
+          {navGroups.map((group, gi) => (
+            <div key={gi} style={{ marginBottom: 2 }}>
+              {group.label && (
+                <p style={{
+                  fontSize: 10.5, fontWeight: 500, letterSpacing: "0.08em",
+                  textTransform: "uppercase", color: "#444",
+                  padding: "10px 18px 3px", lineHeight: 1,
+                }}>
+                  {group.label}
+                </p>
+              )}
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                {group.items.map(item => (
+                  <SidebarItem
+                    key={item.href} item={item}
+                    isActive={pathname === item.href}
+                    onClose={() => setMobileOpen(false)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {isAdmin && (
+            <div style={{ marginBottom: 2 }}>
+              <p style={{
+                fontSize: 10.5, fontWeight: 500, letterSpacing: "0.08em",
+                textTransform: "uppercase", color: "#444",
+                padding: "10px 18px 3px", lineHeight: 1,
+              }}>
+                Admin
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                <SidebarItem
+                  item={{ name: "Painel Admin", href: "/admin", icon: Shield }}
+                  isActive={pathname === "/admin"}
+                  onClose={() => setMobileOpen(false)}
+                />
+              </div>
+            </div>
+          )}
         </nav>
 
-        {/* ── Bottom section ── */}
-        <div style={{ marginTop: "1rem", borderTop: "1px solid var(--border-color)", paddingTop: "1rem" }}>
-
-          {/* Faturamento */}
-          <div style={{ marginBottom: "0.75rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-              <span style={{ fontSize: "0.78rem", fontWeight: 500, color: "var(--text-secondary)" }}>
-                Faturamento
-              </span>
-              <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "#e0e0e0" }}>
-                {fmtCurrency(revenue)} / {fmtMilestone(to)}
+        {/* ── Bottom ── */}
+        <div style={{ flexShrink: 0, padding: "10px 16px 14px", borderTop: "1px solid rgba(255,255,255,0.06)" }}>
+          {/* Revenue progress block */}
+          <div style={{
+            background: "rgba(255,255,255,0.02)",
+            border: "1px solid rgba(255,255,255,0.05)",
+            borderRadius: 7, padding: "10px 12px", marginBottom: 10,
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 7 }}>
+              <span style={{ fontSize: 11, color: "#6c6c6c", fontWeight: 400 }}>Meta de faturamento</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: "#ededed", letterSpacing: "-0.01em" }}>
+                {fmtCurrencyShort(revenue)}
               </span>
             </div>
-            <div style={{ height: "4px", background: "rgba(255,255,255,0.06)", borderRadius: "3px", overflow: "hidden" }}>
+            <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2, overflow: "hidden" }}>
               <div style={{
-                height: "4px", width: `${pct}%`,
-                background: "linear-gradient(90deg, #FFD54F, #c9920a)",
-                borderRadius: "3px", transition: "width 0.6s ease",
+                height: 3, width: `${pct}%`, background: "#FFB800",
+                borderRadius: 2, transition: "width 0.6s ease",
               }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
+              <span style={{ fontSize: 10.5, color: "#444" }}>
+                {pct.toFixed(1)}% de {fmtMilestone(to)}
+              </span>
+              <span style={{ fontSize: 10.5, color: "#444" }}>
+                {new Date().toLocaleString("pt-BR", { month: "long" })}
+              </span>
             </div>
           </div>
 
-          {/* Profile */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: "0.7rem",
-            padding: "0.6rem 0", marginBottom: "0.25rem",
-          }}>
+          {/* User */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <div style={{
-              width: "32px", height: "32px", borderRadius: "8px",
-              background: "linear-gradient(135deg, rgba(255,213,79,0.3), rgba(255,213,79,0.1))",
-              border: "1px solid rgba(255,213,79,0.25)",
+              width: 28, height: 28, borderRadius: 7,
+              background: avatarColor,
               display: "flex", alignItems: "center", justifyContent: "center",
-              flexShrink: 0, fontSize: "0.8rem", fontWeight: 700, color: "#FFD54F",
+              flexShrink: 0, fontSize: 11, fontWeight: 700, color: "#fff",
             }}>
               {initials}
             </div>
             <div style={{ minWidth: 0, flex: 1 }}>
               {userName && (
-                <p style={{ fontSize: "0.8rem", fontWeight: 600, color: "#fff", lineHeight: 1.2,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <p style={{ fontSize: 12.5, fontWeight: 500, color: "#ededed", lineHeight: 1.3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {userName}
                 </p>
               )}
-              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <p style={{ fontSize: 10.5, color: "#444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {userEmail ?? "Carregando..."}
               </p>
             </div>
@@ -244,18 +309,16 @@ export default function Sidebar() {
           {/* Logout */}
           <button onClick={handleLogout} disabled={loggingOut}
             style={{
-              width: "100%", display: "flex", alignItems: "center", gap: "0.5rem",
-              padding: "0.5rem 0.25rem", borderRadius: "6px",
-              background: "transparent", border: "none",
-              color: "var(--text-secondary)", fontSize: "0.82rem",
-              cursor: loggingOut ? "not-allowed" : "pointer",
-              transition: "color 0.18s", fontFamily: "var(--font-sans)",
+              width: "100%", display: "flex", alignItems: "center", gap: 6,
+              padding: "4px 8px", borderRadius: 5, background: "transparent", border: "none",
+              color: "#444", fontSize: 12, cursor: loggingOut ? "not-allowed" : "pointer",
+              transition: "color 0.15s", fontFamily: "inherit",
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "#f87171"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; }}
+            onMouseEnter={e => { e.currentTarget.style.color = "#f87171"; }}
+            onMouseLeave={e => { e.currentTarget.style.color = "#444"; }}
           >
-            <LogOut size={14} />
-            {loggingOut ? "Saindo..." : "Sair da conta"}
+            <LogOut size={12} />
+            {loggingOut ? "Saindo..." : "Sair"}
           </button>
         </div>
       </aside>

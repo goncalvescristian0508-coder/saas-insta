@@ -117,51 +117,54 @@ export default function PushSetup() {
   return (
     <div style={{
       position: "fixed", bottom: "1.5rem", right: "1.5rem", zIndex: 200,
-      background: "rgba(8,10,16,0.98)",
-      border: "1px solid rgba(255,213,79,0.3)",
-      borderRadius: "16px",
-      padding: "1.25rem 1.5rem",
-      maxWidth: "300px",
-      boxShadow: "0 8px 40px rgba(0,0,0,0.6)",
-      display: "flex", flexDirection: "column", gap: "0.75rem",
+      background: "#1C1C21",
+      border: "1px solid rgba(255,255,255,0.1)",
+      borderRadius: "12px",
+      padding: "1rem 1.25rem",
+      maxWidth: "280px",
+      boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+      display: "flex", flexDirection: "column", gap: "0.625rem",
     }}>
       <button onClick={() => setShow(false)} style={{
         position: "absolute", top: "0.6rem", right: "0.6rem",
-        background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "0.25rem",
+        background: "none", border: "none", color: "#52525B", cursor: "pointer", padding: "0.25rem",
+        display: "flex",
       }}>
-        <X size={14} />
+        <X size={13} />
       </button>
 
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
         <div style={{
-          width: 32, height: 32, borderRadius: 8,
-          background: "rgba(255,213,79,0.12)", border: "1px solid rgba(255,213,79,0.25)",
+          width: 30, height: 30, borderRadius: 8,
+          background: "rgba(255,255,255,0.06)",
+          border: "1px solid rgba(255,255,255,0.09)",
           display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
         }}>
-          <Bell size={15} color="#FFD54F" />
+          <Bell size={14} color="#A1A1AA" strokeWidth={1.75} />
         </div>
-        <span style={{ fontSize: "0.875rem", fontWeight: 700, color: "#fff" }}>
-          {done ? "✓ Notificações ativas!" : "Ativar notificações"}
+        <span style={{ fontSize: "0.875rem", fontWeight: 500, color: "#E4E4E7" }}>
+          {done ? "Notificações ativas" : "Ativar notificações"}
         </span>
       </div>
 
       {!done && (
         <>
           {errMsg ? (
-            <p style={{ fontSize: "0.75rem", color: "#ff6b6b", lineHeight: 1.4, margin: 0, wordBreak: "break-word" }}>
+            <p style={{ fontSize: "0.75rem", color: "#EF4444", lineHeight: 1.4, margin: 0, wordBreak: "break-word" }}>
               Erro: {errMsg}
             </p>
           ) : (
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.5, margin: 0 }}>
-              Receba alertas de vendas e mensagens do admin direto no celular.
+            <p style={{ fontSize: "0.78rem", color: "#71717A", lineHeight: 1.5, margin: 0 }}>
+              Receba alertas de vendas e mensagens do admin.
             </p>
           )}
           <button onClick={activate} disabled={loading} style={{
-            padding: "0.6rem 1rem", borderRadius: "8px",
-            background: loading ? "rgba(255,213,79,0.4)" : "#FFD54F",
-            color: "#000", fontWeight: 700, fontSize: "0.82rem",
+            padding: "6px 12px", borderRadius: "7px",
+            background: loading ? "rgba(79,131,247,0.4)" : "#4F83F7",
+            color: "#fff", fontWeight: 500, fontSize: "0.82rem",
             border: "none", cursor: loading ? "not-allowed" : "pointer",
-            transition: "background 0.15s",
+            fontFamily: "inherit",
+            opacity: loading ? 0.7 : 1,
           }}>
             {loading ? "Ativando..." : errMsg ? "Tentar novamente" : "Ativar agora"}
           </button>

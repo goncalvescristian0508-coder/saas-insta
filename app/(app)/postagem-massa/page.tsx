@@ -105,21 +105,13 @@ export default function BulkPostPage() {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "2rem" }}>
-        <div style={{
-          width: "48px", height: "48px", borderRadius: "12px",
-          background: "linear-gradient(135deg, rgba(201,162,39,0.3), rgba(201,162,39,0.1))",
-          border: "1px solid rgba(201,162,39,0.3)",
-          display: "flex", justifyContent: "center", alignItems: "center",
-        }}>
-          <Send size={22} color="var(--accent-gold)" />
-        </div>
-        <div>
-          <h1 className="page-title" style={{ marginBottom: 0 }}>Postagem em Massa</h1>
-          <p className="page-subtitle" style={{ marginBottom: 0 }}>
-            Escolha um vídeo da biblioteca e poste em várias contas ao mesmo tempo
-          </p>
-        </div>
+      <div style={{ marginBottom: "1.5rem" }}>
+        <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.025em", color: "#ededed", margin: 0 }}>
+          Postagem em Massa
+        </h1>
+        <p style={{ fontSize: 12, color: "#444", marginTop: 3 }}>
+          Escolha um vídeo da biblioteca e poste em várias contas ao mesmo tempo
+        </p>
       </div>
 
       {loadErr && (
