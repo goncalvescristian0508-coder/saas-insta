@@ -10,7 +10,7 @@ const META_PORTAL_COOKIES = process.env.META_PORTAL_COOKIES || "";
 const META_APP_ID = process.env.META_APP_ID || "";
 const META_BUSINESS_ID = process.env.META_BUSINESS_ID || "";
 
-const VERSION = "5.4.0-diag";
+const VERSION = "5.5.0-no-intercept";
 
 function parseCookieString(str) {
   return str.split(";").map((part) => {
@@ -93,14 +93,8 @@ async function addTesterWithPuppeteer(username) {
     await page.setViewport({ width: 1920, height: 1080 });
     await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
 
-    // Log JS errors and console errors from the page
-    page.on("pageerror", err => console.log("[page-error]", err.message.substring(0, 200)));
-    page.on("console", msg => {
-      if (msg.type() === "error") console.log("[page-console-error]", msg.text().substring(0, 200));
-    });
-
-    await page.setRequestInterception(true);
-    page.on("request", req => req.continue());
+    // Log page JS errors for debugging
+    page.on("pageerror", err => console.log("[page-error]", err.message.substring(0, 300)));
 
     // Set Accept-Language so the portal renders in Portuguese
     await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7" });
@@ -113,14 +107,11 @@ async function addTesterWithPuppeteer(username) {
       })));
     }
 
-    // Warm up the session on facebook.com first
-    console.log("[puppeteer] warming up session on facebook.com...");
-    await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
-    await new Promise(r => setTimeout(r, 2000));
-
     const rolesUrl = `https://developers.facebook.com/apps/${META_APP_ID}/roles/roles/${META_BUSINESS_ID ? `?business_id=${META_BUSINESS_ID}` : ""}`;
     console.log(`[v${VERSION}] navigating to ${rolesUrl}`);
-    await page.goto(rolesUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
+
+    // Use "load" to wait for scripts to finish, not just network idle
+    await page.goto(rolesUrl, { waitUntil: "load", timeout: 60000 });
 
     const currentUrl = page.url();
     console.log(`[puppeteer] landed: ${currentUrl}`);
@@ -128,37 +119,26 @@ async function addTesterWithPuppeteer(username) {
       throw new Error("Cookies expiradas — sessão inválida.");
     }
 
-    // Diagnose: check HTML size and text content after various wait times
-    await new Promise(r => setTimeout(r, 5000));
-    const diag1 = await page.evaluate(() => ({
-      htmlLen: document.documentElement.innerHTML.length,
-      bodyText: document.body?.textContent?.replace(/\s+/g, " ").substring(0, 300),
-      innerText: document.body?.innerText?.replace(/\s+/g, " ").substring(0, 300),
-      url: location.href,
-    }));
-    console.log("[diag-5s] htmlLen:", diag1.htmlLen, "url:", diag1.url);
-    console.log("[diag-5s] bodyText:", diag1.bodyText?.substring(0, 200));
-    console.log("[diag-5s] innerText:", diag1.innerText?.substring(0, 200));
-
-    // Wait up to 25s for ANY substantial text to appear
-    console.log("[puppeteer] waiting for page to render...");
+    // Wait for innerText (visible rendered text) to be non-empty — up to 45s
+    console.log("[puppeteer] waiting for React to render visible text...");
     try {
       await page.waitForFunction(
-        () => (document.body?.textContent?.trim().length || 0) > 500,
-        { timeout: 25000, polling: 1000 }
+        () => (document.body?.innerText?.trim().length || 0) > 200,
+        { timeout: 45000, polling: 2000 }
       );
     } catch {
       const diag = await page.evaluate(() => ({
         htmlLen: document.documentElement.innerHTML.length,
-        bodyText: document.body?.textContent?.replace(/\s+/g, " ").substring(0, 400),
+        innerText: document.body?.innerText?.replace(/\s+/g, " ").substring(0, 300),
         title: document.title,
+        url: location.href,
       }));
-      console.log("[diag-timeout] htmlLen:", diag.htmlLen, "title:", diag.title);
-      console.log("[diag-timeout] bodyText:", diag.bodyText);
-      throw new Error(`Página não renderizou. HTML len=${diag.htmlLen} title="${diag.title}" text="${diag.bodyText?.substring(0, 150)}"`);
+      console.log("[diag] htmlLen:", diag.htmlLen, "title:", diag.title, "url:", diag.url);
+      console.log("[diag] innerText:", diag.innerText);
+      throw new Error(`React não renderizou em 45s. HTML=${diag.htmlLen}b title="${diag.title}" innerText="${diag.innerText?.substring(0, 150)}"`);
     }
 
-    const pageText = await page.evaluate(() => document.body?.textContent?.replace(/\s+/g, " ").substring(0, 600));
+    const pageText = await page.evaluate(() => document.body?.innerText?.replace(/\s+/g, " ").substring(0, 600));
     console.log("[puppeteer] page rendered:", pageText);
 
     // ── STEP 1: Click "Adicionar pessoas" ──
