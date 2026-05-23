@@ -110,14 +110,19 @@ async function addTesterViaPortal(
 
         if (isLogin) break;
       } catch (e) {
-        diagSteps.push(`[erro] ${e instanceof Error ? e.message : String(e)}`);
+        const msg = e instanceof Error ? e.message : String(e);
+        const cause = (e instanceof Error && (e as NodeJS.ErrnoException).cause)
+          ? String((e as NodeJS.ErrnoException).cause)
+          : "";
+        diagSteps.push(`[erro] ${msg}${cause ? ` (cause: ${cause})` : ""}`);
       }
     }
 
     if (!fb_dtsg) {
+      const proxyMasked = proxyUrl ? proxyUrl.replace(/:([^:@]{4})[^:@]*@/, ":$1***@") : "sem proxy";
       return {
         username, ok: false,
-        error: `Token CSRF não encontrado. Diagnóstico: ${diagSteps.join(" | ")}`,
+        error: `Token CSRF não encontrado [proxy=${proxyMasked}]. Diagnóstico: ${diagSteps.join(" | ")}`,
       };
     }
   }
