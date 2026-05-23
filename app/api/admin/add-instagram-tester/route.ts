@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMetaOAuthConfig, getMetaAppByKey } from "@/lib/metaInstagramEnv";
-import { ProxyAgent, fetch as undiciFetch } from "undici";
 import https from "node:https";
+import zlib from "node:zlib";
 import { HttpsProxyAgent } from "https-proxy-agent";
 
 export const runtime = "nodejs";
@@ -17,46 +17,83 @@ function computeJazoest(token: string): string {
   return String(n);
 }
 
-type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
-
-function makeProxyFetch(proxyUrl?: string): FetchFn {
-  if (!proxyUrl) return (url, init) => fetch(url, init);
-  const dispatcher = new ProxyAgent(proxyUrl);
-  return async (url, init) => {
-    const res = await undiciFetch(url, { ...(init as Parameters<typeof undiciFetch>[1]), dispatcher });
-    return res as unknown as Response;
-  };
-}
-
-// Raw Node.js HTTPS POST through proxy — bypasses any undici quirks
-function nodeHttpsPost(
+// All proxy traffic goes through node:https + HttpsProxyAgent (no undici needed)
+function nodeHttpsRequest(
   proxyUrl: string,
   targetUrl: string,
+  method: string,
   headers: Record<string, string>,
-  body: string,
-): Promise<{ status: number; text: string }> {
+  body?: string,
+): Promise<{ status: number; text: string; rawHeaders: Record<string, string> }> {
   return new Promise((resolve, reject) => {
     const agent = new HttpsProxyAgent(proxyUrl);
     const url = new URL(targetUrl);
+    const reqHeaders: Record<string, string> = { ...headers };
+    if (body) reqHeaders["Content-Length"] = Buffer.byteLength(body).toString();
+
     const req = https.request(
       {
         hostname: url.hostname,
         port: url.port || 443,
         path: url.pathname + url.search,
-        method: "POST",
-        headers: { ...headers, "Content-Length": Buffer.byteLength(body).toString() },
+        method,
+        headers: reqHeaders,
         agent,
       },
       (res) => {
         const chunks: Buffer[] = [];
         res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString("utf8") }));
+        res.on("end", () => {
+          const raw = Buffer.concat(chunks);
+          const encoding = res.headers["content-encoding"];
+          const rawHeaders: Record<string, string> = {};
+          for (const [k, v] of Object.entries(res.headers)) {
+            if (v !== undefined) rawHeaders[k] = Array.isArray(v) ? v.join(", ") : v;
+          }
+          const finish = (text: string) =>
+            resolve({ status: res.statusCode ?? 0, text, rawHeaders });
+
+          if (encoding === "br") {
+            zlib.brotliDecompress(raw, (e, d) => finish(e ? raw.toString("utf8") : d.toString("utf8")));
+          } else if (encoding === "gzip") {
+            zlib.gunzip(raw, (e, d) => finish(e ? raw.toString("utf8") : d.toString("utf8")));
+          } else if (encoding === "deflate") {
+            zlib.inflate(raw, (e, d) => finish(e ? raw.toString("utf8") : d.toString("utf8")));
+          } else {
+            finish(raw.toString("utf8"));
+          }
+        });
       },
     );
     req.on("error", reject);
-    req.write(body);
+    if (body) req.write(body);
     req.end();
   });
+}
+
+type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
+
+function makeProxyFetch(proxyUrl?: string): FetchFn {
+  if (!proxyUrl) return (url, init) => fetch(url, init);
+  return async (url, init) => {
+    const method = (init?.method ?? "GET").toUpperCase();
+    const headers = (init?.headers ?? {}) as Record<string, string>;
+    const body = init?.body as string | undefined;
+    // Request identity so decompression always works; Facebook handles it fine
+    const result = await nodeHttpsRequest(proxyUrl, url, method, { ...headers, "Accept-Encoding": "identity" }, body);
+    return {
+      ok: result.status >= 200 && result.status < 300,
+      status: result.status,
+      text: async () => result.text,
+      json: async () => JSON.parse(result.text) as unknown,
+      headers: {
+        get: (name: string) => result.rawHeaders[name.toLowerCase()] ?? null,
+        forEach: (fn: (v: string, k: string) => void) => {
+          for (const [k, v] of Object.entries(result.rawHeaders)) fn(v, k);
+        },
+      },
+    } as unknown as Response;
+  };
 }
 
 /* ─── Portal-based approach (Meta Developer portal internal API) ─── */
@@ -67,7 +104,7 @@ async function addTesterViaPortal(
   businessId?: string,
 ): Promise<{ username: string; ok: boolean; error?: string; method?: string }> {
   const baseProxyUrl = (process.env["RESIDENTIAL_PROXY_URL"] || "").trim() || undefined;
-  // Use sticky session so GET and POST go through the same proxy IP
+  // Sticky session ensures GET (CSRF fetch) and POST go through the same proxy IP
   const sessionId = Math.random().toString(36).slice(2, 9);
   const proxyUrl = baseProxyUrl
     ? baseProxyUrl.replace(/@/, `_session-${sessionId}_lifetime-168h@`)
@@ -96,8 +133,6 @@ async function addTesterViaPortal(
 
   const _user = portalCookies.match(/c_user=(\d+)/)?.[1] ?? "";
 
-  // Step 1: GET the devportal roles page to get fresh CSRF tokens + session cookies
-  // Capture Set-Cookie headers from the response to include in the POST (critical!)
   const storedFbDtsg = (process.env["META_PORTAL_FB_DTSG"] || "").trim();
   const storedLsd = (process.env["META_PORTAL_LSD"] || "").trim();
 
@@ -128,12 +163,10 @@ async function addTesterViaPortal(
           html.match(/name="fb_dtsg"[^>]*value="([^"]+)"/)?.[1] ??
           html.match(/"fb_dtsg","([^"]+)"/)?.[1];
 
-        // Only trust DTSG from a proper logged-in page; login pages also embed a
-        // DTSG (for their own form) but it won't authenticate portal requests.
+        // Only trust DTSG from a logged-in page — login pages embed one too but it won't work
         if (extracted && !isLogin) {
           fb_dtsg = extracted;
           lsd = html.match(/"LSD",\[\],\{"token":"([^"]+)"\}/)?.[1] ?? lsd;
-          // Capture Set-Cookie headers to pass in subsequent POST
           const setCookie = pageRes.headers.get("set-cookie");
           if (setCookie) {
             freshCookies = setCookie.split(/,(?=[^;]+=[^;]+)/).map(c => c.split(";")[0].trim()).join("; ");
@@ -155,10 +188,7 @@ async function addTesterViaPortal(
     }
   }
 
-  // Merge fresh cookies (from GET response) with portal cookies
-  const effectiveCookies = freshCookies
-    ? `${portalCookies}; ${freshCookies}`
-    : portalCookies;
+  const effectiveCookies = freshCookies ? `${portalCookies}; ${freshCookies}` : portalCookies;
 
   // Step 2: Get Instagram numeric user ID via proxy
   let userId: string | undefined;
@@ -173,7 +203,7 @@ async function addTesterViaPortal(
           Referer: "https://www.instagram.com/",
           "x-requested-with": "XMLHttpRequest",
         },
-      }
+      },
     );
     if (igRes.ok) {
       const igData = await igRes.json() as { data?: { user?: { id?: string } } };
@@ -181,7 +211,7 @@ async function addTesterViaPortal(
     }
   } catch { /* ignore */ }
 
-  // Fallback: developer portal autocomplete via proxy
+  // Fallback: developer portal autocomplete
   if (!userId) {
     try {
       const lookupUrl = `https://developers.facebook.com/apps/${appId}/async/instagram/user/?value=${encodeURIComponent(username)}&_callFlowletID=0&_triggerFlowletID=3771&qpl_active_e2e_trace_ids=`;
@@ -201,7 +231,7 @@ async function addTesterViaPortal(
     } catch { /* ignore */ }
   }
 
-  // Step 3: POST to the internal add endpoint via proxy
+  // Step 3: POST to the internal add endpoint
   const userParam = userId ?? username;
 
   const formBody = new URLSearchParams({
@@ -231,7 +261,6 @@ async function addTesterViaPortal(
     Origin: "https://developers.facebook.com",
     Referer: referer,
     Accept: "*/*",
-    "Accept-Encoding": "gzip, deflate, br",
     "Sec-Ch-Ua": '"Google Chrome";v="148", "Chromium";v="148", "Not-A.Brand";v="24"',
     "Sec-Ch-Ua-Mobile": "?0",
     "Sec-Ch-Ua-Platform": '"Windows"',
@@ -244,16 +273,9 @@ async function addTesterViaPortal(
   let addStatus: number;
   let addText: string;
   try {
-    if (proxyUrl) {
-      // Force identity encoding so nodeHttpsPost receives readable (non-gzip) body
-      const raw = await nodeHttpsPost(proxyUrl, addUrl, { ...postHeaders, "Accept-Encoding": "identity" }, formBody.toString());
-      addStatus = raw.status;
-      addText = raw.text;
-    } else {
-      const r = await fetch(addUrl, { method: "POST", headers: postHeaders, body: formBody.toString() });
-      addStatus = r.status;
-      addText = await r.text();
-    }
+    const r = await pfetch(addUrl, { method: "POST", headers: postHeaders, body: formBody.toString() });
+    addStatus = r.status;
+    addText = await r.text();
   } catch (e) {
     return { username, ok: false, error: `Erro ao adicionar via portal: ${e instanceof Error ? e.message : "erro"}` };
   }
@@ -265,12 +287,9 @@ async function addTesterViaPortal(
   if (addStatus < 200 || addStatus >= 300) {
     const errMsg =
       (parsed as Record<string, unknown> & { error?: { message?: string } })?.error?.message ??
-      addText.substring(0, 200);
-    return { username, ok: false, error: `Portal HTTP ${addStatus} [appId=${appId} dtsg=${fb_dtsg.substring(0,10)}...]: ${errMsg}` };
+      addText.substring(0, 300);
+    return { username, ok: false, error: `Portal HTTP ${addStatus} [appId=${appId} dtsg=${fb_dtsg.substring(0, 10)}...]: ${errMsg}` };
   }
-
-  // fake addRes.ok for compatibility below
-  const addRes = { ok: true } as Response;
 
   const errMsg =
     (parsed as Record<string, unknown> & { error?: { message?: string }; payload?: { error?: string }; errorSummary?: string })?.error?.message ??
@@ -353,8 +372,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Nenhum username fornecido" }, { status: 400 });
   }
 
-  // Resolve app ID — META_FB_APP_*_ID takes priority (Facebook App ID for portal),
-  // META_APP_*_ID is the fallback (Instagram API app ID)
   let appId: string | undefined;
   let appSecret: string | undefined;
 
@@ -384,7 +401,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "META_APP_ID não configurado" }, { status: 500 });
   }
 
-  // ── Try portal approach first ──
   const portalCookies =
     (body.appKey ? (process.env[`META_PORTAL_COOKIES_${body.appKey}`] || "").trim() : "") ||
     (process.env["META_PORTAL_COOKIES"] || "").trim();
@@ -417,7 +433,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ results, ok, errors, method: "portal" });
   }
 
-  // ── Fallback: Graph API approach ──
+  // Fallback: Graph API
   const adminToken =
     (body.appKey ? (process.env[`META_ADMIN_ACCESS_TOKEN_${body.appKey}`] || "").trim() : "") ||
     (process.env["META_ADMIN_ACCESS_TOKEN"] || "").trim();
