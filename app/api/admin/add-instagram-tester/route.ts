@@ -128,7 +128,9 @@ async function addTesterViaPortal(
           html.match(/name="fb_dtsg"[^>]*value="([^"]+)"/)?.[1] ??
           html.match(/"fb_dtsg","([^"]+)"/)?.[1];
 
-        if (extracted) {
+        // Only trust DTSG from a proper logged-in page; login pages also embed a
+        // DTSG (for their own form) but it won't authenticate portal requests.
+        if (extracted && !isLogin) {
           fb_dtsg = extracted;
           lsd = html.match(/"LSD",\[\],\{"token":"([^"]+)"\}/)?.[1] ?? lsd;
           // Capture Set-Cookie headers to pass in subsequent POST
@@ -243,7 +245,8 @@ async function addTesterViaPortal(
   let addText: string;
   try {
     if (proxyUrl) {
-      const raw = await nodeHttpsPost(proxyUrl, addUrl, postHeaders, formBody.toString());
+      // Force identity encoding so nodeHttpsPost receives readable (non-gzip) body
+      const raw = await nodeHttpsPost(proxyUrl, addUrl, { ...postHeaders, "Accept-Encoding": "identity" }, formBody.toString());
       addStatus = raw.status;
       addText = raw.text;
     } else {
