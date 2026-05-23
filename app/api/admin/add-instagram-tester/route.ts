@@ -151,7 +151,8 @@ async function addTesterViaPortal(
         const pageRes = await pfetch(url, { headers: browserNavHeaders });
         const html = await pageRes.text();
         const snippet = html.substring(0, 120).replace(/\s+/g, " ");
-        const isLogin = html.includes("login_form") || html.includes("/login/?next=") || html.includes("checkpoint");
+        // /login/?next= appears in nav links on logged-in pages — only check for actual login forms
+        const isLogin = html.includes('"login_form"') || html.includes("checkpoint");
         const hasDtsg = html.includes("DTSGInitialData") || html.includes("fb_dtsg");
         diagSteps.push(`[${url.includes("developers") ? "devportal" : "fb.com"} HTTP ${pageRes.status} login=${isLogin} hasDtsg=${hasDtsg}] ${snippet}`);
 
@@ -163,8 +164,7 @@ async function addTesterViaPortal(
           html.match(/name="fb_dtsg"[^>]*value="([^"]+)"/)?.[1] ??
           html.match(/"fb_dtsg","([^"]+)"/)?.[1];
 
-        // Only trust DTSG from a logged-in page — login pages embed one too but it won't work
-        if (extracted && !isLogin) {
+        if (extracted) {
           fb_dtsg = extracted;
           lsd = html.match(/"LSD",\[\],\{"token":"([^"]+)"\}/)?.[1] ?? lsd;
           const setCookie = pageRes.headers.get("set-cookie");
@@ -285,10 +285,10 @@ async function addTesterViaPortal(
   try { parsed = JSON.parse(jsonStr) as Record<string, unknown>; } catch { /* ignore */ }
 
   if (addStatus < 200 || addStatus >= 300) {
-    const errMsg =
-      (parsed as Record<string, unknown> & { error?: { message?: string } })?.error?.message ??
-      addText.substring(0, 300);
-    return { username, ok: false, error: `Portal HTTP ${addStatus} [appId=${appId} dtsg=${fb_dtsg.substring(0, 10)}...]: ${errMsg}` };
+    const apiErr = (parsed as Record<string, unknown> & { error?: { message?: string } })?.error?.message;
+    // Strip non-printable / binary chars so HTML 404 pages display readably
+    const bodySnippet = addText.replace(/[^\x20-\x7E\n]/g, "").replace(/\s+/g, " ").trim().substring(0, 250);
+    return { username, ok: false, error: `Portal HTTP ${addStatus} [appId=${appId} dtsg=${fb_dtsg.substring(0, 10)}...]: ${apiErr ?? bodySnippet}` };
   }
 
   const errMsg =
