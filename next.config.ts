@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
     'ffprobe-static',
     'instagram-private-api',
     '@prisma/client',
+    'undici',
+    'https-proxy-agent',
   ],
 };
 
