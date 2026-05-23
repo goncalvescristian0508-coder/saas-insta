@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMetaOAuthConfig, getMetaAppByKey } from "@/lib/metaInstagramEnv";
+import http from "node:http";
 import https from "node:https";
 import zlib from "node:zlib";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -34,11 +35,11 @@ function nodeHttpsRequest(
     const req = https.request(
       {
         hostname: url.hostname,
-        port: url.port || 443,
+        port: parseInt(url.port) || 443,
         path: url.pathname + url.search,
         method,
         headers: reqHeaders,
-        agent,
+        agent: agent as unknown as http.Agent,
       },
       (res) => {
         const chunks: Buffer[] = [];
