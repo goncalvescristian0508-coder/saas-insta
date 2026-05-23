@@ -10,7 +10,7 @@ const META_PORTAL_COOKIES = process.env.META_PORTAL_COOKIES || "";
 const META_APP_ID = process.env.META_APP_ID || "";
 const META_BUSINESS_ID = process.env.META_BUSINESS_ID || "";
 
-const VERSION = "5.1.0-exact-flow";
+const VERSION = "5.2.0-treewalker";
 
 function parseCookieString(str) {
   return str.split(";").map((part) => {
@@ -22,22 +22,42 @@ function parseCookieString(str) {
   }).filter(Boolean);
 }
 
-async function clickByText(page, keywords, scope = "document") {
-  return page.evaluate((keywords, scope) => {
-    const root = scope === "dialog"
-      ? (document.querySelector('[role="dialog"], [aria-modal="true"]') || document)
-      : document;
-    const all = Array.from(root.querySelectorAll("*"));
-    const el = all.find(e => {
-      if (el === document.body || e.children.length > 5) return false;
-      const t = (e.textContent || "").trim().toLowerCase();
-      return t.length > 0 && t.length < 100 && keywords.some(k => t.includes(k));
-    });
-    if (!el) return null;
-    const clickTarget = el.closest('button') || el.closest('[role="button"]') || el.closest('[role="radio"]') || el.closest('label') || el;
-    clickTarget.click();
-    return el.textContent.trim();
-  }, keywords, scope);
+// Click the first element whose visible text includes any of the keywords.
+// Uses TreeWalker so it works on any tag (div, span, button, etc.)
+async function clickTextNode(page, keywords, containerSelector = null) {
+  return page.evaluate((keywords, containerSelector) => {
+    const root = containerSelector
+      ? (document.querySelector(containerSelector) || document.body)
+      : document.body;
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      const text = (node.textContent || "").trim().toLowerCase();
+      if (!text || text.length > 120) continue;
+      if (!keywords.some(k => text.includes(k))) continue;
+
+      // Walk up to find a clickable ancestor
+      let el = node.parentElement;
+      while (el && el !== document.body) {
+        const tag = el.tagName;
+        const role = el.getAttribute("role");
+        const tabindex = el.getAttribute("tabindex");
+        const hasClick = typeof el.onclick === "function";
+        if (tag === "BUTTON" || tag === "A" || role === "button" || role === "radio" || role === "option" || role === "tab" || tabindex === "0" || hasClick) {
+          el.click();
+          return el.textContent.trim();
+        }
+        el = el.parentElement;
+      }
+      // No clickable ancestor found — click the parent anyway
+      if (node.parentElement) {
+        node.parentElement.click();
+        return node.textContent.trim() + " (parent)";
+      }
+    }
+    return null;
+  }, keywords, containerSelector);
 }
 
 async function addTesterWithPuppeteer(username) {
@@ -50,125 +70,95 @@ async function addTesterWithPuppeteer(username) {
     const page = await browser.newPage();
     await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
 
+    await page.setRequestInterception(true);
+    page.on("request", req => req.continue());
+
     // Set cookies on both FB domains
     const rawCookies = parseCookieString(META_PORTAL_COOKIES);
     for (const domain of [".facebook.com", "developers.facebook.com"]) {
-      await page.setCookie(...rawCookies.map(c => ({ name: c.name, value: c.value, domain, path: "/", secure: true })));
+      await page.setCookie(...rawCookies.map(c => ({
+        name: c.name, value: c.value, domain, path: "/", secure: true,
+      })));
     }
 
     const rolesUrl = `https://developers.facebook.com/apps/${META_APP_ID}/roles/roles/${META_BUSINESS_ID ? `?business_id=${META_BUSINESS_ID}` : ""}`;
     console.log(`[v${VERSION}] navigating to ${rolesUrl}`);
-
-    await page.setRequestInterception(true);
-    page.on("request", req => req.continue());
-
     await page.goto(rolesUrl, { waitUntil: "networkidle2", timeout: 60000 });
 
     const currentUrl = page.url();
-    console.log(`[puppeteer] landed on ${currentUrl}`);
+    console.log(`[puppeteer] landed: ${currentUrl}`);
     if (currentUrl.includes("/login") || currentUrl.includes("checkpoint")) {
       throw new Error("Cookies expiradas — sessão inválida.");
     }
 
-    // Wait for React to render fully
-    await new Promise(r => setTimeout(r, 6000));
+    // Wait up to 20s for "Adicionar" text to appear in the page
+    console.log("[puppeteer] waiting for page to render 'Adicionar'...");
+    try {
+      await page.waitForFunction(
+        () => document.body.innerText.toLowerCase().includes("adicionar"),
+        { timeout: 20000 }
+      );
+    } catch {
+      const snippet = await page.evaluate(() => document.body?.innerText?.replace(/\s+/g, " ").substring(0, 500));
+      console.log("[puppeteer] page text after 20s:", snippet);
+      throw new Error(`Página não renderizou em 20s. Texto: ${snippet?.substring(0, 200)}`);
+    }
 
-    // ── STEP 1: Click "Adicionar pessoas" button ──
-    console.log("[puppeteer] looking for 'Adicionar pessoas'...");
-    const addBtnClicked = await page.evaluate(() => {
-      const keywords = ["adicionar pessoas", "add people", "adicionar pessoa"];
-      const all = Array.from(document.querySelectorAll("*"));
-      for (const el of all) {
-        const t = (el.textContent || "").trim().toLowerCase();
-        if (keywords.some(k => t === k) && el.children.length <= 3) {
-          const target = el.closest("button") || el.closest('[role="button"]') || el;
-          target.click();
-          return el.textContent.trim();
-        }
-      }
-      // Fallback: any button/div with "adicionar" text
-      const fallback = all.find(el => {
-        const t = (el.textContent || "").trim().toLowerCase();
-        return (t === "adicionar" || t === "add") && el.children.length <= 2;
-      });
-      if (fallback) {
-        (fallback.closest("button") || fallback).click();
-        return fallback.textContent.trim() + " (fallback)";
-      }
-      return null;
-    });
+    const pageText = await page.evaluate(() => document.body?.innerText?.replace(/\s+/g, " ").substring(0, 600));
+    console.log("[puppeteer] page rendered:", pageText);
 
-    console.log("[puppeteer] add btn clicked:", addBtnClicked);
+    // ── STEP 1: Click "Adicionar pessoas" ──
+    console.log("[puppeteer] clicking 'Adicionar pessoas'...");
+    const addBtnClicked = await clickTextNode(page, ["adicionar pessoas", "add people"]);
+    console.log("[puppeteer] add btn:", addBtnClicked);
 
     if (!addBtnClicked) {
-      const visible = await page.evaluate(() =>
-        Array.from(document.querySelectorAll('button, [role="button"]'))
-          .map(e => e.textContent?.trim()).filter(Boolean).slice(0, 15)
-      );
-      console.log("[puppeteer] visible buttons:", visible);
-      throw new Error(`Botão "Adicionar pessoas" não encontrado. Botões: ${visible.join(" | ")}`);
+      throw new Error(`"Adicionar pessoas" não encontrado. Texto da página: ${pageText?.substring(0, 300)}`);
     }
 
     // ── STEP 2: Wait for modal ──
     console.log("[puppeteer] waiting for modal...");
-    try {
-      await page.waitForSelector('[role="dialog"], [aria-modal="true"]', { timeout: 8000 });
-    } catch {
-      throw new Error("Modal não abriu após clicar em Adicionar pessoas");
-    }
-    await new Promise(r => setTimeout(r, 1500));
+    await page.waitForFunction(
+      () => document.body.innerText.toLowerCase().includes("testador do instagram"),
+      { timeout: 10000 }
+    );
+    await new Promise(r => setTimeout(r, 1000));
+
+    const modalText = await page.evaluate(() => {
+      const modal = document.querySelector('[role="dialog"], [aria-modal="true"]');
+      return (modal || document.body)?.innerText?.replace(/\s+/g, " ").substring(0, 400);
+    });
+    console.log("[puppeteer] modal:", modalText);
 
     // ── STEP 3: Select "Testador do Instagram" radio ──
     console.log("[puppeteer] selecting 'Testador do Instagram'...");
-    const roleClicked = await page.evaluate(() => {
-      const keywords = ["testador do instagram", "instagram tester"];
-      const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document;
-      const all = Array.from(modal.querySelectorAll("*"));
-      for (const el of all) {
-        const t = (el.textContent || "").trim().toLowerCase();
-        if (keywords.some(k => t.includes(k)) && el.children.length <= 2) {
-          // Click the label or nearest radio/button
-          const target =
-            el.closest('label') ||
-            el.closest('[role="radio"]') ||
-            el.closest('[role="option"]') ||
-            el.closest("button") ||
-            el;
-          target.click();
-          return el.textContent.trim();
-        }
-      }
-      // Try clicking radio input directly
-      const inputs = Array.from(modal.querySelectorAll('input[type="radio"]'));
-      const last = inputs[inputs.length - 1]; // Instagram tester is the last option
-      if (last) { last.click(); return "radio-last"; }
-      return null;
-    });
-
+    const roleClicked = await clickTextNode(
+      page,
+      ["testador do instagram", "instagram tester"],
+      '[role="dialog"], [aria-modal="true"]'
+    );
     console.log("[puppeteer] role selected:", roleClicked);
+
     if (!roleClicked) throw new Error("Opção 'Testador do Instagram' não encontrada no modal");
 
-    // Wait for the input field to appear after selecting the role
-    await new Promise(r => setTimeout(r, 2000));
-
-    // ── STEP 4: Type the Instagram username ──
-    console.log("[puppeteer] looking for Instagram username input...");
-
-    // Wait for input with Instagram placeholder
-    try {
-      await page.waitForFunction(() => {
+    // Wait for the input field to appear
+    console.log("[puppeteer] waiting for username input...");
+    await page.waitForFunction(
+      () => {
         const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document;
-        return Array.from(modal.querySelectorAll('input')).some(i =>
+        return Array.from(modal.querySelectorAll("input")).some(i =>
           i.type !== "hidden" && i.type !== "radio" && i.type !== "checkbox"
         );
-      }, { timeout: 5000 });
-    } catch {
-      throw new Error("Campo de username do Instagram não apareceu após selecionar a função");
-    }
+      },
+      { timeout: 8000 }
+    );
+    await new Promise(r => setTimeout(r, 500));
 
+    // ── STEP 4: Fill in Instagram username ──
+    console.log(`[puppeteer] filling username: ${username}`);
     const inputFilled = await page.evaluate((username) => {
       const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document;
-      const inp = Array.from(modal.querySelectorAll('input')).find(i =>
+      const inp = Array.from(modal.querySelectorAll("input")).find(i =>
         i.type !== "hidden" && i.type !== "radio" && i.type !== "checkbox"
       );
       if (!inp) return false;
@@ -182,84 +172,60 @@ async function addTesterWithPuppeteer(username) {
 
     if (!inputFilled) throw new Error("Campo de username não encontrado");
 
-    // Type character by character to trigger autocomplete
     await page.keyboard.type(username, { delay: 80 });
-    console.log(`[puppeteer] typed username: ${username}`);
     await new Promise(r => setTimeout(r, 3000));
 
-    // ── STEP 5: Select from autocomplete if shown ──
+    // ── STEP 5: Pick autocomplete suggestion if it appeared ──
     const autocomplete = await page.evaluate((username) => {
-      const opts = Array.from(document.querySelectorAll(
-        '[role="option"], [role="listbox"] li, [data-testid*="typeahead"] *, [data-testid*="suggest"] *'
-      ));
-      const match = opts.find(e => {
-        const t = (e.textContent || "").toLowerCase();
-        return t.includes(username.toLowerCase()) && e.children.length <= 3;
-      });
-      if (match) {
-        (match.closest('[role="option"]') || match).click();
-        return match.textContent.trim();
+      const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document;
+      const walker = document.createTreeWalker(modal, NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        const t = (node.textContent || "").trim().toLowerCase();
+        if (t.includes(username.toLowerCase()) && t.length < 80) {
+          const el = node.parentElement;
+          if (el) { el.click(); return node.textContent.trim(); }
+        }
       }
       return null;
     }, username);
-    console.log("[puppeteer] autocomplete selected:", autocomplete);
+    console.log("[puppeteer] autocomplete:", autocomplete);
     if (autocomplete) await new Promise(r => setTimeout(r, 1500));
 
     // ── STEP 6: Click "Adicionar" confirm button ──
     console.log("[puppeteer] clicking confirm 'Adicionar'...");
-    const submitted = await page.evaluate(() => {
-      const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document;
-      const btns = Array.from(modal.querySelectorAll('button, [role="button"]'));
-      const cancelWords = ["cancelar", "cancel", "fechar", "close"];
-      const submitWords = ["adicionar", "add", "confirmar", "confirm", "ok", "salvar", "save"];
+    const submitted = await clickTextNode(
+      page,
+      ["adicionar", "add", "confirmar", "confirm", "ok", "salvar"],
+      '[role="dialog"], [aria-modal="true"]'
+    );
+    console.log("[puppeteer] submitted:", submitted);
 
-      // Prefer exact match
-      let btn = btns.find(b => {
-        const t = (b.textContent || "").trim().toLowerCase();
-        return submitWords.some(k => t === k);
-      });
-      // Fallback: includes match, not cancel
-      if (!btn) {
-        btn = btns.find(b => {
-          const t = (b.textContent || "").trim().toLowerCase();
-          return submitWords.some(k => t.includes(k)) && !cancelWords.some(k => t.includes(k));
-        });
-      }
-      if (btn) {
-        btn.click();
-        return btn.textContent.trim();
-      }
-      return null;
-    });
-
-    console.log("[puppeteer] confirm submitted:", submitted);
     if (!submitted) {
       const modalBtns = await page.evaluate(() => {
-        const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document;
-        return Array.from(modal.querySelectorAll('button, [role="button"]'))
-          .map(b => b.textContent?.trim()).filter(Boolean);
+        const modal = document.querySelector('[role="dialog"], [aria-modal="true"]') || document.body;
+        return modal.innerText?.replace(/\s+/g, " ").substring(0, 300);
       });
-      throw new Error(`Botão "Adicionar" não encontrado. Botões no modal: ${modalBtns.join(" | ")}`);
+      throw new Error(`Botão "Adicionar" não encontrado. Modal: ${modalBtns}`);
     }
 
-    // Wait for network to settle
-    await new Promise(r => setTimeout(r, 4000));
+    // Wait for the action to complete
+    await new Promise(r => setTimeout(r, 5000));
 
-    // Check for errors on page
-    const finalCheck = await page.evaluate(() => {
+    // Final check for errors
+    const finalResult = await page.evaluate(() => {
       const text = (document.body?.innerText || "").toLowerCase();
-      if (text.match(/\berro\b|\berror\b|failed|inválido|invalid/)) {
+      if (/\berro\b|\berror\b|failed|falhou|inválido|invalid/.test(text)) {
         const lines = document.body.innerText.split("\n")
           .filter(l => /erro|error|failed|invalid/i.test(l))
-          .map(l => l.trim())
-          .filter(Boolean);
+          .map(l => l.trim()).filter(Boolean);
         return { ok: false, error: lines[0] || "Erro detectado" };
       }
       return { ok: true };
     });
 
-    console.log("[puppeteer] final result:", finalCheck);
-    return finalCheck;
+    console.log("[puppeteer] done:", finalResult);
+    return finalResult;
 
   } finally {
     await browser.close();
