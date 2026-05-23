@@ -10,7 +10,7 @@ const META_PORTAL_COOKIES = process.env.META_PORTAL_COOKIES || "";
 const META_APP_ID = process.env.META_APP_ID || "";
 const META_BUSINESS_ID = process.env.META_BUSINESS_ID || "";
 
-const VERSION = "5.3.0-stealth";
+const VERSION = "5.4.0-diag";
 
 function parseCookieString(str) {
   return str.split(";").map((part) => {
@@ -93,8 +93,17 @@ async function addTesterWithPuppeteer(username) {
     await page.setViewport({ width: 1920, height: 1080 });
     await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
 
+    // Log JS errors and console errors from the page
+    page.on("pageerror", err => console.log("[page-error]", err.message.substring(0, 200)));
+    page.on("console", msg => {
+      if (msg.type() === "error") console.log("[page-console-error]", msg.text().substring(0, 200));
+    });
+
     await page.setRequestInterception(true);
     page.on("request", req => req.continue());
+
+    // Set Accept-Language so the portal renders in Portuguese
+    await page.setExtraHTTPHeaders({ "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7" });
 
     // Set cookies on both FB domains
     const rawCookies = parseCookieString(META_PORTAL_COOKIES);
@@ -104,9 +113,14 @@ async function addTesterWithPuppeteer(username) {
       })));
     }
 
+    // Warm up the session on facebook.com first
+    console.log("[puppeteer] warming up session on facebook.com...");
+    await page.goto("https://www.facebook.com/", { waitUntil: "domcontentloaded", timeout: 30000 });
+    await new Promise(r => setTimeout(r, 2000));
+
     const rolesUrl = `https://developers.facebook.com/apps/${META_APP_ID}/roles/roles/${META_BUSINESS_ID ? `?business_id=${META_BUSINESS_ID}` : ""}`;
     console.log(`[v${VERSION}] navigating to ${rolesUrl}`);
-    await page.goto(rolesUrl, { waitUntil: "networkidle2", timeout: 60000 });
+    await page.goto(rolesUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
 
     const currentUrl = page.url();
     console.log(`[puppeteer] landed: ${currentUrl}`);
@@ -114,20 +128,37 @@ async function addTesterWithPuppeteer(username) {
       throw new Error("Cookies expiradas — sessão inválida.");
     }
 
-    // Wait up to 20s for "Adicionar" text to appear in the page
-    console.log("[puppeteer] waiting for page to render 'Adicionar'...");
+    // Diagnose: check HTML size and text content after various wait times
+    await new Promise(r => setTimeout(r, 5000));
+    const diag1 = await page.evaluate(() => ({
+      htmlLen: document.documentElement.innerHTML.length,
+      bodyText: document.body?.textContent?.replace(/\s+/g, " ").substring(0, 300),
+      innerText: document.body?.innerText?.replace(/\s+/g, " ").substring(0, 300),
+      url: location.href,
+    }));
+    console.log("[diag-5s] htmlLen:", diag1.htmlLen, "url:", diag1.url);
+    console.log("[diag-5s] bodyText:", diag1.bodyText?.substring(0, 200));
+    console.log("[diag-5s] innerText:", diag1.innerText?.substring(0, 200));
+
+    // Wait up to 25s for ANY substantial text to appear
+    console.log("[puppeteer] waiting for page to render...");
     try {
       await page.waitForFunction(
-        () => document.body.innerText.toLowerCase().includes("adicionar"),
-        { timeout: 20000 }
+        () => (document.body?.textContent?.trim().length || 0) > 500,
+        { timeout: 25000, polling: 1000 }
       );
     } catch {
-      const snippet = await page.evaluate(() => document.body?.innerText?.replace(/\s+/g, " ").substring(0, 500));
-      console.log("[puppeteer] page text after 20s:", snippet);
-      throw new Error(`Página não renderizou em 20s. Texto: ${snippet?.substring(0, 200)}`);
+      const diag = await page.evaluate(() => ({
+        htmlLen: document.documentElement.innerHTML.length,
+        bodyText: document.body?.textContent?.replace(/\s+/g, " ").substring(0, 400),
+        title: document.title,
+      }));
+      console.log("[diag-timeout] htmlLen:", diag.htmlLen, "title:", diag.title);
+      console.log("[diag-timeout] bodyText:", diag.bodyText);
+      throw new Error(`Página não renderizou. HTML len=${diag.htmlLen} title="${diag.title}" text="${diag.bodyText?.substring(0, 150)}"`);
     }
 
-    const pageText = await page.evaluate(() => document.body?.innerText?.replace(/\s+/g, " ").substring(0, 600));
+    const pageText = await page.evaluate(() => document.body?.textContent?.replace(/\s+/g, " ").substring(0, 600));
     console.log("[puppeteer] page rendered:", pageText);
 
     // ── STEP 1: Click "Adicionar pessoas" ──
