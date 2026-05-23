@@ -10,7 +10,7 @@ const META_PORTAL_COOKIES = process.env.META_PORTAL_COOKIES || "";
 const META_APP_ID = process.env.META_APP_ID || "";
 const META_BUSINESS_ID = process.env.META_BUSINESS_ID || "";
 
-const VERSION = "5.5.0-no-intercept";
+const VERSION = "5.6.0-textcontent";
 
 function parseCookieString(str) {
   return str.split(";").map((part) => {
@@ -67,8 +67,6 @@ async function addTesterWithPuppeteer(username) {
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
-      "--disable-gpu",
-      "--single-process",
       "--disable-blink-features=AutomationControlled",
       "--window-size=1920,1080",
     ],
@@ -119,27 +117,32 @@ async function addTesterWithPuppeteer(username) {
       throw new Error("Cookies expiradas — sessão inválida.");
     }
 
-    // Wait for innerText (visible rendered text) to be non-empty — up to 45s
-    console.log("[puppeteer] waiting for React to render visible text...");
+    // Wait for document.title to contain the app/roles page — JS has run
+    console.log("[puppeteer] waiting for page title to be set...");
     try {
       await page.waitForFunction(
-        () => (document.body?.innerText?.trim().length || 0) > 200,
-        { timeout: 45000, polling: 2000 }
+        () => document.title.length > 10 && !document.title.toLowerCase().includes("loading"),
+        { timeout: 30000, polling: 1000 }
       );
     } catch {
-      const diag = await page.evaluate(() => ({
-        htmlLen: document.documentElement.innerHTML.length,
-        innerText: document.body?.innerText?.replace(/\s+/g, " ").substring(0, 300),
-        title: document.title,
-        url: location.href,
-      }));
-      console.log("[diag] htmlLen:", diag.htmlLen, "title:", diag.title, "url:", diag.url);
-      console.log("[diag] innerText:", diag.innerText);
-      throw new Error(`React não renderizou em 45s. HTML=${diag.htmlLen}b title="${diag.title}" innerText="${diag.innerText?.substring(0, 150)}"`);
+      throw new Error(`Página não carregou em 30s. Title="${await page.title()}"`);
     }
 
-    const pageText = await page.evaluate(() => document.body?.innerText?.replace(/\s+/g, " ").substring(0, 600));
-    console.log("[puppeteer] page rendered:", pageText);
+    const pageTitle = await page.title();
+    console.log("[puppeteer] title:", pageTitle);
+
+    // Give React time to mount components after JS runs
+    await new Promise(r => setTimeout(r, 5000));
+
+    // Count DOM elements to confirm React mounted
+    const domInfo = await page.evaluate(() => ({
+      elements: document.querySelectorAll("*").length,
+      buttons: document.querySelectorAll("button, [role='button']").length,
+      // textContent works even when CSS hides elements (innerText does not)
+      bodyTextContent: document.body?.textContent?.replace(/\s+/g, " ").substring(0, 400),
+    }));
+    console.log("[puppeteer] DOM elements:", domInfo.elements, "buttons:", domInfo.buttons);
+    console.log("[puppeteer] textContent:", domInfo.bodyTextContent?.substring(0, 200));
 
     // ── STEP 1: Click "Adicionar pessoas" ──
     console.log("[puppeteer] clicking 'Adicionar pessoas'...");
@@ -147,13 +150,20 @@ async function addTesterWithPuppeteer(username) {
     console.log("[puppeteer] add btn:", addBtnClicked);
 
     if (!addBtnClicked) {
-      throw new Error(`"Adicionar pessoas" não encontrado. Texto da página: ${pageText?.substring(0, 300)}`);
+      // Log all button textContent for debugging
+      const btnTexts = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("button, [role='button'], [tabindex='0']"))
+          .map(e => e.textContent?.trim()).filter(Boolean).slice(0, 20)
+      );
+      console.log("[puppeteer] clickable textContent:", btnTexts);
+      throw new Error(`"Adicionar pessoas" não encontrado. DOM buttons: ${btnTexts.join(" | ")}`);
     }
 
     // ── STEP 2: Wait for modal ──
     console.log("[puppeteer] waiting for modal...");
     await page.waitForFunction(
-      () => document.body.innerText.toLowerCase().includes("testador do instagram"),
+      // Use textContent (CSS-independent) to detect modal text
+      () => document.body.textContent.toLowerCase().includes("testador do instagram"),
       { timeout: 10000 }
     );
     await new Promise(r => setTimeout(r, 1000));
