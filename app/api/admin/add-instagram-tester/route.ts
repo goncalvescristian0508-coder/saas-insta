@@ -349,6 +349,40 @@ export async function POST(request: Request) {
     (process.env["META_PORTAL_BUSINESS_ID"] || "").trim() ||
     undefined;
 
+  // ── Puppeteer service (primary — headless browser, most reliable) ──
+  const puppeteerServiceUrl = (process.env["PUPPETEER_SERVICE_URL"] || "").trim();
+  const puppeteerServiceSecret = (process.env["PUPPETEER_SERVICE_SECRET"] || "").trim();
+
+  if (puppeteerServiceUrl && puppeteerServiceSecret) {
+    const settled = await Promise.allSettled(
+      usernames.map(async (clean) => {
+        const res = await fetch(`${puppeteerServiceUrl}/add-tester`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: clean, secret: puppeteerServiceSecret }),
+        });
+        const data = await res.json() as { ok: boolean; error?: string };
+        return { username: clean, ok: data.ok, error: data.error, method: "puppeteer" };
+      }),
+    );
+
+    const results = settled.map((s, i) =>
+      s.status === "fulfilled"
+        ? s.value
+        : { username: usernames[i], ok: false, error: s.reason instanceof Error ? s.reason.message : "Erro desconhecido" },
+    );
+
+    const ok = results.filter(r => r.ok).length;
+    const errors = results.filter(r => !r.ok).length;
+
+    if (usernames.length === 1) {
+      const r = results[0];
+      if (!r.ok) return NextResponse.json({ error: r.error, results }, { status: 400 });
+      return NextResponse.json({ ok: true, username: r.username, results, method: "puppeteer" });
+    }
+    return NextResponse.json({ results, ok, errors, method: "puppeteer" });
+  }
+
   if (portalCookies) {
     const settled = await Promise.allSettled(
       usernames.map(clean => addTesterViaPortal(appId!, clean, portalCookies, businessId)),
