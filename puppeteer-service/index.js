@@ -10,6 +10,8 @@ const META_PORTAL_COOKIES = process.env.META_PORTAL_COOKIES || "";
 const META_APP_ID = process.env.META_APP_ID || "";
 const META_BUSINESS_ID = process.env.META_BUSINESS_ID || "";
 
+const VERSION = "3.0.0-in-browser-fetch";
+
 function parseCookieString(str) {
   return str.split(";").map((part) => {
     const eqIdx = part.indexOf("=");
@@ -30,27 +32,15 @@ async function addTesterWithPuppeteer(username) {
     const page = await browser.newPage();
     await page.setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36");
 
-    // Set cookies for both Facebook domains
+    // Set cookies on both domains
     const rawCookies = parseCookieString(META_PORTAL_COOKIES);
     for (const domain of [".facebook.com", "developers.facebook.com"]) {
       await page.setCookie(...rawCookies.map((c) => ({ name: c.name, value: c.value, domain, path: "/", secure: true })));
     }
 
-    // Intercept network to capture the real add-tester request URL + body
-    let capturedRequest = null;
-    await page.setRequestInterception(true);
-    page.on("request", (req) => {
-      const url = req.url();
-      if (url.includes("instagram/roles") || url.includes("instagram/testers") || url.includes("roles/add")) {
-        capturedRequest = { url, method: req.method(), postData: req.postData() };
-        console.log("[puppeteer] captured request:", url);
-      }
-      req.continue();
-    });
-
     const rolesUrl = `https://developers.facebook.com/apps/${META_APP_ID}/roles/roles/${META_BUSINESS_ID ? `?business_id=${META_BUSINESS_ID}` : ""}`;
-    console.log(`[puppeteer] navigating to ${rolesUrl}`);
-    await page.goto(rolesUrl, { waitUntil: "networkidle2", timeout: 45000 });
+    console.log(`[v${VERSION}] navigating to ${rolesUrl}`);
+    await page.goto(rolesUrl, { waitUntil: "networkidle2", timeout: 60000 });
 
     const currentUrl = page.url();
     console.log(`[puppeteer] landed on ${currentUrl}`);
@@ -58,102 +48,118 @@ async function addTesterWithPuppeteer(username) {
       throw new Error("Cookies expiradas — sessão inválida.");
     }
 
-    // Wait for React to render the page
+    // Wait for React hydration
     await new Promise(r => setTimeout(r, 3000));
 
-    // Find and click "Add Instagram Testers" button via UI
-    const clicked = await page.evaluate(() => {
-      const allButtons = Array.from(document.querySelectorAll('button, [role="button"], div[tabindex]'));
-      const keywords = ["add instagram tester", "adicionar tester", "add tester", "instagram tester"];
-      const btn = allButtons.find(b => keywords.some(k => b.textContent?.toLowerCase().includes(k)));
-      if (btn) { btn.click(); return btn.textContent?.trim(); }
-
-      // Fallback: look for any clickable element with "tester" text
-      const all = Array.from(document.querySelectorAll("*"));
-      const el = all.find(e =>
-        e.childElementCount === 0 &&
-        e.textContent?.toLowerCase().includes("tester") &&
-        (e.tagName === "BUTTON" || e.closest("button") || e.getAttribute("role") === "button")
-      );
-      if (el) { (el.closest("button") || el).click(); return el.textContent?.trim(); }
-      return null;
+    // Extract CSRF tokens from the page
+    const tokens = await page.evaluate(() => {
+      const html = document.documentElement.innerHTML;
+      const fb_dtsg =
+        html.match(/"DTSGInitialData",\[\],\{"token":"([^"]+)"/)?.[1] ??
+        html.match(/"token":"([^"]+)","async_get_token"/)?.[1] ??
+        html.match(/name="fb_dtsg"[^>]*value="([^"]+)"/)?.[1] ??
+        html.match(/"fb_dtsg","([^"]+)"/)?.[1];
+      const lsd = html.match(/"LSD",\[\],\{"token":"([^"]+)"\}/)?.[1] ?? "";
+      const cUser = document.cookie.match(/c_user=(\d+)/)?.[1] ?? "";
+      return { fb_dtsg: fb_dtsg || "", lsd, cUser };
     });
 
-    console.log("[puppeteer] clicked button:", clicked);
-    if (!clicked) {
-      // Take screenshot for debugging
-      const shot = await page.screenshot({ encoding: "base64" });
-      const pageText = await page.evaluate(() => document.body?.innerText?.substring(0, 500));
-      throw new Error(`Botão 'Add Tester' não encontrado. Página: ${pageText?.replace(/\s+/g, " ")}`);
+    console.log(`[puppeteer] fb_dtsg=${tokens.fb_dtsg ? tokens.fb_dtsg.substring(0, 12) + "..." : "(empty)"} lsd=${tokens.lsd || "(empty)"} cUser=${tokens.cUser}`);
+
+    if (!tokens.fb_dtsg) {
+      const pageSnippet = await page.evaluate(() => document.body?.innerText?.substring(0, 300));
+      throw new Error(`fb_dtsg não encontrado na página. Snippet: ${pageSnippet?.replace(/\s+/g, " ")}`);
     }
 
-    // Wait for dialog/modal to appear
-    await new Promise(r => setTimeout(r, 2000));
+    // Make the add-tester request FROM WITHIN the browser context.
+    // This runs with real session cookies + same-origin, bypassing all server-side restrictions.
+    const result = await page.evaluate(async (params) => {
+      const { appId, username, fb_dtsg, lsd, businessId, cUser } = params;
 
-    // Type username in the input field
-    const inputFound = await page.evaluate((username) => {
-      const inputs = Array.from(document.querySelectorAll('input[type="text"], input:not([type])'));
-      const inp = inputs.find(i =>
-        i.placeholder?.toLowerCase().includes("username") ||
-        i.placeholder?.toLowerCase().includes("name") ||
-        i.getAttribute("aria-label")?.toLowerCase().includes("username") ||
-        inputs.length === 1
-      );
-      if (inp) { inp.focus(); inp.value = ""; return true; }
-      return false;
-    }, username);
+      const jazoest = String(Array.from(fb_dtsg).reduce((s, c) => s + c.charCodeAt(0), 0));
 
-    if (!inputFound) throw new Error("Campo de input não encontrado no modal");
+      const formBody = new URLSearchParams({
+        role: "instagram_testers",
+        "user_id_or_vanityis[0]": username,
+        reload_on_success: "false",
+        _aaid: "0",
+        _user: cUser,
+        _a: "1",
+        _req: "1s",
+        fb_dtsg,
+        jazoest,
+        lsd,
+        dpr: "1",
+        _ccg: "EXCELLENT",
+      });
+      if (businessId) formBody.set("_bid", businessId);
 
-    await page.keyboard.type(username, { delay: 50 });
-    await new Promise(r => setTimeout(r, 1000));
+      const addUrl = `https://developers.facebook.com/apps/${appId}/async/instagram/roles/add/?_callFlowletID=0&_triggerFlowletID=1&qpl_active_e2e_trace_ids=`;
 
-    // Click submit/confirm button in the modal
-    const submitted = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
-      const submitKeywords = ["submit", "add", "confirm", "save", "adicionar", "enviar"];
-      const btn = buttons.find(b => submitKeywords.some(k => b.textContent?.toLowerCase().trim() === k));
-      if (btn) { btn.click(); return btn.textContent?.trim(); }
+      try {
+        const res = await fetch(addUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-Fb-Lsd": lsd,
+            "X-Asbd-Id": "359341",
+            Accept: "*/*",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+          },
+          body: formBody.toString(),
+          credentials: "include",
+        });
 
-      // Fallback: find primary/blue button in dialog
-      const dialog = document.querySelector('[role="dialog"], .modal, [data-testid="modal"]');
-      if (dialog) {
-        const btns = Array.from(dialog.querySelectorAll("button"));
-        const primary = btns.find(b => !b.textContent?.toLowerCase().includes("cancel") && !b.textContent?.toLowerCase().includes("cancelar"));
-        if (primary) { primary.click(); return primary.textContent?.trim(); }
+        const text = await res.text();
+        return { status: res.status, body: text.substring(0, 1000), ok: res.ok };
+      } catch (e) {
+        return { fetchError: e.message };
       }
-      return null;
+    }, {
+      appId: META_APP_ID,
+      username,
+      fb_dtsg: tokens.fb_dtsg,
+      lsd: tokens.lsd,
+      businessId: META_BUSINESS_ID,
+      cUser: tokens.cUser,
     });
 
-    console.log("[puppeteer] submitted with button:", submitted);
+    console.log(`[puppeteer] in-browser fetch result: status=${result.status} ok=${result.ok} fetchError=${result.fetchError}`);
+    console.log(`[puppeteer] body snippet: ${(result.body || "").substring(0, 200)}`);
 
-    // Wait for network to settle and check result
-    await new Promise(r => setTimeout(r, 3000));
-
-    // Check if capturedRequest contains the real URL
-    if (capturedRequest) {
-      console.log("[puppeteer] real API URL found:", capturedRequest.url);
+    if (result.fetchError) {
+      throw new Error(`Fetch error no browser: ${result.fetchError}`);
     }
 
-    // Check for success/error in the page
-    const pageResult = await page.evaluate((username) => {
-      const body = document.body?.innerText || "";
-      if (body.toLowerCase().includes("success") || body.toLowerCase().includes("sucesso")) return { ok: true };
-      if (body.toLowerCase().includes("error") || body.toLowerCase().includes("erro")) {
-        const lines = body.split("\n").filter(l => l.toLowerCase().includes("error") || l.toLowerCase().includes("erro"));
-        return { ok: false, error: lines[0]?.trim() };
-      }
-      return { ok: true }; // assume ok if no error visible
-    }, username);
+    if (!result.ok) {
+      const bodyClean = (result.body || "").replace(/[^\x20-\x7E\n]/g, "").replace(/\s+/g, " ").trim().substring(0, 300);
+      throw new Error(`Portal HTTP ${result.status}: ${bodyClean}`);
+    }
 
-    return { ...pageResult, capturedUrl: capturedRequest?.url };
+    // Parse JSON response (Facebook wraps with "for(;;);")
+    const jsonStr = (result.body || "").replace(/^for\s*\(;;\);/, "").trim();
+    let parsed = null;
+    try { parsed = JSON.parse(jsonStr); } catch { /* not JSON */ }
+
+    const errMsg =
+      parsed?.error?.message ??
+      parsed?.payload?.error ??
+      parsed?.errorSummary;
+
+    if (errMsg) {
+      return { ok: false, error: `Portal: ${errMsg}`, raw: jsonStr.substring(0, 200) };
+    }
+
+    return { ok: true, raw: jsonStr.substring(0, 100) };
 
   } finally {
     await browser.close();
   }
 }
 
-app.get("/health", (_req, res) => res.json({ ok: true }));
+app.get("/health", (_req, res) => res.json({ ok: true, version: VERSION }));
 
 app.post("/add-tester", async (req, res) => {
   const { username, secret } = req.body ?? {};
@@ -171,4 +177,4 @@ app.post("/add-tester", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`Portal tester service na porta ${PORT}`));
+app.listen(PORT, () => console.log(`Portal tester service v${VERSION} na porta ${PORT}`));
