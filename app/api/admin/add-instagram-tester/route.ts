@@ -184,7 +184,7 @@ async function addTesterViaPortal(
     ...(businessId ? { _bid: businessId } : {}),
   });
 
-  const addUrl = `https://developers.facebook.com/apps/${appId}/async/instagram/roles/add/?_callFlowletID=0&_triggerFlowletID=4501&qpl_active_e2e_trace_ids=`;
+  const addUrl = `https://developers.facebook.com/apps/${appId}/async/instagram/roles/add/?_callFlowletID=0&_triggerFlowletID=1&qpl_active_e2e_trace_ids=`;
 
   const postHeaders: Record<string, string> = {
     ...fbBaseHeaders,
