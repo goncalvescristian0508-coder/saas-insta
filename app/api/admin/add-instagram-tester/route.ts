@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMetaOAuthConfig, getMetaAppByKey } from "@/lib/metaInstagramEnv";
-import http from "node:http";
-import https from "node:https";
-import zlib from "node:zlib";
-import { HttpsProxyAgent } from "https-proxy-agent";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -18,82 +14,19 @@ function computeJazoest(token: string): string {
   return String(n);
 }
 
-// All proxy traffic goes through node:https + HttpsProxyAgent (no undici needed)
-function nodeHttpsRequest(
-  proxyUrl: string,
-  targetUrl: string,
-  method: string,
-  headers: Record<string, string>,
-  body?: string,
-): Promise<{ status: number; text: string; rawHeaders: Record<string, string> }> {
-  return new Promise((resolve, reject) => {
-    const agent = new HttpsProxyAgent(proxyUrl);
-    const url = new URL(targetUrl);
-    const reqHeaders: Record<string, string> = { ...headers };
-    if (body) reqHeaders["Content-Length"] = Buffer.byteLength(body).toString();
-
-    const req = https.request(
-      {
-        hostname: url.hostname,
-        port: parseInt(url.port) || 443,
-        path: url.pathname + url.search,
-        method,
-        headers: reqHeaders,
-        agent: agent as unknown as http.Agent,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (c: Buffer) => chunks.push(c));
-        res.on("end", () => {
-          const raw = Buffer.concat(chunks);
-          const encoding = res.headers["content-encoding"];
-          const rawHeaders: Record<string, string> = {};
-          for (const [k, v] of Object.entries(res.headers)) {
-            if (v !== undefined) rawHeaders[k] = Array.isArray(v) ? v.join(", ") : v;
-          }
-          const finish = (text: string) =>
-            resolve({ status: res.statusCode ?? 0, text, rawHeaders });
-
-          if (encoding === "br") {
-            zlib.brotliDecompress(raw, (e, d) => finish(e ? raw.toString("utf8") : d.toString("utf8")));
-          } else if (encoding === "gzip") {
-            zlib.gunzip(raw, (e, d) => finish(e ? raw.toString("utf8") : d.toString("utf8")));
-          } else if (encoding === "deflate") {
-            zlib.inflate(raw, (e, d) => finish(e ? raw.toString("utf8") : d.toString("utf8")));
-          } else {
-            finish(raw.toString("utf8"));
-          }
-        });
-      },
-    );
-    req.on("error", reject);
-    if (body) req.write(body);
-    req.end();
-  });
-}
-
 type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
 
-function makeProxyFetch(proxyUrl?: string): FetchFn {
+// Dynamic import avoids Turbopack static bundling of undici
+async function makeProxyFetch(proxyUrl?: string): Promise<FetchFn> {
   if (!proxyUrl) return (url, init) => fetch(url, init);
+  const { ProxyAgent, fetch: undiciFetch } = await import("undici");
+  const dispatcher = new ProxyAgent(proxyUrl);
   return async (url, init) => {
-    const method = (init?.method ?? "GET").toUpperCase();
-    const headers = (init?.headers ?? {}) as Record<string, string>;
-    const body = init?.body as string | undefined;
-    // Request identity so decompression always works; Facebook handles it fine
-    const result = await nodeHttpsRequest(proxyUrl, url, method, { ...headers, "Accept-Encoding": "identity" }, body);
-    return {
-      ok: result.status >= 200 && result.status < 300,
-      status: result.status,
-      text: async () => result.text,
-      json: async () => JSON.parse(result.text) as unknown,
-      headers: {
-        get: (name: string) => result.rawHeaders[name.toLowerCase()] ?? null,
-        forEach: (fn: (v: string, k: string) => void) => {
-          for (const [k, v] of Object.entries(result.rawHeaders)) fn(v, k);
-        },
-      },
-    } as unknown as Response;
+    const res = await undiciFetch(url, {
+      ...(init as Parameters<typeof undiciFetch>[1]),
+      dispatcher,
+    });
+    return res as unknown as Response;
   };
 }
 
@@ -110,7 +43,7 @@ async function addTesterViaPortal(
   const proxyUrl = baseProxyUrl
     ? baseProxyUrl.replace(/@/, `_session-${sessionId}_lifetime-168h@`)
     : undefined;
-  const pfetch = makeProxyFetch(proxyUrl);
+  const pfetch = await makeProxyFetch(proxyUrl);
 
   const referer = `https://developers.facebook.com/apps/${appId}/roles/roles/${businessId ? `?business_id=${businessId}` : ""}`;
   const fbBaseHeaders = {
