@@ -19,6 +19,7 @@ interface Video {
   id: string;
   originalName: string;
   sizeBytes: number;
+  publicUrl: string;
 }
 
 interface ScheduledPost {
@@ -569,14 +570,24 @@ export default function SchedulePage() {
                     {selectedVideoIds.length === videos.length ? "Desmarcar todos" : "Selecionar todos"}
                   </button>
                 </div>
-                <div style={{ maxHeight: "170px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.25rem", padding: "0.35rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                <div style={{ maxHeight: "320px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.25rem", padding: "0.35rem", background: "rgba(255,255,255,0.02)", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
                   {videos.map((v) => {
                     const checked = selectedVideoIds.includes(v.id);
                     return (
-                      <label key={v.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.5rem", borderRadius: "6px", cursor: "pointer", background: checked ? "rgba(201,162,39,0.07)" : "transparent", border: `1px solid ${checked ? "rgba(201,162,39,0.2)" : "transparent"}`, transition: "all 0.15s" }}>
+                      <label key={v.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.35rem 0.5rem", borderRadius: "6px", cursor: "pointer", background: checked ? "rgba(201,162,39,0.07)" : "transparent", border: `1px solid ${checked ? "rgba(201,162,39,0.2)" : "transparent"}`, transition: "all 0.15s" }}>
                         <input type="checkbox" checked={checked}
                           onChange={() => setSelectedVideoIds((prev) => prev.includes(v.id) ? prev.filter((id) => id !== v.id) : [...prev, v.id])}
                           style={{ accentColor: "var(--accent-gold)", flexShrink: 0 }} />
+                        <div style={{ width: 44, height: 44, borderRadius: 5, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.05)" }}>
+                          <video
+                            src={v.publicUrl}
+                            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                            preload="metadata"
+                            muted
+                            playsInline
+                            onLoadedMetadata={(e) => { (e.currentTarget as HTMLVideoElement).currentTime = 0.5; }}
+                          />
+                        </div>
                         <span style={{ fontSize: "0.82rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.originalName}</span>
                         <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", flexShrink: 0 }}>{formatBytes(v.sizeBytes)}</span>
                       </label>

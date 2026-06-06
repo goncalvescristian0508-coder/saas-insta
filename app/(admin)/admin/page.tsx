@@ -1688,12 +1688,6 @@ function AdminContent() {
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
-  // Auto-refresh every 30s to reflect cron execution updates
-  useEffect(() => {
-    const iv = setInterval(() => { loadOverview(); }, 30_000);
-    return () => clearInterval(iv);
-  }, [loadOverview]);
-
   const needsOverview = tab === "usuarios" || tab === "erros" || tab === "logs" || tab === "aprovacoes" || tab === "faturamento";
   if (loadingOverview && needsOverview) {
     return <Spinner />;
