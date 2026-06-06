@@ -580,12 +580,11 @@ export default function SchedulePage() {
                           style={{ accentColor: "var(--accent-gold)", flexShrink: 0 }} />
                         <div style={{ width: 44, height: 44, borderRadius: 5, overflow: "hidden", flexShrink: 0, background: "rgba(255,255,255,0.05)" }}>
                           <video
-                            src={v.publicUrl}
+                            src={`${v.publicUrl}#t=0.5`}
                             style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                             preload="metadata"
                             muted
                             playsInline
-                            onLoadedMetadata={(e) => { (e.currentTarget as HTMLVideoElement).currentTime = 0.5; }}
                           />
                         </div>
                         <span style={{ fontSize: "0.82rem", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{v.originalName}</span>
