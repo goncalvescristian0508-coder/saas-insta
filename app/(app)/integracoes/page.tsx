@@ -37,7 +37,7 @@ export default function IntegracoesPage() {
       setConfigs(intData.integrations ?? {});
       setDrafts(intData.integrations ?? {});
       const allAccounts = (accData as AccountsResponse).accounts ?? [];
-      setAccounts(allAccounts.filter((a) => !a.accountStatus || a.accountStatus === "ACTIVE"));
+      setAccounts(allAccounts);
       setUserId((accData as AccountsResponse).userId ?? "");
       setApifyTokens(apifyData.tokens ?? []);
     }).finally(() => setLoading(false));
