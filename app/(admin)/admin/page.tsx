@@ -30,7 +30,7 @@ interface UserRow {
   videoCount: number; postsTotal: number; postsDone: number; postsFailed: number;
   lastActivity: string | null; revenue: number; salesCount: number;
 }
-interface RecentPost { id: string; userId: string; accountUsername: string; videoName: string; caption: string; status: string; createdAt: string; errorMsg?: string; }
+interface RecentPost { id: string; userId: string; accountUsername: string; videoName: string; caption: string; status: string; scheduledAt: string; postedAt?: string | null; createdAt: string; errorMsg?: string; }
 interface OverviewData { stats: { totalUsers: number; totalOAuthAccounts: number; globalRevenue: number; globalSalesCount: number; totalVideos: number; totalPostsDone: number; }; users: UserRow[]; recentPosts: RecentPost[]; }
 
 /* ═══════════════════════ helpers ═══════════════════════ */
@@ -42,6 +42,11 @@ function timeAgo(iso: string) {
   return `${Math.floor(h / 24)}d atrás`;
 }
 function fmtDate(iso: string) { return new Date(iso).toLocaleDateString("pt-BR"); }
+function fmtDateTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) + " " +
+    d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
 
 const ST_COLOR: Record<string, string> = { DONE: "#22c55e", FAILED: "#ef4444", PENDING: "#f59e0b", RUNNING: "#3b82f6" };
 const ST_LABEL: Record<string, string> = { DONE: "Publicado", FAILED: "Falhou", PENDING: "Pendente", RUNNING: "Executando", APPROVED: "Aprovado", REFUNDED: "Reembolso", CANCELLED: "Cancelado" };
@@ -642,7 +647,11 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
                       </div>
                       <div style={{ textAlign: "right", flexShrink: 0 }}>
                         <p style={{ fontSize: 10, color: ST_COLOR[p.status] ?? "#888", fontWeight: 600 }}>{ST_LABEL[p.status] ?? p.status}</p>
-                        <p style={{ fontSize: 9, color: "#444" }}>{timeAgo(p.createdAt)}</p>
+                        <p style={{ fontSize: 9, color: "#555" }}>
+                          {p.status === "DONE" && p.postedAt
+                            ? fmtDateTime(p.postedAt)
+                            : fmtDateTime(p.scheduledAt)}
+                        </p>
                       </div>
                     </div>
                   ))}
