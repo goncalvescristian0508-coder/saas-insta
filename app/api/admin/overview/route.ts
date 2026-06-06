@@ -28,12 +28,24 @@ export async function GET() {
   const { data: authData } = await adminClient().auth.admin.listUsers({ perPage: 1000 });
   const authUsers = authData?.users ?? [];
 
-  const [oauthAccounts, privateAccounts, recentPosts, videos, salesByUser, globalSales] = await Promise.all([
+  const now = new Date();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+  const [oauthAccounts, privateAccounts, pendingPosts, donePosts, videos, salesByUser, globalSales] = await Promise.all([
     prisma.instagramOAuthAccount.findMany({ orderBy: { createdAt: "desc" } }),
     prisma.privateInstagramAccount.findMany({ orderBy: { createdAt: "desc" } }),
+    // All pending/running posts ordered by scheduledAt — shows full queue per user
     prisma.scheduledPost.findMany({
-      orderBy: { createdAt: "desc" },
-      take: 100,
+      where: { status: { in: ["PENDING", "RUNNING"] } },
+      orderBy: { scheduledAt: "asc" },
+      take: 500,
+      include: { account: true, video: true },
+    }),
+    // Recent done/failed posts from last 7 days
+    prisma.scheduledPost.findMany({
+      where: { status: { in: ["DONE", "FAILED"] }, updatedAt: { gte: sevenDaysAgo } },
+      orderBy: { scheduledAt: "desc" },
+      take: 200,
       include: { account: true, video: true },
     }),
     prisma.libraryVideo.findMany({ orderBy: { createdAt: "desc" } }),
@@ -49,6 +61,14 @@ export async function GET() {
       _count: { id: true },
     }),
   ]);
+
+  // Merge: pending (asc by scheduledAt) + done/failed (desc by scheduledAt), deduplicate by id
+  const seenIds = new Set<string>();
+  const recentPosts = [...pendingPosts, ...donePosts].filter(p => {
+    if (seenIds.has(p.id)) return false;
+    seenIds.add(p.id);
+    return true;
+  });
 
   const salesMap: Record<string, { revenue: number; count: number }> = {};
   for (const s of salesByUser) {
