@@ -44,6 +44,7 @@ function AccountsPageInner() {
   const [generatingLink, setGeneratingLink] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [metaApps, setMetaApps] = useState<MetaApp[]>([]);
+  const [assignedAppKey, setAssignedAppKey] = useState<string | null>(null);
   const [showAppModal, setShowAppModal] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [warmupAccountId, setWarmupAccountId] = useState<string | null>(null);
@@ -78,8 +79,9 @@ function AccountsPageInner() {
   const loadApps = async () => {
     try {
       const res = await fetch("/api/admin/meta-apps");
-      const d = await res.json();
-      if (d.apps?.length > 0) setMetaApps(d.apps);
+      const d = await res.json() as { apps?: MetaApp[]; assignedAppKey?: string | null };
+      if (d.apps && d.apps.length > 0) setMetaApps(d.apps);
+      if (d.assignedAppKey) setAssignedAppKey(d.assignedAppKey);
     } catch {}
   };
 
@@ -278,7 +280,11 @@ function AccountsPageInner() {
             <Shield size={13} /> Login Direto
           </button>
           <button
-            onClick={() => metaApps.length > 0 ? setShowAppModal(true) : handleConnectApp("")}
+            onClick={() => {
+              if (assignedAppKey) { handleConnectApp(assignedAppKey); }
+              else if (metaApps.length > 0) { setShowAppModal(true); }
+              else { handleConnectApp(""); }
+            }}
             disabled={isConnecting}
             style={{
               display: "flex", alignItems: "center", gap: 6,

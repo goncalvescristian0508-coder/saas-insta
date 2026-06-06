@@ -26,7 +26,10 @@ export async function GET() {
     countMap[row.appKey] = row._count.id;
   }
 
+  const assignedAppKey = (user.app_metadata?.metaAppKey as string | undefined) ?? null;
+
   return NextResponse.json({
+    assignedAppKey,
     apps: apps.map((a) => ({
       ...a,
       count: countMap[a.key] ?? 0,
