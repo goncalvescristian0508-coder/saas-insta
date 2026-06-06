@@ -1,9 +1,18 @@
 import { NextResponse } from "next/server";
 import { getMetaOAuthConfig, getMetaAppByKey } from "@/lib/metaInstagramEnv";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const appKey = (searchParams.get("app") || "").trim();
+  let appKey = (searchParams.get("app") || "").trim();
+
+  // If no app key in query, use the one assigned to this user by the admin
+  if (!appKey) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    const assignedKey = user?.app_metadata?.metaAppKey as string | undefined;
+    if (assignedKey) appKey = assignedKey;
+  }
 
   let appId: string | undefined;
   let redirectUri: string;

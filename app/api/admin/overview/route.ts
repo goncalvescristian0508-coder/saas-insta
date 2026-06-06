@@ -58,7 +58,7 @@ export async function GET() {
   const userMap: Record<string, {
     id: string; email: string; name: string | null; createdAt: string;
     adminMessage: string | null; adminMessageAt: string | null;
-    approved: boolean | null; blocked: boolean;
+    approved: boolean | null; blocked: boolean; metaAppKey: string | null;
     oauthAccounts: typeof oauthAccounts;
     privateAccounts: typeof privateAccounts;
     videoCount: number;
@@ -77,6 +77,7 @@ export async function GET() {
       adminMessageAt: u.user_metadata?.adminMessageAt ?? null,
       approved: u.app_metadata?.approved ?? null,
       blocked: u.app_metadata?.blocked === true,
+      metaAppKey: (u.app_metadata?.metaAppKey as string | undefined) ?? null,
       oauthAccounts: [],
       privateAccounts: [],
       videoCount: 0,
@@ -93,7 +94,7 @@ export async function GET() {
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
         id: acc.userId, email: "(desconhecido)", name: null, createdAt: acc.createdAt.toISOString(),
-        adminMessage: null, adminMessageAt: null, approved: null, blocked: false,
+        adminMessage: null, adminMessageAt: null, approved: null, blocked: false, metaAppKey: null,
         oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0,
         postsDone: 0, postsFailed: 0, lastActivity: null,
         revenue: salesMap[acc.userId]?.revenue ?? 0, salesCount: salesMap[acc.userId]?.count ?? 0,
@@ -107,7 +108,7 @@ export async function GET() {
     if (!userMap[acc.userId]) {
       userMap[acc.userId] = {
         id: acc.userId, email: "(desconhecido)", name: null, createdAt: acc.createdAt.toISOString(),
-        adminMessage: null, adminMessageAt: null, approved: null, blocked: false,
+        adminMessage: null, adminMessageAt: null, approved: null, blocked: false, metaAppKey: null,
         oauthAccounts: [], privateAccounts: [], videoCount: 0, postsTotal: 0,
         postsDone: 0, postsFailed: 0, lastActivity: null,
         revenue: salesMap[acc.userId]?.revenue ?? 0, salesCount: salesMap[acc.userId]?.count ?? 0,

@@ -25,7 +25,7 @@ interface PrivateAccount { id: string; username: string; lastError?: string; }
 interface UserRow {
   id: string; email: string; name: string | null; createdAt: string;
   adminMessage: string | null; adminMessageAt: string | null;
-  approved: boolean | null; blocked: boolean;
+  approved: boolean | null; blocked: boolean; metaAppKey?: string | null;
   oauthAccounts: OAuthAccount[]; privateAccounts: PrivateAccount[];
   videoCount: number; postsTotal: number; postsDone: number; postsFailed: number;
   lastActivity: string | null; revenue: number; salesCount: number;
@@ -401,12 +401,23 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
   const [busy, setBusy] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [blocking, setBlocking] = useState(false);
+  const [metaApps, setMetaApps] = useState<Array<{ key: string; name: string; appId: string }>>([]);
+  const [assigningApp, setAssigningApp] = useState(false);
   const [fakeCount, setFakeCount] = useState(5);
   const [fakeInterval, setFakeInterval] = useState(3);
   const [fakeMin, setFakeMin] = useState(49.90);
   const [fakeMax, setFakeMax] = useState(197.00);
   const [fakeAccount, setFakeAccount] = useState("");
   const [fakeSent, setFakeSent] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/admin/meta-apps")
+      .then(r => r.json())
+      .then((data: { apps?: Array<{ key: string; name: string; appId: string }> }) => {
+        if (data.apps) setMetaApps(data.apps);
+      })
+      .catch(() => {});
+  }, []);
 
   const filtered = users.filter(u =>
     !search ||
@@ -465,6 +476,18 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
       body: JSON.stringify({ userId: selUser.id, blocked }),
     });
     setBlocking(false);
+    onRefresh();
+  }
+
+  async function assignApp(metaAppKey: string | null) {
+    if (!selUser) return;
+    setAssigningApp(true);
+    await fetch("/api/admin/assign-app", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: selUser.id, metaAppKey }),
+    });
+    setAssigningApp(false);
     onRefresh();
   }
 
@@ -556,6 +579,26 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
                 </div>
               ))}
             </div>
+
+            {metaApps.length > 0 && (
+              <div style={{ marginBottom: "1.1rem" }}>
+                <p style={{ fontSize: 10, fontWeight: 700, color: "#444", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".5rem" }}>App Meta</p>
+                <div style={{ display: "flex", alignItems: "center", gap: ".5rem" }}>
+                  <select
+                    value={selUser.metaAppKey ?? ""}
+                    onChange={(e) => void assignApp(e.target.value || null)}
+                    disabled={assigningApp}
+                    style={{ flex: 1, padding: "7px 10px", borderRadius: 8, background: "rgba(255,255,255,.05)", border: "1px solid rgba(255,255,255,.1)", color: "#e0e0e0", fontSize: 12, fontFamily: "var(--font-sans)", outline: "none", cursor: assigningApp ? "not-allowed" : "pointer" }}
+                  >
+                    <option value="">Nenhum (padrão)</option>
+                    {metaApps.map(app => (
+                      <option key={app.key} value={app.key}>{app.name} — App {app.key}</option>
+                    ))}
+                  </select>
+                  {assigningApp && <Loader2 size={14} color="#FFD54F" style={{ animation: "spin 1s linear infinite", flexShrink: 0 }} />}
+                </div>
+              </div>
+            )}
 
             {selUser.adminMessage && (
               <div style={{ padding: ".75rem", borderRadius: 9, background: "rgba(255,213,79,.06)", border: "1px solid rgba(255,213,79,.15)", marginBottom: "1.1rem" }}>
