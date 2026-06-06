@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Send, Loader2, CheckCircle2, XCircle, Film, UploadCloud, AlertCircle } from "lucide-react";
 import Link from "next/link";
 
-type AccountRow = { id: string; username: string; source?: "oauth" | "private"; tokenExpired?: boolean };
+type AccountRow = { id: string; username: string; source?: "oauth" | "private"; tokenExpired?: boolean; accountStatus?: string };
 type VideoRow = { id: string; originalName: string; publicUrl: string; sizeBytes: number };
 type StatusRow = { accountId: string; username: string; success?: boolean; error?: string; pending?: boolean };
 
@@ -19,6 +19,7 @@ export default function BulkPostPage() {
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [selectedVideo, setSelectedVideo] = useState<string>("");
   const [caption, setCaption] = useState("");
+  const [intervalSeconds, setIntervalSeconds] = useState(30);
   const [posting, setPosting] = useState(false);
   const [statuses, setStatuses] = useState<StatusRow[]>([]);
   const [loadErr, setLoadErr] = useState("");
@@ -30,7 +31,9 @@ export default function BulkPostPage() {
         fetch("/api/media/upload"),
       ]);
       const [accData, vidData] = await Promise.all([accRes.json(), vidRes.json()]);
-      const list = ((accData.accounts ?? []) as AccountRow[]).filter((a) => !a.tokenExpired);
+      const list = ((accData.accounts ?? []) as AccountRow[]).filter(
+        (a) => !a.tokenExpired && a.accountStatus !== "SUSPENDED" && a.accountStatus !== "QUARANTINE"
+      );
       setAccounts(list);
       const sel: Record<string, boolean> = {};
       list.forEach((a) => { sel[a.id] = true; });
@@ -62,6 +65,7 @@ export default function BulkPostPage() {
     fd.append("videoId", selectedVideo);
     fd.append("caption", caption);
     fd.append("accountIds", JSON.stringify(ids));
+    fd.append("intervalSeconds", String(intervalSeconds));
 
     try {
       const res = await fetch("/api/private-ig/bulk-post", { method: "POST", body: fd });
@@ -182,7 +186,7 @@ export default function BulkPostPage() {
                       width: "40px", height: "40px", borderRadius: "6px",
                       background: "#0a0c14", overflow: "hidden", flexShrink: 0,
                     }}>
-                      <video src={v.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
+                      <video src={v.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="none" />
                     </div>
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <p style={{ fontSize: "0.85rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -196,24 +200,55 @@ export default function BulkPostPage() {
             )}
           </div>
 
-          {/* Caption */}
+          {/* Caption + Interval */}
           <div className="glass-panel" style={{ padding: "1.5rem", borderRadius: "14px" }}>
-            <label style={{
-              display: "block", fontSize: "0.78rem", fontWeight: 600,
-              color: "var(--text-secondary)", marginBottom: "0.5rem",
-              textTransform: "uppercase", letterSpacing: "0.08em",
-            }}>
-              Legenda
-            </label>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
+              <label style={{
+                fontSize: "0.78rem", fontWeight: 600,
+                color: "var(--text-secondary)",
+                textTransform: "uppercase", letterSpacing: "0.08em",
+              }}>
+                Legenda
+              </label>
+              <span style={{ fontSize: "0.72rem", color: caption.length > 2000 ? "#f87171" : "var(--text-muted)" }}>
+                {caption.length}/2200
+              </span>
+            </div>
             <textarea
               className="input-field"
               rows={4}
               value={caption}
-              onChange={(e) => setCaption(e.target.value)}
+              onChange={(e) => setCaption(e.target.value.slice(0, 2200))}
               placeholder="Texto da publicação…"
               disabled={posting}
               style={{ resize: "vertical", width: "100%" }}
             />
+
+            <div style={{ marginTop: "1rem" }}>
+              <label style={{
+                display: "block", fontSize: "0.78rem", fontWeight: 600,
+                color: "var(--text-secondary)", marginBottom: "0.4rem",
+                textTransform: "uppercase", letterSpacing: "0.08em",
+              }}>
+                Intervalo entre contas (segundos)
+              </label>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                <input
+                  type="range"
+                  min={0} max={120} step={5}
+                  value={intervalSeconds}
+                  onChange={(e) => setIntervalSeconds(Number(e.target.value))}
+                  disabled={posting}
+                  style={{ flex: 1, accentColor: "var(--accent-gold)" }}
+                />
+                <span style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--accent-gold)", minWidth: "40px", textAlign: "right" }}>
+                  {intervalSeconds}s
+                </span>
+              </div>
+              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                {intervalSeconds === 0 ? "Sem intervalo — todas postadas ao mesmo tempo" : `${intervalSeconds}s de espera entre cada conta`}
+              </p>
+            </div>
           </div>
         </div>
 
@@ -290,15 +325,31 @@ export default function BulkPostPage() {
                 marginBottom: "1rem", display: "flex", gap: "0.75rem", alignItems: "center",
               }}>
                 <div style={{ width: "44px", height: "44px", borderRadius: "6px", overflow: "hidden", flexShrink: 0 }}>
-                  <video src={videoObj.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
+                  <video src={videoObj.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="none" />
                 </div>
                 <div style={{ minWidth: 0 }}>
                   <p style={{ fontSize: "0.8rem", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {videoObj.originalName}
                   </p>
-                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                    {Object.values(selected).filter(Boolean).length} conta(s) selecionada(s)
-                  </p>
+                  {(() => {
+                    const n = Object.values(selected).filter(Boolean).length;
+                    const safeInterval = n <= 1 ? 0 : Math.min(intervalSeconds, Math.floor(180 / (n - 1)));
+                    const estimatedSecs = n * 25 + (n - 1) * safeInterval;
+                    const mins = Math.floor(estimatedSecs / 60);
+                    const secs = estimatedSecs % 60;
+                    return (
+                      <>
+                        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                          {n} conta(s) · ~{mins > 0 ? `${mins}min ` : ""}{secs > 0 ? `${secs}s` : ""}
+                        </p>
+                        {safeInterval < intervalSeconds && n > 1 && (
+                          <p style={{ fontSize: "0.68rem", color: "#f59e0b", marginTop: "2px" }}>
+                            Intervalo ajustado para {safeInterval}s (limite de tempo)
+                          </p>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
             )}

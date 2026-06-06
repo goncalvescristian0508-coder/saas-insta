@@ -7,6 +7,7 @@ import {
   DollarSign, BarChart2, TrendingUp, TrendingDown, AlertTriangle,
   MessageSquare, Trash2, Send, ChevronRight, Search,
   Download, Megaphone, RefreshCw, X, Activity, CreditCard, Zap, Calendar,
+  Ban, ShieldCheck,
 } from "lucide-react";
 
 /* ═══════════════════════ types ═══════════════════════ */
@@ -24,7 +25,7 @@ interface PrivateAccount { id: string; username: string; lastError?: string; }
 interface UserRow {
   id: string; email: string; name: string | null; createdAt: string;
   adminMessage: string | null; adminMessageAt: string | null;
-  approved: boolean | null;
+  approved: boolean | null; blocked: boolean;
   oauthAccounts: OAuthAccount[]; privateAccounts: PrivateAccount[];
   videoCount: number; postsTotal: number; postsDone: number; postsFailed: number;
   lastActivity: string | null; revenue: number; salesCount: number;
@@ -399,6 +400,7 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
   const [msgText, setMsgText] = useState("");
   const [busy, setBusy] = useState(false);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [blocking, setBlocking] = useState(false);
   const [fakeCount, setFakeCount] = useState(5);
   const [fakeInterval, setFakeInterval] = useState(3);
   const [fakeMin, setFakeMin] = useState(49.90);
@@ -454,6 +456,18 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
     setRevokingId(null); onRefresh();
   }
 
+  async function toggleBlock(blocked: boolean) {
+    if (!selUser) return;
+    setBlocking(true);
+    await fetch("/api/admin/block-user", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ userId: selUser.id, blocked }),
+    });
+    setBlocking(false);
+    onRefresh();
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
       <PageHeader title="Usuários" subtitle={`${users.length} usuário${users.length !== 1 ? "s" : ""} na plataforma`} />
@@ -479,6 +493,7 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontSize: 12, fontWeight: 600, color: isActive ? "#FFD54F" : "#e0e0e0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{u.name ?? u.email}</p>
                     <div style={{ display: "flex", gap: ".4rem", alignItems: "center" }}>
+                      {u.blocked && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 3, background: "rgba(239,68,68,.15)", color: "#f87171", fontWeight: 700 }}>bloqueado</span>}
                       {u.oauthAccounts.length > 0 && <span style={{ fontSize: 10, color: "#555" }}><Share2 size={9} style={{ display: "inline", marginRight: 2 }} />{u.oauthAccounts.length}</span>}
                       {u.revenue > 0 && <span style={{ fontSize: 10, color: "#22c55e" }}>{fmtBRL(u.revenue)}</span>}
                       {u.adminMessage && <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "rgba(255,213,79,.1)", color: "#FFD54F" }}>msg</span>}
@@ -501,7 +516,14 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
               <div style={{ flex: 1 }}>
                 {selUser.name && <p style={{ fontWeight: 700, fontSize: 14, color: "#f0f0f0" }}>{selUser.name}</p>}
                 <p style={{ fontSize: 12, color: "#666" }}>{selUser.email}</p>
-                <p style={{ fontSize: 11, color: "#444" }}>Cadastrado {fmtDate(selUser.createdAt)}</p>
+                <div style={{ display: "flex", alignItems: "center", gap: ".4rem", marginTop: 3 }}>
+                  <p style={{ fontSize: 11, color: "#444" }}>Cadastrado {fmtDate(selUser.createdAt)}</p>
+                  {selUser.blocked && (
+                    <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 999, background: "rgba(239,68,68,.15)", color: "#f87171", fontWeight: 700, border: "1px solid rgba(239,68,68,.2)" }}>
+                      BLOQUEADO
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -511,6 +533,10 @@ function UsuariosTab({ users, recentPosts, onRefresh }: { users: UserRow[]; rece
               </button>
               <button onClick={() => { setFakeSent(false); setModal("fakesales"); }} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px", borderRadius: 9, background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.2)", color: "#4ade80", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
                 <Zap size={13} /> Simular vendas
+              </button>
+              <button onClick={() => void toggleBlock(!selUser.blocked)} disabled={blocking} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px", borderRadius: 9, background: selUser.blocked ? "rgba(34,197,94,.08)" : "rgba(239,68,68,.08)", border: selUser.blocked ? "1px solid rgba(34,197,94,.2)" : "1px solid rgba(239,68,68,.2)", color: selUser.blocked ? "#4ade80" : "#f87171", fontSize: 12, cursor: blocking ? "not-allowed" : "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
+                {blocking ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : selUser.blocked ? <ShieldCheck size={13} /> : <Ban size={13} />}
+                {selUser.blocked ? "Desbloquear" : "Bloquear"}
               </button>
               <button onClick={() => setModal("delete")} style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 5, padding: "8px", borderRadius: 9, background: "rgba(239,68,68,.08)", border: "1px solid rgba(239,68,68,.2)", color: "#f87171", fontSize: 12, cursor: "pointer", fontWeight: 600, fontFamily: "var(--font-sans)" }}>
                 <Trash2 size={13} /> Deletar
@@ -1415,6 +1441,86 @@ function TestadoresTab() {
   );
 }
 
+/* ═══════════════════════ faturamento tab ═══════════════════════ */
+const PLATFORM_CUT = 0.30;
+
+function FaturamentoTab({ users }: { users: UserRow[] }) {
+  const sorted = [...users].sort((a, b) => b.revenue - a.revenue);
+  const totalRevenue = users.reduce((s, u) => s + u.revenue, 0);
+  const totalCut = totalRevenue * PLATFORM_CUT;
+  const approved = users.filter(u => u.approved === true).length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}>
+      <PageHeader title="Faturamento por Usuário" subtitle={`${users.length} usuário${users.length !== 1 ? "s" : ""} · sua parte: ${(PLATFORM_CUT * 100).toFixed(0)}%`} />
+
+      {/* Summary cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: ".75rem" }}>
+        <StatCard label="Faturamento Total" value={fmtBRL(totalRevenue)} sub="todos os usuários" color="#4ade80" icon={DollarSign} />
+        <StatCard label={`Minha Parte (${PLATFORM_CUT * 100}%)`} value={fmtBRL(totalCut)} sub="plataforma" color="#FFD54F" icon={TrendingUp} />
+        <StatCard label="Usuários Ativos" value={String(approved)} sub="acesso aprovado" color="#60a5fa" icon={Users} />
+        <StatCard label="Ticket Médio / Usuário" value={approved > 0 ? fmtBRL(totalRevenue / approved) : "R$ 0,00"} sub="entre aprovados" color="#a78bfa" icon={BarChart2} />
+      </div>
+
+      {/* Per-user table */}
+      <Panel>
+        <div style={{ padding: "1rem 1.4rem", borderBottom: "1px solid rgba(255,255,255,.05)" }}>
+          <p style={{ fontSize: 14, fontWeight: 700, color: "#e0e0e0" }}>Ranking de Faturamento</p>
+        </div>
+
+        {sorted.length === 0 ? (
+          <p style={{ padding: "2.5rem", textAlign: "center", fontSize: 13, color: "#444" }}>Sem dados de faturamento.</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  {["#", "Usuário", "Status", "Contas IG", "Faturado", `Minha Parte (${PLATFORM_CUT * 100}%)`, "Vendas"].map(h => (
+                    <th key={h} style={{ padding: "10px 16px", textAlign: "left", fontSize: 10, fontWeight: 700, color: "#444", textTransform: "uppercase", letterSpacing: ".08em", borderBottom: "1px solid rgba(255,255,255,.05)", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((u, i) => {
+                  const approvedColor = u.approved === true ? "#4ade80" : u.approved === false ? "#f59e0b" : "#818cf8";
+                  const approvedLabel = u.approved === true ? "Aprovado" : u.approved === false ? "Pendente" : "Legado";
+                  const cut = u.revenue * PLATFORM_CUT;
+                  return (
+                    <tr key={u.id} style={{ borderBottom: "1px solid rgba(255,255,255,.04)" }}>
+                      <td style={{ padding: "12px 16px", fontSize: 13, fontWeight: 700, color: i < 3 ? "#FFD54F" : "#555" }}>#{i + 1}</td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: "#e0e0e0" }}>{u.name ?? "(sem nome)"}</p>
+                        <p style={{ fontSize: 11, color: "#555" }}>{u.email}</p>
+                      </td>
+                      <td style={{ padding: "12px 16px" }}>
+                        <span style={{ fontSize: 11, padding: "2px 9px", borderRadius: 999, fontWeight: 700, background: `${approvedColor}18`, color: approvedColor }}>
+                          {approvedLabel}
+                        </span>
+                      </td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: "#888" }}>{u.oauthAccounts.length}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: u.revenue > 0 ? "#4ade80" : "#444" }}>{fmtBRL(u.revenue)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 14, fontWeight: 700, color: cut > 0 ? "#FFD54F" : "#444" }}>{fmtBRL(cut)}</td>
+                      <td style={{ padding: "12px 16px", fontSize: 13, color: "#888" }}>{u.salesCount}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop: "2px solid rgba(255,255,255,.08)" }}>
+                  <td colSpan={4} style={{ padding: "12px 16px", fontSize: 12, fontWeight: 700, color: "#555", textTransform: "uppercase", letterSpacing: ".06em" }}>Total</td>
+                  <td style={{ padding: "12px 16px", fontSize: 15, fontWeight: 800, color: "#4ade80" }}>{fmtBRL(totalRevenue)}</td>
+                  <td style={{ padding: "12px 16px", fontSize: 15, fontWeight: 800, color: "#FFD54F" }}>{fmtBRL(totalCut)}</td>
+                  <td style={{ padding: "12px 16px", fontSize: 13, color: "#888" }}>{users.reduce((s, u) => s + u.salesCount, 0)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 /* ═══════════════════════ aprovações tab ═══════════════════════ */
 interface PendingUser { id: string; email: string; name: string | null; createdAt: string; approved: boolean | null; }
 
@@ -1530,7 +1636,7 @@ function AdminContent() {
 
   useEffect(() => { loadOverview(); }, [loadOverview]);
 
-  const needsOverview = tab === "usuarios" || tab === "erros" || tab === "logs" || tab === "aprovacoes";
+  const needsOverview = tab === "usuarios" || tab === "erros" || tab === "logs" || tab === "aprovacoes" || tab === "faturamento";
   if (loadingOverview && needsOverview) {
     return <Spinner />;
   }
@@ -1539,7 +1645,8 @@ function AdminContent() {
     <div>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {tab === "dashboard"  && <DashboardTab />}
-      {tab === "aprovacoes" && overview && <AprovacõesTab users={overview.users} onRefresh={loadOverview} />}
+      {tab === "aprovacoes"  && overview && <AprovacõesTab users={overview.users} onRefresh={loadOverview} />}
+      {tab === "faturamento" && overview && <FaturamentoTab users={overview.users} />}
       {tab === "planos"     && <PlanosTab />}
       {tab === "usuarios"   && overview && <UsuariosTab users={overview.users} recentPosts={overview.recentPosts} onRefresh={loadOverview} />}
       {tab === "erros"      && overview && <ErrosTab users={overview.users} />}

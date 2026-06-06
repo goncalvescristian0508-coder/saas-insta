@@ -29,6 +29,7 @@ export async function POST(request: Request) {
   const videoId = String(formData.get("videoId") ?? "").trim();
   const caption = String(formData.get("caption") ?? "");
   const idsRaw = formData.get("accountIds");
+  const rawInterval = Math.max(0, Math.min(120, Number(formData.get("intervalSeconds") ?? "0")));
 
   if (!videoId) {
     return new Response(
@@ -72,9 +73,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // Verify all requested accounts belong to this user
+  // Verify all requested accounts belong to this user and are active
   const ownedAccounts = await prisma.instagramOAuthAccount.findMany({
-    where: { id: { in: accountIds }, userId: user.id },
+    where: { id: { in: accountIds }, userId: user.id, accountStatus: { not: "SUSPENDED" } },
     select: { id: true },
   });
   const safeAccountIds = ownedAccounts.map(a => a.id);
@@ -85,6 +86,10 @@ export async function POST(request: Request) {
       { status: 400, headers: { "Content-Type": "application/x-ndjson" } },
     );
   }
+
+  // Cap interval so total wait time never exceeds 180s (leaves ~120s for actual posting)
+  const n = safeAccountIds.length;
+  const intervalSeconds = n <= 1 ? 0 : Math.min(rawInterval, Math.floor(180 / (n - 1)));
 
   // Download video buffer from Supabase Storage (server-to-server, no Vercel limit)
   let videoBuffer: Buffer;
@@ -107,16 +112,18 @@ export async function POST(request: Request) {
       };
 
       try {
-        await Promise.all(
-          safeAccountIds.map(async (id) => {
-            try {
-              const r = await postarReelBuffer(prisma, id, videoBuffer, caption, libraryVideo.publicUrl);
-              push({ accountId: id, username: r.username, success: r.success, error: r.error });
-            } catch (err: unknown) {
-              push({ accountId: id, username: "", success: false, error: mapInstagramError(err) });
-            }
-          }),
-        );
+        for (let i = 0; i < safeAccountIds.length; i++) {
+          const id = safeAccountIds[i];
+          try {
+            const r = await postarReelBuffer(prisma, id, videoBuffer, caption, libraryVideo.publicUrl);
+            push({ accountId: id, username: r.username, success: r.success, error: r.error });
+          } catch (err: unknown) {
+            push({ accountId: id, username: "", success: false, error: mapInstagramError(err) });
+          }
+          if (intervalSeconds > 0 && i < safeAccountIds.length - 1) {
+            await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1000));
+          }
+        }
       } catch (err: unknown) {
         push({ type: "fatal", success: false, error: mapInstagramError(err) });
       } finally {

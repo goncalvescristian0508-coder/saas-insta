@@ -6,16 +6,58 @@ import Link from "next/link";
 import { AlertCircle, CheckCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
-const INPUT: React.CSSProperties = {
-  width: "100%", padding: "10px 13px",
-  background: "#18181B",
-  border: "1px solid rgba(255,255,255,0.09)",
-  borderRadius: 8, color: "#F4F4F5",
-  fontSize: 13.5, fontFamily: "inherit",
-  outline: "none", transition: "border-color 0.15s",
-};
-const INPUT_FOCUS = "rgba(255,255,255,0.22)";
-const INPUT_BLUR  = "rgba(255,255,255,0.09)";
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      background: "#18181B",
+      border: "1px solid rgba(255,255,255,0.08)",
+      borderRadius: 14,
+      padding: "36px 36px 40px",
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function Logo() {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 28 }}>
+      <img src="/logo.png" alt="AutoPost" style={{ width: 30, height: 30, borderRadius: 8, objectFit: "cover" }} />
+      <span style={{ fontSize: 16, fontWeight: 600, color: "#F4F4F5", letterSpacing: "-0.02em" }}>AutoPost</span>
+    </div>
+  );
+}
+
+function FieldLabel({ htmlFor, children }: { htmlFor: string; children: React.ReactNode }) {
+  return (
+    <label htmlFor={htmlFor} style={{
+      display: "block", fontSize: 12, fontWeight: 500,
+      color: "#71717A", marginBottom: 6, cursor: "default",
+    }}>
+      {children}
+    </label>
+  );
+}
+
+function PrimaryBtn({ disabled, children }: { disabled: boolean; children: React.ReactNode }) {
+  return (
+    <button
+      type="submit"
+      disabled={disabled}
+      style={{
+        width: "100%", padding: "10px",
+        borderRadius: 8, border: "none",
+        background: disabled ? "rgba(79,131,247,0.4)" : "#4F83F7",
+        color: "#fff", fontSize: 13.5, fontWeight: 500,
+        fontFamily: "inherit",
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "opacity 0.15s", opacity: disabled ? 0.7 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -53,53 +95,6 @@ export default function LoginPage() {
     setResetSent(true);
     setResetLoading(false);
   }
-
-  const Card = ({ children }: { children: React.ReactNode }) => (
-    <div style={{
-      background: "#18181B",
-      border: "1px solid rgba(255,255,255,0.08)",
-      borderRadius: 14,
-      padding: "36px 36px 40px",
-    }}>
-      {children}
-    </div>
-  );
-
-  const Logo = () => (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 28 }}>
-      <img src="/logo.png" alt="AutoPost" style={{ width: 30, height: 30, borderRadius: 8, objectFit: "cover" }} />
-      <span style={{ fontSize: 16, fontWeight: 600, color: "#F4F4F5", letterSpacing: "-0.02em" }}>AutoPost</span>
-    </div>
-  );
-
-  const FieldLabel = ({ children }: { children: React.ReactNode }) => (
-    <label style={{
-      display: "block", fontSize: 12, fontWeight: 500,
-      color: "#71717A", marginBottom: 6,
-    }}>
-      {children}
-    </label>
-  );
-
-  const PrimaryBtn = ({ disabled, children }: { disabled: boolean; children: React.ReactNode }) => (
-    <button
-      type="submit"
-      disabled={disabled}
-      style={{
-        width: "100%", padding: "10px",
-        borderRadius: 8, border: "none",
-        background: disabled ? "rgba(79,131,247,0.4)" : "#4F83F7",
-        color: "#fff",
-        fontSize: 13.5, fontWeight: 500,
-        fontFamily: "inherit",
-        cursor: disabled ? "not-allowed" : "pointer",
-        transition: "opacity 0.15s",
-        opacity: disabled ? 0.7 : 1,
-      }}
-    >
-      {children}
-    </button>
-  );
 
   if (resetMode) {
     return (
@@ -140,11 +135,16 @@ export default function LoginPage() {
               {resetError && <ErrorAlert msg={resetError} />}
               <form onSubmit={handleReset}>
                 <div style={{ marginBottom: 18 }}>
-                  <FieldLabel>Email</FieldLabel>
-                  <input type="email" value={resetEmail} onChange={(e) => setResetEmail(e.target.value)}
-                    required placeholder="seu@email.com" style={INPUT}
-                    onFocus={(e) => { e.target.style.borderColor = INPUT_FOCUS; }}
-                    onBlur={(e)  => { e.target.style.borderColor = INPUT_BLUR; }}
+                  <FieldLabel htmlFor="reset-email">Email</FieldLabel>
+                  <input
+                    id="reset-email"
+                    type="email"
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    required
+                    placeholder="seu@email.com"
+                    autoComplete="email"
+                    className="auth-input"
                   />
                 </div>
                 <PrimaryBtn disabled={resetLoading}>{resetLoading ? "Enviando..." : "Enviar link"}</PrimaryBtn>
@@ -175,19 +175,29 @@ export default function LoginPage() {
 
         <form onSubmit={handleLogin}>
           <div style={{ marginBottom: 14 }}>
-            <FieldLabel>Email</FieldLabel>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              required placeholder="seu@email.com" style={INPUT}
-              onFocus={(e) => { e.target.style.borderColor = INPUT_FOCUS; }}
-              onBlur={(e)  => { e.target.style.borderColor = INPUT_BLUR; }}
+            <FieldLabel htmlFor="login-email">Email</FieldLabel>
+            <input
+              id="login-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              placeholder="seu@email.com"
+              autoComplete="email"
+              className="auth-input"
             />
           </div>
           <div style={{ marginBottom: 10 }}>
-            <FieldLabel>Senha</FieldLabel>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-              required placeholder="••••••••" style={INPUT}
-              onFocus={(e) => { e.target.style.borderColor = INPUT_FOCUS; }}
-              onBlur={(e)  => { e.target.style.borderColor = INPUT_BLUR; }}
+            <FieldLabel htmlFor="login-password">Senha</FieldLabel>
+            <input
+              id="login-password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              placeholder="••••••••"
+              autoComplete="current-password"
+              className="auth-input"
             />
           </div>
           <div style={{ textAlign: "right", marginBottom: 18 }}>

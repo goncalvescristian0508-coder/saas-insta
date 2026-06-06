@@ -47,7 +47,7 @@ export async function GET(request: Request) {
   const dateFilter = getDateFilter(period);
   const periodWhere = dateFilter ? { createdAt: dateFilter } : {};
 
-  const [periodSales, pendingSales, totalCount, topAccounts, topProducts, recent] = await Promise.all([
+  const [periodSales, pendingSales, totalCount, topAccounts, topProducts, recent, chartSales] = await Promise.all([
     prisma.sale.aggregate({
       where: { userId: user.id, status: "APPROVED", ...periodWhere },
       _sum: { amount: true },
@@ -84,6 +84,12 @@ export async function GET(request: Request) {
         customerName: true, igUsername: true, planName: true, createdAt: true,
       },
     }),
+    // Chart data: all sales in period (lightweight, for accurate chart rendering)
+    prisma.sale.findMany({
+      where: { userId: user.id, ...periodWhere },
+      orderBy: { createdAt: "asc" },
+      select: { amount: true, status: true, createdAt: true },
+    }),
   ]);
 
   return NextResponse.json({
@@ -107,6 +113,11 @@ export async function GET(request: Request) {
       planName: r.planName,
       count: r._count.id,
       revenue: r._sum.amount ?? 0,
+    })),
+    chartSales: chartSales.map((s) => ({
+      amount: s.amount,
+      status: s.status,
+      createdAt: s.createdAt.toISOString(),
     })),
   });
 }

@@ -4,15 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import { Mail, Lock, User, ArrowRight, AlertCircle, CheckCircle } from "lucide-react";
 
-const INPUT: React.CSSProperties = {
-  width: "100%",
-  padding: "10px 13px 10px 36px",
-  background: "#18181B",
-  border: "1px solid rgba(255,255,255,0.09)",
-  borderRadius: 8, color: "#F4F4F5",
-  fontSize: 13.5, fontFamily: "inherit",
-  outline: "none", transition: "border-color 0.15s",
-};
 const ICON_STYLE: React.CSSProperties = {
   position: "absolute", left: "0.85rem", top: "50%", transform: "translateY(-50%)",
 };
@@ -35,11 +26,12 @@ export default function SignupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password, name }),
       });
-      const data = await res.json() as { error?: string };
-      if (!res.ok) { setError(data.error ?? "Erro ao criar conta"); return; }
+      let data: { error?: string } = {};
+      try { data = await res.json() as { error?: string }; } catch { /* HTML error page */ }
+      if (!res.ok) { setError(data.error ?? `Erro ao criar conta (${res.status})`); return; }
       setSuccess(true);
     } catch {
-      setError("Erro de conexão. Tente novamente.");
+      setError("Erro de rede. Verifique sua conexão e tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -123,28 +115,31 @@ export default function SignupPage() {
           <form onSubmit={handleSignup} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <Field label="Nome">
               <User size={14} color="#52525B" strokeWidth={1.75} style={ICON_STYLE} />
-              <input type="text" value={name} onChange={(e) => setName(e.target.value)}
-                required placeholder="Seu nome" style={INPUT}
-                onFocus={(e) => { e.target.style.borderColor = "rgba(255,255,255,0.2)"; }}
-                onBlur={(e)  => { e.target.style.borderColor = "rgba(255,255,255,0.09)"; }}
+              <input
+                type="text" value={name} onChange={(e) => setName(e.target.value)}
+                required placeholder="Seu nome"
+                autoComplete="name"
+                className="auth-input with-icon"
               />
             </Field>
 
             <Field label="Email">
               <Mail size={14} color="#52525B" strokeWidth={1.75} style={ICON_STYLE} />
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
-                required placeholder="seu@email.com" style={INPUT}
-                onFocus={(e) => { e.target.style.borderColor = "rgba(255,255,255,0.2)"; }}
-                onBlur={(e)  => { e.target.style.borderColor = "rgba(255,255,255,0.09)"; }}
+              <input
+                type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                required placeholder="seu@email.com"
+                autoComplete="email"
+                className="auth-input with-icon"
               />
             </Field>
 
             <Field label="Senha">
               <Lock size={14} color="#52525B" strokeWidth={1.75} style={ICON_STYLE} />
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-                required minLength={6} placeholder="Mínimo 6 caracteres" style={INPUT}
-                onFocus={(e) => { e.target.style.borderColor = "rgba(255,255,255,0.2)"; }}
-                onBlur={(e)  => { e.target.style.borderColor = "rgba(255,255,255,0.09)"; }}
+              <input
+                type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+                required minLength={6} placeholder="Mínimo 6 caracteres"
+                autoComplete="new-password"
+                className="auth-input with-icon"
               />
             </Field>
 

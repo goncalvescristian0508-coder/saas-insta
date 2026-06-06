@@ -47,10 +47,12 @@ interface Sale {
   customerName: string | null; igUsername: string | null;
   planName: string | null; createdAt: string;
 }
+interface ChartSale { amount: number; status: string; createdAt: string; }
 interface TopItem { igUsername?: string | null; planName?: string | null; count: number; revenue: number; }
 interface DashboardData {
   stats: { approvedCount: number; approvedRevenue: number; pendingCount: number; totalCount: number; uniqueAccounts: number };
   sales: Sale[];
+  chartSales?: ChartSale[];
   topAccounts: TopItem[];
   topProducts: TopItem[];
 }
@@ -59,8 +61,18 @@ interface DashboardData {
 
 type ChartPoint = { label: string; approved: number; generated: number; count: number };
 
-function buildChartData(sales: Sale[], period: string): ChartPoint[] {
-  const n   = period === "1mes" || period === "maximo" ? 14 : 7;
+function buildChartData(sales: Array<{ amount: number; status: string; createdAt: string }>, period: string): ChartPoint[] {
+  let n: number;
+  if (period === "maximo" && sales.length > 0) {
+    const oldest = new Date(Math.min(...sales.map(s => new Date(s.createdAt).getTime())));
+    const daysDiff = Math.ceil((Date.now() - oldest.getTime()) / 86_400_000);
+    n = Math.max(14, Math.min(daysDiff + 1, 90));
+  } else if (period === "1mes") {
+    n = 30;
+  } else {
+    n = 7;
+  }
+
   const now = new Date();
   return Array.from({ length: n }, (_, i) => {
     const d = new Date(now);
@@ -73,10 +85,10 @@ function buildChartData(sales: Sale[], period: string): ChartPoint[] {
       return t >= d && t < nextD;
     });
     return {
-      label:    d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
-      approved: daySales.filter(s => s.status === "APPROVED").reduce((s, x) => s + x.amount, 0),
-      generated:daySales.reduce((s, x) => s + x.amount, 0),
-      count:    daySales.length,
+      label:     d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
+      approved:  daySales.filter(s => s.status === "APPROVED").reduce((s, x) => s + x.amount, 0),
+      generated: daySales.reduce((s, x) => s + x.amount, 0),
+      count:     daySales.length,
     };
   });
 }
@@ -205,7 +217,7 @@ function HeroChart({
   const hasGen = data.some(d => d.generated > 0);
   const hasCnt = data.some(d => d.count > 0);
 
-  const labelStep = n <= 7 ? 1 : 2;
+  const labelStep = n <= 7 ? 1 : n <= 14 ? 2 : n <= 30 ? 4 : 7;
 
   function handleMouseMove(e: React.MouseEvent<SVGRectElement>) {
     const svgEl = e.currentTarget.closest("svg") as SVGSVGElement | null;
@@ -610,7 +622,7 @@ export default function DashboardSales({ firstName }: { firstName: string }) {
   const convPct     = stats && stats.totalCount > 0 ? Math.round((stats.approvedCount / stats.totalCount) * 100) : 0;
   const currentLabel = PERIODS.find(p => p.id === period)?.label ?? "Hoje";
 
-  const chartData = useMemo(() => buildChartData(sales, period), [sales, period]);
+  const chartData = useMemo(() => buildChartData(data?.chartSales ?? sales, period), [data?.chartSales, sales, period]);
   const trendApp  = useMemo(() => computeTrend(chartData, "approved"), [chartData]);
 
   // ── Topbar ──────────────────────────────────────────────────────────────────

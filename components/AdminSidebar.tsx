@@ -4,21 +4,22 @@ import NextLink from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard, Users, Tag, AlertTriangle,
-  Activity, Megaphone, LogOut, Shield, ExternalLink, UserCheck, UserPlus,
+  Activity, Megaphone, LogOut, Shield, ExternalLink, UserCheck, UserPlus, TrendingUp,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 
 const navItems = [
-  { name: "Painel Geral",    tab: "dashboard",  icon: LayoutDashboard },
-  { name: "Aprovações",      tab: "aprovacoes", icon: UserPlus },
-  { name: "Usuários",        tab: "usuarios",   icon: Users },
-  { name: "Planos",          tab: "planos",     icon: Tag },
-  { name: "Erros de Conta",  tab: "erros",      icon: AlertTriangle },
-  { name: "Registros",       tab: "logs",       icon: Activity },
-  { name: "Mensagem Global", tab: "mensagem",   icon: Megaphone },
-  { name: "Testadores IG",   tab: "testadores", icon: UserCheck },
+  { name: "Painel Geral",    tab: "dashboard",   icon: LayoutDashboard },
+  { name: "Aprovações",      tab: "aprovacoes",  icon: UserPlus },
+  { name: "Faturamento",     tab: "faturamento", icon: TrendingUp },
+  { name: "Usuários",        tab: "usuarios",    icon: Users },
+  { name: "Planos",          tab: "planos",      icon: Tag },
+  { name: "Erros de Conta",  tab: "erros",       icon: AlertTriangle },
+  { name: "Registros",       tab: "logs",        icon: Activity },
+  { name: "Mensagem Global", tab: "mensagem",    icon: Megaphone },
+  { name: "Testadores IG",   tab: "testadores",  icon: UserCheck },
 ];
 
 function AdminNavItem({

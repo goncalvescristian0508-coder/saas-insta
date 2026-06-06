@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
   Send, LogOut, Shield, Copy, Menu, X,
-  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp, Search,
+  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp, Search, GraduationCap,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -53,7 +53,10 @@ const navGroups: { label?: string; items: NavItemDef[] }[] = [
   },
   {
     label: "Sistema",
-    items: [{ name: "Integrações", href: "/integracoes", icon: Plug }],
+    items: [
+      { name: "Integrações", href: "/integracoes", icon: Plug },
+      { name: "Aprender",    href: "/aprender",    icon: GraduationCap },
+    ],
   },
 ];
 

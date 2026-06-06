@@ -38,9 +38,11 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/terms");
 
   const isPendingApprovalPage = path.startsWith("/pending-approval");
+  const isBlockedPage = path.startsWith("/blocked");
 
   const isPublicApi =
     path.startsWith("/api/auth/callback") ||
+    path.startsWith("/api/auth/register") ||
     path.startsWith("/api/auth/instagram") ||
     path.startsWith("/api/instagram/oauth") ||
     path.startsWith("/api/instagram/deauth") ||
@@ -66,15 +68,23 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Block unapproved users — redirect to pending-approval page
-  if (user && !isAuthPage && !isPublicPage && !isPublicApi && !isPendingApprovalPage) {
+  // Block blocked/unapproved users
+  if (user && !isAuthPage && !isPublicPage && !isPublicApi) {
     const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
     const isAdmin = user.email === adminEmail;
-    if (!isAdmin && user.app_metadata?.approved === false) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/pending-approval";
-      url.search = "";
-      return NextResponse.redirect(url);
+    if (!isAdmin) {
+      if (user.app_metadata?.blocked === true && !isBlockedPage) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/blocked";
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
+      if (user.app_metadata?.approved === false && !user.app_metadata?.blocked && !isPendingApprovalPage) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/pending-approval";
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
     }
   }
 

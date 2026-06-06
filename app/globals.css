@@ -130,6 +130,18 @@ a { color: inherit; text-decoration: none; }
 .input-field:focus { border-color: var(--border-2); }
 .input-field::placeholder { color: var(--text-4); }
 
+/* ── Auth inputs (login / signup) ── */
+.auth-input {
+  width: 100%; padding: 10px 13px;
+  background: #18181B; border: 1px solid rgba(255,255,255,0.09);
+  border-radius: 8px; color: #F4F4F5;
+  font-size: 13.5px; font-family: inherit;
+  outline: none; transition: border-color 0.15s;
+}
+.auth-input:focus { border-color: rgba(255,255,255,0.22); }
+.auth-input::placeholder { color: #52525B; }
+.auth-input.with-icon { padding-left: 36px; }
+
 /* ── Data tables ── */
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table thead th {

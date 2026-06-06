@@ -175,12 +175,12 @@ async function addTesterViaPortal(
 
   const formBody = new URLSearchParams({
     role: "instagram_testers",
-    "user_id_or_vanityis[0]": userParam,
+    "user_id_or_vanitys[0]": userParam,
     reload_on_success: "false",
     _aaid: "0",
     _user,
     _a: "1",
-    _req: "1s",
+    _req: "h",
     fb_dtsg,
     jazoest: computeJazoest(fb_dtsg),
     lsd,
@@ -366,21 +366,36 @@ export async function POST(request: Request) {
       }),
     );
 
-    const results = settled.map((s, i) =>
+    const puppeteerResults = settled.map((s, i) =>
       s.status === "fulfilled"
         ? s.value
         : { username: usernames[i], ok: false, error: s.reason instanceof Error ? s.reason.message : "Erro desconhecido" },
     );
 
-    const ok = results.filter(r => r.ok).length;
-    const errors = results.filter(r => !r.ok).length;
-
-    if (usernames.length === 1) {
-      const r = results[0];
-      if (!r.ok) return NextResponse.json({ error: r.error, results }, { status: 400 });
-      return NextResponse.json({ ok: true, username: r.username, results, method: "puppeteer" });
+    // If all succeeded, return immediately
+    if (puppeteerResults.every(r => r.ok)) {
+      const ok = puppeteerResults.filter(r => r.ok).length;
+      if (usernames.length === 1) {
+        const r = puppeteerResults[0];
+        return NextResponse.json({ ok: true, username: r.username, results: puppeteerResults, method: "puppeteer" });
+      }
+      return NextResponse.json({ results: puppeteerResults, ok, errors: 0, method: "puppeteer" });
     }
-    return NextResponse.json({ results, ok, errors, method: "puppeteer" });
+
+    // Some failed — if portal cookies available, fall through to portal API for failed ones
+    const failedUsernames = puppeteerResults.filter(r => !r.ok).map(r => r.username);
+    console.log(`[add-tester] puppeteer failed for ${failedUsernames.join(", ")} — falling back to portal API`);
+    if (!portalCookies) {
+      const ok = puppeteerResults.filter(r => r.ok).length;
+      const errors = puppeteerResults.filter(r => !r.ok).length;
+      if (usernames.length === 1) {
+        const r = puppeteerResults[0];
+        return NextResponse.json({ error: r.error, results: puppeteerResults }, { status: 400 });
+      }
+      return NextResponse.json({ results: puppeteerResults, ok, errors, method: "puppeteer" });
+    }
+    // Continue to portal API below with only the failed usernames
+    usernames.splice(0, usernames.length, ...failedUsernames);
   }
 
   if (portalCookies) {

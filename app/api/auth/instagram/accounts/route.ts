@@ -20,6 +20,7 @@ export async function GET() {
         profilePictureUrl: true,
         tokenExpiresAt: true,
         lastError: true,
+        accountStatus: true,
         createdAt: true,
       },
     });

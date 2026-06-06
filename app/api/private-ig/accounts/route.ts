@@ -71,6 +71,7 @@ export async function GET() {
   );
 
   const response = NextResponse.json({ accounts });
+  response.headers.set("Cache-Control", "private, max-age=30, stale-while-revalidate=60");
   if (created) attachRequestUserCookie(response, userId);
   return response;
 }

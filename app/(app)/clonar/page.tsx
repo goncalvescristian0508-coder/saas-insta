@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Copy, Search, Loader2, CheckCircle, XCircle, Users, Clock, CalendarClock, AlertCircle, Image, FileText, RefreshCw, CheckCheck, AlertTriangle, Download, Trash2, Bookmark, BookmarkCheck } from "lucide-react";
+import { Copy, Search, Loader2, CheckCircle, XCircle, Users, Clock, CalendarClock, AlertCircle, FileText, RefreshCw, CheckCheck, AlertTriangle, Download, Trash2, Bookmark, BookmarkCheck } from "lucide-react";
 
 interface Account { id: string; username: string; tokenExpired?: boolean; }
 
@@ -155,6 +155,19 @@ export default function ClonarPage() {
       setLoadingJobs(false);
     }
   }, []);
+
+  // Auto-refresh every 30s while any job has pending posts (and not already polling processingJobId)
+  useEffect(() => {
+    if (processingJobId) return; // the other effect handles this case
+    const hasPending = jobs.some((j) => j.posts.pending > 0);
+    if (!hasPending) return;
+    const iv = setInterval(async () => {
+      const res = await fetch("/api/clone/history");
+      const data = await res.json();
+      if (res.ok) setJobs(data.jobs ?? []);
+    }, 30_000);
+    return () => clearInterval(iv);
+  }, [jobs, processingJobId]);
 
   // Poll while a clone job is being processed in the background
   useEffect(() => {
@@ -618,16 +631,6 @@ export default function ClonarPage() {
                 <span style={{ color: "var(--text-secondary)" }}><Copy size={14} /></span>
                 <span style={{ fontSize: "0.85rem" }}>Reels (sempre)</span>
               </label>
-              {[
-                { key: "stories", label: "Stories (salvos na biblioteca)", icon: <Clock size={14} />, value: cloneStories, set: setCloneStories },
-                { key: "highlights", label: "Destaques (salvos na biblioteca)", icon: <Image size={14} />, value: cloneHighlights, set: setCloneHighlights },
-              ].map(({ key, label, icon, value, set }) => (
-                <label key={key} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.7rem", borderRadius: "8px", cursor: "pointer", background: value ? "rgba(96,165,250,0.07)" : "rgba(255,255,255,0.02)", border: `1px solid ${value ? "rgba(96,165,250,0.2)" : "transparent"}` }}>
-                  <input type="checkbox" checked={value} onChange={() => set(!value)} style={{ accentColor: "#60a5fa" }} />
-                  <span style={{ color: "var(--text-secondary)" }}>{icon}</span>
-                  <span style={{ fontSize: "0.85rem" }}>{label}</span>
-                </label>
-              ))}
             </div>
           </div>
 
@@ -694,20 +697,6 @@ export default function ClonarPage() {
                 → intervalo de {intervalMinutes >= 60 ? `${Math.round(intervalMinutes / 60)}h` : `${intervalMinutes}min`} entre posts
               </p>
             )}
-          </div>
-
-          {/* Interval */}
-          <div style={{ marginBottom: "1.25rem" }}>
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.5rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-              <Clock size={12} style={{ display: "inline", marginRight: "0.3rem" }} />Intervalo entre posts
-            </label>
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-              {[1, 2, 3, 5, 10, 15, 20, 30, 60].map((m) => (
-                <button key={m} onClick={() => { setIntervalMinutes(m); setPostsPerDay(null); }} style={{ padding: "0.4rem 0.9rem", borderRadius: "8px", border: `1px solid ${intervalMinutes === m && !postsPerDay ? "rgba(201,162,39,0.4)" : "rgba(255,255,255,0.1)"}`, background: intervalMinutes === m && !postsPerDay ? "rgba(201,162,39,0.12)" : "transparent", color: intervalMinutes === m && !postsPerDay ? "var(--accent-gold)" : "var(--text-secondary)", fontWeight: intervalMinutes === m && !postsPerDay ? 700 : 400, fontSize: "0.82rem", cursor: "pointer" }}>
-                  {m}min
-                </button>
-              ))}
-            </div>
           </div>
 
           {/* Start */}

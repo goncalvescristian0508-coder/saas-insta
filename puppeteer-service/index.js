@@ -9,8 +9,9 @@ const SERVICE_SECRET = process.env.SERVICE_SECRET || "";
 const META_PORTAL_COOKIES = process.env.META_PORTAL_COOKIES || "";
 const META_APP_ID = process.env.META_APP_ID || "";
 const META_BUSINESS_ID = process.env.META_BUSINESS_ID || "";
+const PROXY_URL = process.env.PROXY_URL || ""; // e.g. http://user:pass@geo.iproyal.com:12321
 
-const VERSION = "6.0.0-correct-fields";
+const VERSION = "7.0.0-proxy-support";
 
 function parseCookieString(str) {
   return str.split(";").map((part) => {
@@ -23,19 +24,38 @@ function parseCookieString(str) {
 }
 
 async function addTesterWithPuppeteer(username) {
+  const launchArgs = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-blink-features=AutomationControlled",
+    "--window-size=1920,1080",
+  ];
+
+  let proxyUser = null;
+  let proxyPass = null;
+  if (PROXY_URL) {
+    try {
+      const u = new URL(PROXY_URL);
+      launchArgs.push(`--proxy-server=${u.protocol}//${u.hostname}:${u.port}`);
+      if (u.username) { proxyUser = decodeURIComponent(u.username); proxyPass = decodeURIComponent(u.password); }
+      console.log(`[v${VERSION}] using proxy ${u.hostname}:${u.port}`);
+    } catch (e) {
+      console.error("[proxy] invalid PROXY_URL:", e.message);
+    }
+  }
+
   const browser = await puppeteer.launch({
     headless: "new",
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
-      "--window-size=1920,1080",
-    ],
+    args: launchArgs,
   });
 
   try {
     const page = await browser.newPage();
+
+    if (proxyUser) {
+      await page.authenticate({ username: proxyUser, password: proxyPass });
+    }
 
     // Hide automation signals
     await page.evaluateOnNewDocument(() => {

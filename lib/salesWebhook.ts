@@ -11,6 +11,162 @@ export interface ParsedSale {
   planName?: string;
 }
 
+// ─── Platform auto-detection ────────────────────────────────────────────────
+
+/** Tries every known parser. Returns the first match or null. */
+export function detectAndParseSale(body: Record<string, unknown>): { gateway: string; parsed: ParsedSale | null } {
+  if (isHotmart(body)) return { gateway: "hotmart", parsed: parseHotmart(body) };
+  if (isKirvano(body)) return { gateway: "kirvano", parsed: parseKirvano(body) };
+  if (isEduzz(body)) return { gateway: "eduzz", parsed: parseEduzz(body) };
+  if (isPushinPay(body)) return { gateway: "pushinpay", parsed: parsePushinPay(body) };
+  // ApexVips fallback (also catches many other generic gateways)
+  return { gateway: detectGatewayLabel(body), parsed: parseApexVips(body) };
+}
+
+/** Extract utm_source across all known payload shapes */
+export function extractUtmSource(body: Record<string, unknown>): string | undefined {
+  const tracking = (body.tracking ?? {}) as Record<string, unknown>;
+  const data = (body.data ?? {}) as Record<string, unknown>;
+  const purchase = (data.purchase ?? {}) as Record<string, unknown>;
+
+  const raw = String(
+    tracking.utm_source ??
+    tracking.src ??
+    tracking.slug ??
+    purchase.tracking_source_name ??
+    body.utm_source ??
+    ""
+  ).replace("@", "").toLowerCase().trim();
+
+  return raw || undefined;
+}
+
+function detectGatewayLabel(body: Record<string, unknown>): string {
+  const transaction = (body.transaction ?? {}) as Record<string, unknown>;
+  return String(transaction.payment_platform ?? body.gateway ?? "unknown").toLowerCase();
+}
+
+// ─── Hotmart ─────────────────────────────────────────────────────────────────
+
+function isHotmart(body: Record<string, unknown>): boolean {
+  const ev = String(body.event ?? "").toUpperCase();
+  return ev.startsWith("PURCHASE_") && typeof (body as Record<string, unknown>).data === "object";
+}
+
+function parseHotmart(body: Record<string, unknown>): ParsedSale | null {
+  const ev = String(body.event ?? "").toUpperCase();
+  let status: ParsedSale["status"];
+  if (ev === "PURCHASE_APPROVED" || ev === "PURCHASE_COMPLETE") status = "APPROVED";
+  else if (ev === "PURCHASE_BILLET_PRINTED" || ev === "PURCHASE_WAITING_PAYMENT") status = "PENDING";
+  else if (ev === "PURCHASE_REFUNDED" || ev === "PURCHASE_REVERSED") status = "REFUNDED";
+  else if (ev === "PURCHASE_CANCELLED" || ev === "PURCHASE_EXPIRED" || ev === "PURCHASE_CHARGEBACK") status = "CANCELLED";
+  else return null;
+
+  const data = (body.data ?? {}) as Record<string, unknown>;
+  const buyer = (data.buyer ?? {}) as Record<string, unknown>;
+  const purchase = (data.purchase ?? {}) as Record<string, unknown>;
+  const offer = (purchase.original_offer_price ?? purchase.offer_price ?? {}) as Record<string, unknown>;
+
+  const orderId = String(purchase.transaction ?? purchase.order_id ?? "");
+  if (!orderId) return null;
+
+  const amount = Number(offer.value ?? 0);
+  const planName = String((data.product as Record<string, unknown>)?.name ?? "").trim() || undefined;
+
+  return {
+    gatewayOrderId: orderId,
+    amount,
+    status,
+    customerName: String(buyer.name ?? "").trim() || undefined,
+    customerEmail: String(buyer.email ?? "").trim() || undefined,
+    planName,
+    trackingCode: String(purchase.tracking_source_name ?? "").trim() || undefined,
+  };
+}
+
+// ─── Kirvano ─────────────────────────────────────────────────────────────────
+
+function isKirvano(body: Record<string, unknown>): boolean {
+  const ev = String(body.event ?? "").toLowerCase();
+  return ev.startsWith("sale.") || (typeof body.sale === "object" && body.sale !== null);
+}
+
+function parseKirvano(body: Record<string, unknown>): ParsedSale | null {
+  const ev = String(body.event ?? "").toLowerCase();
+  let status: ParsedSale["status"];
+  if (ev === "sale.approved" || ev === "sale.complete") status = "APPROVED";
+  else if (ev === "sale.pending" || ev === "sale.waiting_payment") status = "PENDING";
+  else if (ev === "sale.refunded") status = "REFUNDED";
+  else if (ev === "sale.cancelled" || ev === "sale.expired") status = "CANCELLED";
+  else return null;
+
+  const sale = (body.sale ?? {}) as Record<string, unknown>;
+  const customer = (body.customer ?? {}) as Record<string, unknown>;
+  const tracking = (body.tracking ?? {}) as Record<string, unknown>;
+
+  const orderId = String(sale.id ?? sale.ref ?? sale.order_id ?? body.id ?? "");
+  if (!orderId) return null;
+
+  // Kirvano sends amount in cents
+  const raw = Number(sale.amount ?? sale.price ?? sale.value ?? 0);
+  const amount = raw > 1000 ? raw / 100 : raw;
+
+  return {
+    gatewayOrderId: orderId,
+    amount,
+    status,
+    customerName: String(customer.name ?? customer.full_name ?? "").trim() || undefined,
+    customerEmail: String(customer.email ?? "").trim() || undefined,
+    planName: String(sale.plan_name ?? sale.product_name ?? "").trim() || undefined,
+    trackingCode: String(tracking.src ?? tracking.utm_source ?? "").trim() || undefined,
+  };
+}
+
+// ─── Eduzz ───────────────────────────────────────────────────────────────────
+
+function isEduzz(body: Record<string, unknown>): boolean {
+  const type = String(body.type ?? "").toLowerCase();
+  return type.startsWith("eduzz:") || typeof body.invoice_key === "string";
+}
+
+function parseEduzz(body: Record<string, unknown>): ParsedSale | null {
+  const type = String(body.type ?? "").toLowerCase();
+  let status: ParsedSale["status"];
+  if (type.includes("paid") || type.includes("approv")) status = "APPROVED";
+  else if (type.includes("pend") || type.includes("await")) status = "PENDING";
+  else if (type.includes("refund") || type.includes("chargeback")) status = "REFUNDED";
+  else if (type.includes("cancel") || type.includes("expir")) status = "CANCELLED";
+  else return null;
+
+  const orderId = String(body.invoice_key ?? body.transaction_id ?? body.order_id ?? "");
+  if (!orderId) return null;
+
+  const amount = Number(body.total_price ?? body.invoice_total ?? body.value ?? 0);
+
+  return {
+    gatewayOrderId: orderId,
+    amount,
+    status,
+    customerName: String(body.client_name ?? body.customer_name ?? "").trim() || undefined,
+    customerEmail: String(body.client_email ?? body.customer_email ?? "").trim() || undefined,
+    planName: String(body.product_name ?? body.plan_name ?? "").trim() || undefined,
+    trackingCode: String(body.tracker ?? body.utm_source ?? "").trim() || undefined,
+  };
+}
+
+// ─── PushinPay ────────────────────────────────────────────────────────────────
+
+function isPushinPay(body: Record<string, unknown>): boolean {
+  const ev = String(body.event ?? "").toLowerCase();
+  return ev.includes("pushin") || String(body.gateway ?? "").toLowerCase() === "pushinpay";
+}
+
+function parsePushinPay(body: Record<string, unknown>): ParsedSale | null {
+  return parseApexVips(body); // similar shape
+}
+
+// ─── ApexVips native webhook ─────────────────────────────────────────────────
+
 // ApexVips native webhook — handles multiple event name variants
 export function parseApexVips(body: Record<string, unknown>): ParsedSale | null {
   const event = String(body.event ?? body.type ?? body.action ?? body.notification_type ?? "").toLowerCase();

@@ -52,29 +52,43 @@ async function notifyAdmin(newUserEmail: string) {
 }
 
 export async function POST(request: Request) {
-  const { email, password, name } = await request.json() as { email?: string; password?: string; name?: string };
-  if (!email || !password) {
-    return NextResponse.json({ error: "Email e senha são obrigatórios" }, { status: 400 });
+  try {
+    const body = await request.json() as { email?: string; password?: string; name?: string };
+    const { email, password, name } = body;
+
+    if (!email || !password) {
+      return NextResponse.json({ error: "Email e senha são obrigatórios" }, { status: 400 });
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("[register] SUPABASE_SERVICE_ROLE_KEY não configurada");
+      return NextResponse.json({ error: "Configuração do servidor incompleta" }, { status: 500 });
+    }
+
+    const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
+    const isAdmin = email === adminEmail;
+
+    const { data, error } = await adminClient().auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { name: name?.trim() || undefined },
+      app_metadata: { approved: isAdmin ? true : false },
+      email_confirm: true,
+    });
+
+    if (error) {
+      console.error("[register] Supabase error:", error.message);
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+
+    if (!isAdmin && data.user) {
+      void notifyAdmin(email);
+    }
+
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[register] Erro inesperado:", msg);
+    return NextResponse.json({ error: "Erro interno. Tente novamente." }, { status: 500 });
   }
-
-  const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
-  const isAdmin = email === adminEmail;
-
-  const { data, error } = await adminClient().auth.admin.createUser({
-    email,
-    password,
-    user_metadata: { name: name?.trim() || undefined },
-    app_metadata: { approved: isAdmin ? true : false },
-    email_confirm: true,
-  });
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 });
-  }
-
-  if (!isAdmin && data.user) {
-    void notifyAdmin(email);
-  }
-
-  return NextResponse.json({ ok: true });
 }

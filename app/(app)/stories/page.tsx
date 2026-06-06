@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   Camera, Loader2, Download, Trash2, CheckCircle, XCircle,
-  Play, Image as ImageIcon, Search, RefreshCw, Send, Users,
+  Play, Image as ImageIcon, RefreshCw, Send, Users,
   Shuffle, Check, Square, CheckSquare, ChevronDown, ChevronUp,
   UploadCloud,
 } from "lucide-react";
@@ -149,9 +149,6 @@ function StoryCard({ item, onDelete, onDownload, isDeleting, selectable, selecte
 export default function StoriesPage() {
   const [stories, setStories] = useState<StoryItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [username, setUsername] = useState("");
-  const [fetching, setFetching] = useState(false);
-  const [fetchResult, setFetchResult] = useState<{ ok: boolean; text: string } | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
@@ -235,40 +232,6 @@ export default function StoriesPage() {
     if (done > 0) {
       showToast("success", `${done} arquivo(s) enviado(s) com sucesso`);
       await loadStories();
-    }
-  }
-
-  async function handleFetch() {
-    const clean = username.replace(/^@/, "").trim();
-    if (!clean || fetching) return;
-    setFetching(true);
-    setFetchResult(null);
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 80_000);
-      let res: Response;
-      try {
-        res = await fetch("/api/stories", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: clean }),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-      }
-      const d = await res.json();
-      if (res.ok) {
-        setFetchResult({ ok: true, text: `${d.saved} stor${d.saved !== 1 ? "ies" : "y"} de @${clean} salvo${d.saved !== 1 ? "s" : ""}!` });
-        await loadStories();
-      } else {
-        setFetchResult({ ok: false, text: d.error ?? "Erro ao buscar stories" });
-      }
-    } catch (err) {
-      const isAbort = err instanceof DOMException && err.name === "AbortError";
-      setFetchResult({ ok: false, text: isAbort ? "Tempo limite atingido. Tente novamente." : "Erro de conexão" });
-    } finally {
-      setFetching(false);
     }
   }
 
@@ -420,45 +383,6 @@ export default function StoriesPage() {
             <RefreshCw size={14} />
           </button>
         </div>
-      </div>
-
-      {/* Fetch panel */}
-      <div className="glass-panel" style={{ padding: "1.5rem", marginBottom: "2rem" }}>
-        <p style={{ fontSize: ".8rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".1em", marginBottom: "1rem" }}>
-          Buscar Stories de um Perfil
-        </p>
-        <div style={{ display: "flex", gap: ".75rem" }}>
-          <div style={{ flex: 1, display: "flex", alignItems: "center", gap: ".5rem", padding: "0 14px", borderRadius: "10px", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)" }}>
-            <span style={{ color: "#555", fontWeight: 600 }}>@</span>
-            <input
-              value={username}
-              onChange={e => setUsername(e.target.value.replace(/^@/, ""))}
-              onKeyDown={e => e.key === "Enter" && handleFetch()}
-              placeholder="usuario"
-              style={{ flex: 1, background: "none", border: "none", outline: "none", fontSize: ".9rem", color: "#f0f0f0", fontFamily: "var(--font-sans)", padding: "12px 0" }}
-            />
-          </div>
-          <button
-            onClick={handleFetch}
-            disabled={fetching || !username.trim()}
-            className="btn btn-primary"
-            style={{ display: "flex", alignItems: "center", gap: ".5rem", whiteSpace: "nowrap", opacity: !username.trim() ? .5 : 1 }}
-          >
-            {fetching ? <Loader2 size={15} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={15} />}
-            {fetching ? "Buscando (pode levar ~30s)..." : "Buscar Stories"}
-          </button>
-        </div>
-
-        {fetchResult && (
-          <div style={{ marginTop: ".875rem", padding: ".75rem 1rem", borderRadius: "9px", background: fetchResult.ok ? "rgba(34,197,94,.08)" : "rgba(239,68,68,.08)", border: `1px solid ${fetchResult.ok ? "rgba(34,197,94,.2)" : "rgba(239,68,68,.2)"}`, display: "flex", alignItems: "center", gap: ".5rem" }}>
-            {fetchResult.ok ? <CheckCircle size={14} color="#4ade80" /> : <XCircle size={14} color="#f87171" />}
-            <span style={{ fontSize: ".875rem", color: fetchResult.ok ? "#4ade80" : "#f87171" }}>{fetchResult.text}</span>
-          </div>
-        )}
-
-        <p style={{ marginTop: ".875rem", fontSize: ".75rem", color: "#444" }}>
-          Stories são salvos permanentemente na sua biblioteca. Perfis privados requerem acesso à conta.
-        </p>
       </div>
 
       {/* Upload panel */}

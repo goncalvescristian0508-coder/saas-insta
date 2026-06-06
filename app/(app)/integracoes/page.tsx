@@ -5,7 +5,7 @@ import { useState, useEffect } from "react";
 
 const WEBHOOK_BASE = typeof window !== "undefined" ? window.location.origin : "";
 
-interface IgAccount { id: string; username: string; }
+interface IgAccount { id: string; username: string; accountStatus?: string; }
 interface AccountsResponse { accounts: IgAccount[]; userId: string; }
 
 interface ApifyToken { id: string; label: string; tokenMasked: string; isActive: boolean; createdAt: string; }
@@ -36,7 +36,8 @@ export default function IntegracoesPage() {
     ]).then(([intData, accData, apifyData]) => {
       setConfigs(intData.integrations ?? {});
       setDrafts(intData.integrations ?? {});
-      setAccounts((accData as AccountsResponse).accounts ?? []);
+      const allAccounts = (accData as AccountsResponse).accounts ?? [];
+      setAccounts(allAccounts.filter((a) => !a.accountStatus || a.accountStatus === "ACTIVE"));
       setUserId((accData as AccountsResponse).userId ?? "");
       setApifyTokens(apifyData.tokens ?? []);
     }).finally(() => setLoading(false));
@@ -135,7 +136,7 @@ export default function IntegracoesPage() {
         <h1 className="page-title" style={{ marginBottom: 0 }}>Integrações</h1>
       </div>
       <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", marginBottom: "2rem" }}>
-        Configure o webhook da ApexVips e o bot do Telegram para rastreio de vendas.
+        Configure webhooks universais para rastreio de vendas — compatível com ApexVips, Kirvano, Hotmart, Eduzz e outras plataformas.
       </p>
 
       {/* Apify Tokens */}
@@ -207,10 +208,10 @@ export default function IntegracoesPage() {
         </Section>
       </div>
 
-      {/* ApexVips */}
-      <Section title="ApexVips — Rastreio por Conta" color="#f97316" badge="Tracking">
-        <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "1rem" }}>
-          Configure <strong style={{ color: "#fff" }}>um único webhook</strong> na ApexVips. O SaaS identifica automaticamente de qual conta veio a venda pelo <code style={{ color: "#93c5fd", fontSize: "0.75rem" }}>utm_source</code> do link de oferta.
+      {/* Universal Webhook */}
+      <Section title="Webhook Universal — Rastreio por Conta" color="#f97316" badge="Tracking">
+        <p style={{ fontSize: "0.8rem", color: "var(--text-secondary)", marginBottom: "0.5rem" }}>
+          Configure <strong style={{ color: "#fff" }}>um único webhook</strong> em qualquer plataforma. O sistema detecta automaticamente a origem e atribui a venda à conta correta pelo <code style={{ color: "#93c5fd", fontSize: "0.75rem" }}>utm_source</code> do link de oferta.
         </p>
 
         {accounts.length === 0 ? (
@@ -220,10 +221,10 @@ export default function IntegracoesPage() {
             {/* Step 1: single stable webhook URL */}
             <div style={{ marginBottom: "1rem" }}>
               <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                Passo 1 — Cole este webhook na ApexVips (único para todas as contas)
+                Passo 1 — Cole este webhook na sua plataforma (único para todas as contas)
               </p>
               {(() => {
-                const webhookUrl = `${WEBHOOK_BASE}/api/webhooks/apexvips/u/${userId}`;
+                const webhookUrl = `${WEBHOOK_BASE}/api/webhooks/u/${userId}`;
                 return (
                   <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.6rem 0.75rem", borderRadius: "8px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
                     <code style={{ flex: 1, fontSize: "0.75rem", color: "#93c5fd", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{webhookUrl}</code>
@@ -238,7 +239,7 @@ export default function IntegracoesPage() {
             {/* Step 2: offer base URL */}
             <div style={{ marginBottom: "1rem" }}>
               <p style={{ fontSize: "0.75rem", fontWeight: 700, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.07em" }}>
-                Passo 2 — Cole o link da sua oferta na ApexVips
+                Passo 2 — Cole o link base da sua oferta
               </p>
               <Field label="" placeholder="https://pay.apexvips.com/b/xxxxxxxx"
                 value={drafts["apexvips"]?.offerUrl ?? ""}
@@ -277,7 +278,7 @@ export default function IntegracoesPage() {
         )}
 
         <div style={{ marginTop: "1rem", padding: "0.75rem", borderRadius: "8px", background: "rgba(249,115,22,0.06)", border: "1px solid rgba(249,115,22,0.15)", fontSize: "0.78rem", color: "var(--text-muted)", lineHeight: 1.6 }}>
-          <strong style={{ color: "var(--text-secondary)" }}>Eventos:</strong> ative <code style={{ color: "#93c5fd" }}>Payment Created</code> e <code style={{ color: "#93c5fd" }}>Payment Approved</code> no webhook da Apex. A venda será atribuída à conta cujo link de oferta foi usado (via <code style={{ color: "#93c5fd" }}>utm_source</code>).
+          <strong style={{ color: "var(--text-secondary)" }}>Como configurar:</strong> cole o webhook na plataforma de vendas e ative os eventos de <code style={{ color: "#93c5fd" }}>pagamento criado</code> e <code style={{ color: "#93c5fd" }}>pagamento aprovado</code>. A venda será atribuída à conta cujo link de oferta foi usado (via <code style={{ color: "#93c5fd" }}>utm_source</code>).
         </div>
 
         <SaveButton type="apexvips" saving={saving} saved={saved} onSave={handleSave} />

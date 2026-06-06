@@ -438,7 +438,7 @@ export default function LibraryPage() {
                   <video
                     src={video.publicUrl}
                     style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.7 }}
-                    preload="metadata"
+                    preload="none"
                     muted
                   />
                   <div style={{

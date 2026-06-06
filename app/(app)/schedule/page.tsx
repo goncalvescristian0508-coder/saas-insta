@@ -63,7 +63,7 @@ function PostCard({ s, deletingId, onDelete, onRetry, retryingId }: {
     <div className="glass-panel" style={{ padding: "1.1rem 1.25rem", borderRadius: "12px", display: "flex", gap: "1rem", alignItems: "flex-start" }}>
       <div style={{ width: "56px", height: "56px", borderRadius: "8px", background: "#0a0c14", overflow: "hidden", flexShrink: 0 }}>
         {s.video?.publicUrl
-          ? <video src={s.video.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="metadata" />
+          ? <video src={s.video.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover" }} muted preload="none" />
           : <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}><Copy size={18} color="var(--text-muted)" /></div>}
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -271,6 +271,7 @@ export default function SchedulePage() {
   const [confirmClear, setConfirmClear] = useState<null | "pending" | "done" | "failed" | "all">(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; msg: string } | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "calendar">("list");
+  const [statusFilter, setStatusFilter] = useState<"all" | "PENDING" | "DONE" | "FAILED">("all");
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [calSelected, setCalSelected] = useState<string | null>(null);
 
@@ -319,6 +320,18 @@ export default function SchedulePage() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  // Auto-refresh every 30s while there are pending/running posts
+  useEffect(() => {
+    const hasPendingOrRunning = schedules.some(s => s.status === "PENDING" || s.status === "RUNNING");
+    if (!hasPendingOrRunning) return;
+    const iv = setInterval(async () => {
+      const res = await fetch("/api/schedule");
+      const data = await res.json();
+      setSchedules(data.schedules ?? []);
+    }, 30_000);
+    return () => clearInterval(iv);
+  }, [schedules]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -417,6 +430,8 @@ export default function SchedulePage() {
     }
     setDeletingId(null);
   }
+
+  const filteredSchedules = statusFilter === "all" ? schedules : schedules.filter(s => s.status === statusFilter || (statusFilter === "PENDING" && s.status === "RUNNING"));
 
   if (loadingPage) {
     return (
@@ -669,7 +684,7 @@ export default function SchedulePage() {
         {/* Schedule List / Calendar */}
         <div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
               <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-secondary)" }}>Posts Agendados</h2>
               <div style={{ display: "flex", borderRadius: "8px", overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
                 {(["list", "calendar"] as const).map((m) => (
@@ -678,6 +693,25 @@ export default function SchedulePage() {
                   </button>
                 ))}
               </div>
+              {viewMode === "list" && schedules.length > 0 && (
+                <div style={{ display: "flex", borderRadius: "8px", overflow: "hidden", border: "1px solid rgba(255,255,255,0.08)" }}>
+                  {([
+                    { key: "all", label: "Todos" },
+                    { key: "PENDING", label: "Pendentes" },
+                    { key: "DONE", label: "Publicados" },
+                    { key: "FAILED", label: "Falhos" },
+                  ] as const).map(({ key, label }) => {
+                    const count = key === "all" ? schedules.length : schedules.filter(s => s.status === key || (key === "PENDING" && s.status === "RUNNING")).length;
+                    const active = statusFilter === key;
+                    return (
+                      <button key={key} onClick={() => setStatusFilter(key)} style={{ padding: "0.3rem 0.65rem", background: active ? "rgba(201,162,39,0.15)" : "transparent", border: "none", color: active ? "var(--accent-gold)" : "var(--text-muted)", fontSize: "0.73rem", fontWeight: 600, cursor: "pointer", transition: "all 0.15s", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                        {label}
+                        {count > 0 && <span style={{ fontSize: "0.65rem", background: active ? "rgba(201,162,39,0.25)" : "rgba(255,255,255,0.08)", borderRadius: "10px", padding: "0 5px", minWidth: "16px", textAlign: "center" }}>{count}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             {schedules.length > 0 && (
               <div style={{ display: "flex", gap: "0.4rem" }}>
@@ -724,9 +758,13 @@ export default function SchedulePage() {
               onRetry={(id) => void handleRetry(id)}
               retryingId={retryingId}
             />
+          ) : filteredSchedules.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "2rem", background: "rgba(12,16,24,0.5)", borderRadius: "14px", border: "1px solid var(--border-color)" }}>
+              <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Nenhum post neste filtro</p>
+            </div>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-              {schedules.map((s) => (
+              {filteredSchedules.map((s) => (
                 <PostCard key={s.id} s={s} deletingId={deletingId} onDelete={(id) => void deleteSchedule(id)} onRetry={(id) => void handleRetry(id)} retryingId={retryingId} />
               ))}
             </div>
