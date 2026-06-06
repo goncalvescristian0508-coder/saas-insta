@@ -83,13 +83,16 @@ async function runCron() {
     data: { status: "PENDING" },
   });
 
-  // Retry failed posts up to 3 times (1 min interval). Rate-limit posts are protected — their scheduledAt is 4h ahead.
+  // Retry failed posts up to 6 times total:
+  // Round 1 (retryCount 0-2): quick retries every 1 min
+  // Round 2 (retryCount 3-5): after 4h delay, 3 more quick retries
+  // retryCount >= 6 = permanently failed, no more retries
   const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
   await prisma.scheduledPost.updateMany({
     where: {
       status: "FAILED",
       scheduledAt: { lte: now },
-      retryCount: { lt: 3 },
+      retryCount: { lt: 6 },
       updatedAt: { lte: oneMinuteAgo },
     },
     data: { status: "PENDING", errorMsg: null },
@@ -384,7 +387,10 @@ async function runCron() {
         return { id: post.id, status: "quarantine" };
       }
 
-      const exhaustedRetries = newRetryCount >= 3;
+      // Round 1 done (3 quick retries exhausted): delay 4h silently, then round 2 starts
+      const round1Done = newRetryCount === 3;
+      // Round 2 done (6 total retries exhausted): permanently failed, notify user
+      const exhaustedRetries = newRetryCount >= 6;
 
       if (isRateLimit) {
         // Check if care mode was already activated recently (last 3h) to avoid repeated triggers
@@ -420,18 +426,24 @@ async function runCron() {
           data: { scheduledAt: new Date(now.getTime() + 4 * 60 * 60 * 1000) },
         });
       } else if (exhaustedRetries) {
-        // 3 consecutive failures — enter safety mode: delay post 4h and notify
+        // 6 total failures — permanently failed, notify user
         await prisma.scheduledPost.update({
           where: { id: post.id },
           data: { scheduledAt: new Date(now.getTime() + 4 * 60 * 60 * 1000) },
         });
         await sendPushToUser(post.userId, {
-          title: "Modo segurança ativado",
-          body: `@${accountName}: 3 tentativas falharam. Post adiado por 4h. Erro: ${msg.slice(0, 80)}`,
+          title: "Post falhou definitivamente",
+          body: `@${accountName}: 6 tentativas sem sucesso. Verifique a conta e reagende. Erro: ${msg.slice(0, 70)}`,
           url: "/schedule",
         });
+      } else if (round1Done) {
+        // 3 quick retries done — delay 4h and try 3 more times (round 2), no notification yet
+        await prisma.scheduledPost.update({
+          where: { id: post.id },
+          data: { scheduledAt: new Date(now.getTime() + 4 * 60 * 60 * 1000) },
+        });
       }
-      // else: still has retries left — silent retry in 1 min, no notification spam
+      // else: still has retries left in current round — silent retry in 1 min
 
       return { id: post.id, status: "failed", error: msg };
     } finally {
