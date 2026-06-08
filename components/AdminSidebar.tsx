@@ -4,7 +4,7 @@ import NextLink from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   LayoutDashboard, Users, Tag, AlertTriangle,
-  Activity, Megaphone, LogOut, Shield, ExternalLink, UserCheck, UserPlus, TrendingUp,
+  Activity, Megaphone, LogOut, Shield, ExternalLink, UserCheck, UserPlus, TrendingUp, Bot,
 } from "lucide-react";
 import { useState, useEffect, Suspense } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -53,6 +53,7 @@ function AdminNavItem({
 
 function SidebarInner() {
   const searchParams = useSearchParams();
+  const pathname = usePathname();
   const router = useRouter();
   const activeTab = searchParams.get("tab") ?? "dashboard";
   const [userEmail,  setUserEmail]  = useState<string | null>(null);
@@ -134,6 +135,17 @@ function SidebarInner() {
             />
           ))}
         </div>
+
+        <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "10px 8px" }} />
+
+        <p style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: "0.09em",
+          textTransform: "uppercase", color: "#52525B",
+          padding: "6px 10px 4px", lineHeight: 1,
+        }}>
+          Bot
+        </p>
+        <AdminNavItem href="/admin/criar-contas" active={pathname === "/admin/criar-contas"} icon={Bot} label="Criar Contas IG" />
 
         <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "10px 8px" }} />
 
