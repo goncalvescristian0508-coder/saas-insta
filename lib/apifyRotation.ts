@@ -14,7 +14,7 @@ const DB_KEY = "apify_exhausted_tokens";
 /** In-memory cache to avoid DB reads on every call within the same process. */
 let cachedExhausted: Set<string> | null = null;
 
-async function loadExhaustedTokens(): Promise<Set<string>> {
+export async function loadExhaustedTokens(): Promise<Set<string>> {
   if (cachedExhausted !== null) return cachedExhausted;
   try {
     const row = await prisma.appSetting.findUnique({ where: { key: DB_KEY } });
@@ -26,7 +26,7 @@ async function loadExhaustedTokens(): Promise<Set<string>> {
   return cachedExhausted;
 }
 
-async function persistExhaustedToken(token: string): Promise<void> {
+export async function persistExhaustedToken(token: string): Promise<void> {
   const set = await loadExhaustedTokens();
   set.add(token);
   try {

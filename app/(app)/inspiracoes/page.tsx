@@ -1,6 +1,6 @@
 "use client";
 
-import { Search, Plus, X, Download, Play, FolderOpen, Trash2, ExternalLink, Sparkles, Loader2, AlertTriangle, Heart, MessageCircle, Eye, CalendarPlus } from "lucide-react";
+import { Search, Plus, X, Download, Play, FolderOpen, Trash2, ExternalLink, RefreshCw, Loader2, AlertTriangle, Heart, MessageCircle, Eye, CalendarPlus } from "lucide-react";
 import { useState, useEffect } from "react";
 
 interface VideoItem {
@@ -33,7 +33,9 @@ export default function InspiracoesPage() {
   const [searchError, setSearchError] = useState("");
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [downloadingIds, setDownloadingIds] = useState<Set<number>>(new Set());
+  const [downloadErrorId, setDownloadErrorId] = useState<number | null>(null);
   const [modelToDelete, setModelToDelete] = useState<number | null>(null);
+  const [refreshingModelId, setRefreshingModelId] = useState<number | null>(null);
 
   const [isLoaded, setIsLoaded] = useState(false);
 
@@ -118,14 +120,15 @@ export default function InspiracoesPage() {
 
   const handleDownload = async (video: VideoItem) => {
     if (!video.videoUrl) {
-      alert("URL do vídeo não disponível.");
+      setDownloadErrorId(video.id);
+      setTimeout(() => setDownloadErrorId(null), 3000);
       return;
     }
 
     setDownloadingIds((prev) => new Set(prev).add(video.id));
+    setDownloadErrorId(null);
 
     try {
-      // Baixar via proxy para evitar CORS e limpar metadados
       const res = await fetch("/api/instagram/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -133,7 +136,7 @@ export default function InspiracoesPage() {
       });
 
       if (!res.ok) {
-        throw new Error("Erro no download");
+        throw new Error("url_expired");
       }
 
       const blob = await res.blob();
@@ -145,14 +148,42 @@ export default function InspiracoesPage() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-    } catch (err) {
-      alert("Erro ao baixar vídeo. Tente novamente.");
+    } catch {
+      setDownloadErrorId(video.id);
+      setTimeout(() => setDownloadErrorId(null), 4000);
     } finally {
       setDownloadingIds((prev) => {
         const next = new Set(prev);
         next.delete(video.id);
         return next;
       });
+    }
+  };
+
+  const handleRefreshModel = async (model: Model) => {
+    setRefreshingModelId(model.id);
+    try {
+      const res = await fetch("/api/instagram/scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: model.username }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.videos?.length) return;
+
+      const refreshed: Model = {
+        ...model,
+        fullName: data.profile.fullName || model.fullName,
+        profilePicUrl: data.profile.profilePicUrl || model.profilePicUrl,
+        totalVideos: data.totalVideos,
+        videos: data.videos,
+      };
+      setModels((ms) => ms.map((m) => (m.id === model.id ? refreshed : m)));
+      if (selectedModel?.id === model.id) setSelectedModel(refreshed);
+    } catch {
+      // silently fail — user can retry
+    } finally {
+      setRefreshingModelId(null);
     }
   };
 
@@ -402,18 +433,23 @@ export default function InspiracoesPage() {
                             disabled={isDownloading}
                             style={{
                               flex: 1, padding: "0.6rem",
-                              background: isDownloading ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.15)",
-                              border: "1px solid rgba(255,255,255,0.2)",
+                              background: downloadErrorId === video.id
+                                ? "rgba(239,68,68,0.2)"
+                                : isDownloading ? "rgba(255,255,255,0.1)" : "rgba(255,255,255,0.15)",
+                              border: `1px solid ${downloadErrorId === video.id ? "rgba(239,68,68,0.5)" : "rgba(255,255,255,0.2)"}`,
                               borderRadius: "8px", cursor: isDownloading ? "default" : "pointer",
-                              color: "#fff", fontSize: "0.8rem", fontWeight: 500,
+                              color: downloadErrorId === video.id ? "#fca5a5" : "#fff",
+                              fontSize: "0.8rem", fontWeight: 500,
                               display: "flex", alignItems: "center", justifyContent: "center", gap: "0.4rem",
                               transition: "all 0.2s", fontFamily: "inherit",
                             }}
-                            onMouseEnter={(e) => { if (!isDownloading) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.25)"; }}
-                            onMouseLeave={(e) => { if (!isDownloading) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.15)"; }}
+                            onMouseEnter={(e) => { if (!isDownloading && downloadErrorId !== video.id) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.25)"; }}
+                            onMouseLeave={(e) => { if (!isDownloading && downloadErrorId !== video.id) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.15)"; }}
                           >
                             {isDownloading ? (
                               <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> ...</>
+                            ) : downloadErrorId === video.id ? (
+                              <><AlertTriangle size={14} /> URL expirada</>
                             ) : (
                               <><Download size={14} /> Baixar</>
                             )}
@@ -520,6 +556,21 @@ export default function InspiracoesPage() {
                     style={{ padding: "0.4rem 1rem", fontSize: "0.85rem", borderRadius: "8px" }}
                   >
                     <ExternalLink size={14} /> Ver Vídeos
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleRefreshModel(model); }}
+                    disabled={refreshingModelId === model.id}
+                    title="Atualizar URLs dos vídeos"
+                    style={{
+                      background: "none", border: "none", cursor: refreshingModelId === model.id ? "default" : "pointer",
+                      color: "var(--text-secondary)", padding: "0.5rem",
+                      borderRadius: "8px", transition: "all 0.2s",
+                      opacity: refreshingModelId === model.id ? 0.5 : 1,
+                    }}
+                    onMouseEnter={(e) => { if (refreshingModelId !== model.id) { e.currentTarget.style.color = "#3b82f6"; e.currentTarget.style.backgroundColor = "rgba(59,130,246,0.1)"; } }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; e.currentTarget.style.backgroundColor = "transparent"; }}
+                  >
+                    <RefreshCw size={16} style={refreshingModelId === model.id ? { animation: "spin 1s linear infinite" } : {}} />
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); setModelToDelete(model.id); }}
