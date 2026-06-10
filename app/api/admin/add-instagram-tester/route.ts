@@ -359,7 +359,7 @@ export async function POST(request: Request) {
         const res = await fetch(`${puppeteerServiceUrl}/add-tester`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username: clean, secret: puppeteerServiceSecret }),
+          body: JSON.stringify({ username: clean, appId, secret: puppeteerServiceSecret }),
         });
         const data = await res.json() as { ok: boolean; error?: string };
         return { username: clean, ok: data.ok, error: data.error, method: "puppeteer" };

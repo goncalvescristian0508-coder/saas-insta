@@ -37,7 +37,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     where: { id, userId: user.id },
     include: {
       posts: {
-        include: { account: { select: { username: true } } },
+        include: {
+          account: { select: { username: true } },
+          video: { select: { publicUrl: true, coverUrl: true } },
+        },
         orderBy: { scheduledAt: "asc" },
       },
     },
@@ -61,6 +64,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         status: p.status,
         errorMsg: p.errorMsg,
         postedAt: p.postedAt,
+        videoPublicUrl: p.video?.publicUrl ?? p.rawVideoUrl ?? null,
+        coverUrl: p.video?.coverUrl ?? null,
       })),
     },
   });

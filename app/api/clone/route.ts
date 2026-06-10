@@ -5,6 +5,9 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { randomUUID, createHash } from "crypto";
+import { scrapeIgProfileAndReels } from "@/lib/instagramProxyScraper";
+import { hikerScrapeProfileAndReels } from "@/lib/hikerApiScraper";
+import { rapidScrapeProfileAndReels } from "@/lib/rapidApiScraper";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -18,6 +21,8 @@ function storageAdmin() {
   );
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 async function apifyRun(token: string, actorId: string, input: object): Promise<Record<string, unknown>[]> {
   const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/run-sync-get-dataset-items?token=${token}&timeout=240&memory=512`;
   const res = await fetch(url, {
@@ -30,7 +35,32 @@ async function apifyRun(token: string, actorId: string, input: object): Promise<
     const err = await res.json().catch(() => ({})) as { error?: { message?: string } };
     throw new Error(err.error?.message || `Apify HTTP ${res.status}`);
   }
-  return res.json() as Promise<Record<string, unknown>[]>;
+  const data = await res.json();
+  if (!Array.isArray(data)) {
+    const run = data as { status?: string };
+    throw new Error(`Actor run did not succeed (status: ${run.status ?? "UNKNOWN"})`);
+  }
+  return data as Record<string, unknown>[];
+}
+
+function isApifyQuotaError(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return m.includes("monthly") || m.includes("limit") || m.includes("billing") ||
+    m.includes("quota") || m.includes("credit") || m.includes("401") || m.includes("402");
+}
+
+async function apifyRunWithRetry(token: string, actorId: string, input: object): Promise<Record<string, unknown>[]> {
+  let lastErr: Error = new Error("Apify falhou");
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await apifyRun(token, actorId, input);
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (isApifyQuotaError(lastErr.message)) throw lastErr; // quota errors — don't retry
+      if (attempt < 2) await sleep(4000 * (attempt + 1));
+    }
+  }
+  throw lastErr;
 }
 
 async function updateBio(accessToken: string, igUserId: string, biography: string): Promise<void> {
@@ -47,13 +77,38 @@ async function downloadReelToLibrary(
   userId: string,
   caption: string,
   index: number,
+  thumbnailUrl?: string | null,
+  globalCoverUrl?: string | null,
 ): Promise<{ id: string; publicUrl: string } | null> {
   try {
     const urlHash = createHash("md5").update(videoUrl).digest("hex");
     const storagePath = `cloned/${userId}/${urlHash}.mp4`;
+    const shortCaption = caption.slice(0, 60) || `Reel ${index + 1}`;
 
-    const existing = await prisma.libraryVideo.findFirst({ where: { userId, storagePath } });
-    if (existing) return { id: existing.id, publicUrl: existing.publicUrl };
+    // Primary check: exact URL hash match
+    let existing = await prisma.libraryVideo.findFirst({ where: { userId, storagePath } });
+
+    // Secondary check: same caption (handles CDN URL rotations for same video)
+    if (!existing && shortCaption.length > 20) {
+      existing = await prisma.libraryVideo.findFirst({
+        where: { userId, originalName: shortCaption, storagePath: { startsWith: `cloned/${userId}/` } },
+      });
+    }
+
+    if (existing) {
+      // Apply global cover if set; otherwise backfill from thumbnail if missing
+      const desiredCover = globalCoverUrl ?? null;
+      if (desiredCover && existing.coverUrl !== desiredCover) {
+        await prisma.libraryVideo.update({ where: { id: existing.id }, data: { coverUrl: desiredCover } }).catch(() => {});
+      } else if (!existing.coverUrl && thumbnailUrl) {
+        const coverStoragePath = await uploadThumbnail(thumbnailUrl, userId, urlHash);
+        if (coverStoragePath) {
+          const { data: pub } = storageAdmin().storage.from("library-videos").getPublicUrl(coverStoragePath);
+          await prisma.libraryVideo.update({ where: { id: existing.id }, data: { coverUrl: pub.publicUrl } }).catch(() => {});
+        }
+      }
+      return { id: existing.id, publicUrl: existing.publicUrl };
+    }
 
     const res = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return null;
@@ -66,7 +121,17 @@ async function downloadReelToLibrary(
     if (error) return null;
 
     const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
-    const shortCaption = caption.slice(0, 60) || `Reel ${index + 1}`;
+
+    // Use global cover if available, otherwise upload the Apify thumbnail
+    let coverUrl: string | null = globalCoverUrl ?? null;
+    if (!coverUrl && thumbnailUrl) {
+      const coverPath = await uploadThumbnail(thumbnailUrl, userId, urlHash);
+      if (coverPath) {
+        const { data: coverPub } = admin.storage.from("library-videos").getPublicUrl(coverPath);
+        coverUrl = coverPub.publicUrl;
+      }
+    }
+
     const record = await prisma.libraryVideo.create({
       data: {
         userId,
@@ -76,9 +141,25 @@ async function downloadReelToLibrary(
         publicUrl: pub.publicUrl,
         sizeBytes: buffer.length,
         mimeType: "video/mp4",
+        coverUrl,
       },
     });
     return { id: record.id, publicUrl: pub.publicUrl };
+  } catch {
+    return null;
+  }
+}
+
+async function uploadThumbnail(thumbnailUrl: string, userId: string, hash: string): Promise<string | null> {
+  try {
+    const res = await fetch(thumbnailUrl, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    const coverPath = `cloned/${userId}/covers/${hash}.jpg`;
+    const { error } = await storageAdmin().storage
+      .from("library-videos")
+      .upload(coverPath, buf, { contentType: "image/jpeg", upsert: true });
+    return error ? null : coverPath;
   } catch {
     return null;
   }
@@ -123,16 +204,17 @@ async function scrapeAndSaveMedia(
 }
 
 async function downloadVideosBackground(
-  reels: Array<{ videoUrl: string; caption: string }>,
+  reels: Array<{ videoUrl: string; caption: string; thumbnailUrl?: string | null }>,
   userId: string,
   cloneJobId: string,
+  globalCoverUrl?: string | null,
 ) {
   const BATCH = 3;
   for (let i = 0; i < reels.length; i += BATCH) {
     const batch = reels.slice(i, i + BATCH);
     await Promise.all(
       batch.map(async (reel, j) => {
-        const lib = await downloadReelToLibrary(reel.videoUrl, userId, reel.caption, i + j);
+        const lib = await downloadReelToLibrary(reel.videoUrl, userId, reel.caption, i + j, reel.thumbnailUrl, globalCoverUrl);
         if (lib) {
           await prisma.scheduledPost.updateMany({
             where: { cloneJobId, rawVideoUrl: reel.videoUrl, status: "PENDING" },
@@ -158,6 +240,7 @@ interface ProcessParams {
   cloneHighlights: boolean;
   alternateSequence: boolean;
   groupSize: number;
+  globalCoverUrl?: string | null;
 }
 
 async function processCloneJob(p: ProcessParams) {
@@ -166,21 +249,91 @@ async function processCloneJob(p: ProcessParams) {
     let profileItems: Record<string, unknown>[] = [];
     let usedToken = p.tokens[0];
 
-    for (const t of p.tokens) {
+    function mapReels(reels: { videoUrl: string; caption: string; shortCode: string; thumbnailUrl: string; likes: number; comments: number; views: number; timestamp: string }[]): Record<string, unknown>[] {
+      return reels.map((r) => ({
+        videoUrl: r.videoUrl, caption: r.caption, shortCode: r.shortCode,
+        displayUrl: r.thumbnailUrl, likesCount: r.likes, commentsCount: r.comments,
+        videoViewCount: r.views, timestamp: r.timestamp,
+      }));
+    }
+    function mapProfile(p2: { fullName: string; biography: string; profilePicUrl: string; followersCount: number }): Record<string, unknown> {
+      return { fullName: p2.fullName, biography: p2.biography, profilePicUrl: p2.profilePicUrl, profilePicUrlHD: p2.profilePicUrl, followersCount: p2.followersCount };
+    }
+
+    // ── 1st: direct Instagram API via DataImpulse residential proxy ──
+    let usedProxy = false;
+    try {
+      const { profile: igProfile, reels: igReels } = await scrapeIgProfileAndReels(p.cleanUsername, p.postLimit ?? 9999);
+      profileItems = [mapProfile(igProfile)];
+      reelsItems = mapReels(igReels);
+      usedProxy = true;
+    } catch (proxyErr) {
+      console.log("[clone] private-api failed:", proxyErr instanceof Error ? proxyErr.message : proxyErr);
+    }
+
+    // ── 2nd: HikerAPI ──
+    if (!usedProxy && process.env.HIKERAPI_KEY) {
       try {
-        [reelsItems, profileItems] = await Promise.all([
-          apifyRun(t, "apify/instagram-reel-scraper", { username: [p.cleanUsername], resultsLimit: p.postLimit ?? 9999 }),
-          apifyRun(t, "apify/instagram-profile-scraper", { usernames: [p.cleanUsername] }),
-        ]);
-        usedToken = t;
-        break;
-      } catch (err) {
-        const msg = (err instanceof Error ? err.message : String(err)).toLowerCase();
-        if (msg.includes("monthly") || msg.includes("limit") || msg.includes("billing") || msg.includes("quota") || msg.includes("credit") || msg.includes("401") || msg.includes("402")) {
-          continue;
-        }
-        throw err;
+        const { profile: hProfile, reels: hReels } = await hikerScrapeProfileAndReels(p.cleanUsername, p.postLimit ?? 9999);
+        profileItems = [mapProfile(hProfile)];
+        reelsItems = mapReels(hReels);
+        usedProxy = true;
+      } catch (hikerErr) {
+        console.log("[clone] hikerapi failed:", hikerErr instanceof Error ? hikerErr.message : hikerErr);
       }
+    }
+
+    // ── 3rd: RapidAPI Instagram120 ──
+    if (!usedProxy && process.env.RAPIDAPI_KEY) {
+      try {
+        const { profile: rProfile, reels: rReels } = await rapidScrapeProfileAndReels(p.cleanUsername, p.postLimit ?? 9999);
+        profileItems = [mapProfile(rProfile)];
+        reelsItems = mapReels(rReels);
+        usedProxy = true;
+      } catch (rapidErr) {
+        console.log("[clone] rapidapi failed:", rapidErr instanceof Error ? rapidErr.message : rapidErr);
+      }
+    }
+
+    // ── 4th: Apify (with DataImpulse residential proxy to bypass Instagram blocks) ──
+    const diUser = process.env.DATAIMPULSE_USER ?? "";
+    const diPass = process.env.DATAIMPULSE_PASS ?? "";
+    const proxyConfig = diUser && diPass
+      ? { proxyConfiguration: { proxyUrls: [`http://${diUser}:${diPass}@gw.dataimpulse.com:823`] } }
+      : {};
+
+    let lastTokenErr: Error | null = null;
+    if (!usedProxy) {
+      for (const t of p.tokens) {
+        try {
+          [reelsItems, profileItems] = await Promise.all([
+            apifyRunWithRetry(t, "apify/instagram-reel-scraper", { username: [p.cleanUsername], resultsLimit: p.postLimit ?? 9999, ...proxyConfig }),
+            apifyRunWithRetry(t, "apify/instagram-profile-scraper", { usernames: [p.cleanUsername], ...proxyConfig }),
+          ]);
+          // Detect error items (proxy blocked)
+          const profileItem = profileItems[0] ?? {};
+          if (!profileItem.username) {
+            const errMsg = String(profileItem.errorDescription ?? profileItem.error ?? "Perfil bloqueado pelo proxy do Apify");
+            lastTokenErr = new Error(errMsg);
+            continue;
+          }
+          const hasValidReels = reelsItems.some((r) => r.videoUrl || r.shortCode || r.id);
+          if (!hasValidReels && reelsItems.length > 0) {
+            const firstItem = reelsItems[0];
+            const errMsg = String(firstItem.errorDescription ?? firstItem.error ?? (Array.isArray(firstItem.requestErrorMessages) ? (firstItem.requestErrorMessages as string[])[0] : "") ?? "proxy error");
+            lastTokenErr = new Error(errMsg);
+            continue;
+          }
+          usedToken = t;
+          lastTokenErr = null;
+          break;
+        } catch (err) {
+          lastTokenErr = err instanceof Error ? err : new Error(String(err));
+          if (isApifyQuotaError(lastTokenErr.message)) continue;
+          throw lastTokenErr;
+        }
+      }
+      if (lastTokenErr) throw lastTokenErr;
     }
 
     const profileItem = (profileItems[0] ?? {}) as Record<string, unknown>;
@@ -190,12 +343,26 @@ async function processCloneJob(p: ProcessParams) {
     const seenUrls = new Set<string>();
     const reelsRaw = reelsItems
       .filter((r) => r.videoUrl)
-      .map((r) => ({ videoUrl: String(r.videoUrl), caption: String(r.caption ?? "") }))
+      .map((r) => ({
+        videoUrl: String(r.videoUrl),
+        caption: String(r.caption ?? ""),
+        thumbnailUrl: String(r.displayUrl ?? r.thumbnailUrl ?? r.previewUrl ?? "") || null,
+      }))
       .filter((r) => { if (seenUrls.has(r.videoUrl)) return false; seenUrls.add(r.videoUrl); return true; })
       .slice(0, p.postLimit ?? undefined);
 
     if (reelsRaw.length === 0) {
-      await prisma.cloneJob.delete({ where: { id: p.cloneJobId } }).catch(() => null);
+      // Check if Apify returned error items instead of reels
+      const firstItem = (reelsItems[0] ?? {}) as Record<string, unknown>;
+      const hasApifyError = firstItem.requestErrorMessages || firstItem.errorDescription || firstItem.error;
+      const errDesc = hasApifyError
+        ? String(firstItem.errorDescription ?? firstItem.error ?? (Array.isArray(firstItem.requestErrorMessages) ? (firstItem.requestErrorMessages as string[])[0] : "") ?? "")
+        : "";
+      const errorMsg = errDesc || "Nenhum reel encontrado neste perfil. Verifique se o perfil é público e tem reels.";
+      await prisma.cloneJob.update({
+        where: { id: p.cloneJobId },
+        data: { totalReels: -1, errorMsg },
+      }).catch(() => null);
       return;
     }
 
@@ -311,15 +478,18 @@ async function processCloneJob(p: ProcessParams) {
 
     // Download videos to library in background (non-blocking for post scheduling)
     await Promise.all([
-      downloadVideosBackground(reelsRaw, p.userId, p.cloneJobId),
+      downloadVideosBackground(reelsRaw, p.userId, p.cloneJobId, p.globalCoverUrl),
       p.cloneStories ? scrapeAndSaveMedia(usedToken, p.cleanUsername, p.userId, "stories") : Promise.resolve(),
       p.cloneHighlights ? scrapeAndSaveMedia(usedToken, p.cleanUsername, p.userId, "highlights") : Promise.resolve(),
     ]);
 
   } catch (err) {
-    console.error("[clone/processCloneJob]", err instanceof Error ? err.message : err);
-    // Remove the pending job so it doesn't linger with 0 reels
-    await prisma.cloneJob.delete({ where: { id: p.cloneJobId } }).catch(() => null);
+    const errorMsg = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    console.error("[clone/processCloneJob]", errorMsg);
+    await prisma.cloneJob.update({
+      where: { id: p.cloneJobId },
+      data: { totalReels: -1, errorMsg },
+    }).catch(() => null);
   }
 }
 
@@ -340,9 +510,10 @@ export async function POST(request: Request) {
       startAt?: string;
       alternateSequence?: boolean;
       groupSize?: number;
+      globalCoverUrl?: string | null;
     };
 
-    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, cloneStories = false, cloneHighlights = false, startAt, alternateSequence = false, groupSize = 5 } = body;
+    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, cloneStories = false, cloneHighlights = false, startAt, alternateSequence = false, groupSize = 5, globalCoverUrl = null } = body;
     if (!username || !accountIds?.length || !startAt) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }
@@ -357,7 +528,8 @@ export async function POST(request: Request) {
     const systemTokens = (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "")
       .split(",").map((t) => t.trim()).filter(Boolean);
     const tokens = [...userTokens, ...systemTokens];
-    if (tokens.length === 0) return NextResponse.json({ error: "Token Apify não configurado. Adicione em Integrações." }, { status: 500 });
+    // Tokens are used as Apify fallback; proxy scraper runs first so tokens aren't strictly required
+    if (tokens.length === 0) console.warn("[clone] No Apify tokens configured — relying on proxy scraper only");
 
     const accounts = await prisma.instagramOAuthAccount.findMany({
       where: { id: { in: accountIds as string[] }, userId: user.id },
@@ -396,6 +568,7 @@ export async function POST(request: Request) {
       cloneHighlights,
       alternateSequence,
       groupSize: Math.max(1, groupSize),
+      globalCoverUrl: globalCoverUrl || null,
     }));
 
     // Respond immediately — client polls for completion

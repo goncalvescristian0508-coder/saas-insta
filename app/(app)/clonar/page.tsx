@@ -33,6 +33,7 @@ interface CloneJob {
   totalReels: number;
   clonedBio: boolean;
   clonedPhoto: boolean;
+  errorMsg?: string | null;
   createdAt: string;
   posts: { total: number; done: number; failed: number; pending: number };
 }
@@ -45,6 +46,8 @@ interface CloneJobPost {
   status: "PENDING" | "RUNNING" | "DONE" | "FAILED";
   errorMsg: string | null;
   postedAt: string | null;
+  videoPublicUrl: string | null;
+  coverUrl: string | null;
 }
 
 interface CloneJobDetail {
@@ -85,6 +88,7 @@ export default function ClonarPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [retryingPostId, setRetryingPostId] = useState<string | null>(null);
   const [retryingAll, setRetryingAll] = useState(false);
+  const [detailPage, setDetailPage] = useState(0);
   const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
   const [justSaved, setJustSaved] = useState(false);
 
@@ -116,6 +120,7 @@ export default function ClonarPage() {
   const openDetail = async (jobId: string) => {
     setLoadingDetail(true);
     setDetail(null);
+    setDetailPage(0);
     try {
       const res = await fetch(`/api/clone/history/${jobId}`);
       const data = await res.json();
@@ -179,12 +184,19 @@ export default function ClonarPage() {
       setJobs(list);
       const job = list.find((j) => j.id === processingJobId);
       if (!job) {
-        // Job was deleted — Apify failed
         setError("Erro ao buscar postagens do perfil. Tente novamente.");
         setProcessingJobId(null);
-      } else if (job.posts.total > 0) {
-        // Posts created — clone done
-        setResult({ created: job.posts.total, reels: job.totalReels, lastPost: "" });
+      } else if (job.totalReels === -1) {
+        // Processing failed — show specific error from server
+        setError(job.errorMsg || "Erro ao buscar postagens do perfil. Tente novamente.");
+        setProcessingJobId(null);
+      } else if (job.totalReels > 0) {
+        // Apify done — check if any posts were created
+        if (job.posts.total > 0) {
+          setResult({ created: job.posts.total, reels: job.totalReels, lastPost: "" });
+        } else {
+          setError("Todos os reels já foram agendados anteriormente para estas contas (nenhum duplicado criado).");
+        }
         setProcessingJobId(null);
       }
     };
@@ -308,6 +320,7 @@ export default function ClonarPage() {
     setProcessingJobId(null);
     try {
       const startAt = new Date(`${startDate}T${startTime}`).toISOString();
+      const globalCoverUrl = localStorage.getItem("library_global_cover") || null;
       const res = await fetch("/api/clone", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -322,6 +335,7 @@ export default function ClonarPage() {
           startAt,
           alternateSequence,
           groupSize,
+          globalCoverUrl,
         }),
       });
       const data = await res.json();
@@ -374,38 +388,59 @@ export default function ClonarPage() {
                 <button onClick={() => setDetail(null)} style={{ background: "transparent", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: "1.2rem", lineHeight: 1 }}>✕</button>
               </div>
             </div>
-            {/* List */}
+            {/* List — paginated (50/page) to avoid rendering hundreds of DOM nodes at once */}
             <div style={{ overflowY: "auto", padding: "1rem 1.5rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
               {loadingDetail ? (
                 <div style={{ textAlign: "center", padding: "2rem" }}><Loader2 size={24} style={{ animation: "spin 1s linear infinite" }} /></div>
-              ) : detail?.posts.map((p) => {
-                const cfg = statusConfig[p.status];
+              ) : (() => {
+                const PAGE_SIZE = 50;
+                const allPosts = detail?.posts ?? [];
+                const visiblePosts = allPosts.slice(0, (detailPage + 1) * PAGE_SIZE);
+                const hasMore = visiblePosts.length < allPosts.length;
                 return (
-                  <div key={p.id} style={{ padding: "0.75rem 1rem", borderRadius: "10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
-                        <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>@{p.accountUsername}</span>
-                        <span style={{ padding: "2px 7px", borderRadius: "5px", fontSize: "0.7rem", fontWeight: 600, color: cfg.color, background: cfg.bg }}>{cfg.label}</span>
-                      </div>
-                      <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.caption || "(sem legenda)"}</p>
-                      {p.errorMsg && <p style={{ fontSize: "0.72rem", color: "#f87171", marginTop: "0.2rem" }}>{p.errorMsg}</p>}
-                    </div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0, textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.35rem" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
-                        <Clock size={11} />
-                        {p.status === "DONE" && p.postedAt
-                          ? new Date(p.postedAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
-                          : new Date(p.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
-                      </div>
-                      {p.status === "FAILED" && (
-                        <button onClick={() => void retryPost(p.id)} disabled={retryingPostId === p.id} style={{ display: "flex", alignItems: "center", gap: "0.25rem", padding: "2px 7px", borderRadius: "5px", border: "1px solid rgba(96,165,250,0.2)", background: "rgba(96,165,250,0.07)", color: "#60a5fa", fontSize: "0.7rem", cursor: "pointer" }}>
-                          {retryingPostId === p.id ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={10} />} Retentar
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                  <>
+                    {visiblePosts.map((p) => {
+                      const cfg = statusConfig[p.status];
+                      return (
+                        <div key={p.id} style={{ padding: "0.75rem 1rem", borderRadius: "10px", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "flex-start", gap: "0.75rem" }}>
+                          {/* Use cover image (static) when available — never load video in a list */}
+                          <div style={{ width: "44px", height: "44px", borderRadius: "6px", background: "#0a0c14", overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                            {p.coverUrl
+                              ? <img src={p.coverUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                              : <Copy size={16} color="rgba(255,255,255,0.15)" />}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+                              <span style={{ fontSize: "0.8rem", fontWeight: 600 }}>@{p.accountUsername}</span>
+                              <span style={{ padding: "2px 7px", borderRadius: "5px", fontSize: "0.7rem", fontWeight: 600, color: cfg.color, background: cfg.bg }}>{cfg.label}</span>
+                            </div>
+                            <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.caption || "(sem legenda)"}</p>
+                            {p.errorMsg && <p style={{ fontSize: "0.72rem", color: "#f87171", marginTop: "0.2rem" }}>{p.errorMsg}</p>}
+                          </div>
+                          <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0, textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.35rem" }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                              <Clock size={11} />
+                              {p.status === "DONE" && p.postedAt
+                                ? new Date(p.postedAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
+                                : new Date(p.scheduledAt).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                            {p.status === "FAILED" && (
+                              <button onClick={() => void retryPost(p.id)} disabled={retryingPostId === p.id} style={{ display: "flex", alignItems: "center", gap: "0.25rem", padding: "2px 7px", borderRadius: "5px", border: "1px solid rgba(96,165,250,0.2)", background: "rgba(96,165,250,0.07)", color: "#60a5fa", fontSize: "0.7rem", cursor: "pointer" }}>
+                                {retryingPostId === p.id ? <Loader2 size={10} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={10} />} Retentar
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {hasMore && (
+                      <button onClick={() => setDetailPage((p) => p + 1)} style={{ padding: "0.6rem", borderRadius: "8px", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
+                        Ver mais ({allPosts.length - visiblePosts.length} restantes)
+                      </button>
+                    )}
+                  </>
                 );
-              })}
+              })()}
             </div>
           </div>
         </div>
@@ -718,20 +753,53 @@ export default function ClonarPage() {
             </label>
             {accounts.length === 0 ? (
               <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", fontStyle: "italic" }}>Conecte contas OAuth em Contas.</p>
-            ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", background: "rgba(201,162,39,0.05)", cursor: "pointer", fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
-                  <input type="checkbox" checked={accounts.every((a) => selectedAccounts[a.id])} onChange={(e) => { const s: Record<string, boolean> = {}; accounts.forEach((a) => { s[a.id] = e.target.checked; }); setSelectedAccounts(s); }} style={{ accentColor: "var(--accent-gold)" }} />
-                  Selecionar todas
-                </label>
-                {accounts.map((a) => (
-                  <label key={a.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.6rem", borderRadius: "6px", cursor: "pointer", background: selectedAccounts[a.id] ? "rgba(201,162,39,0.07)" : "rgba(255,255,255,0.02)", border: `1px solid ${selectedAccounts[a.id] ? "rgba(201,162,39,0.2)" : "transparent"}` }}>
-                    <input type="checkbox" checked={Boolean(selectedAccounts[a.id])} onChange={() => setSelectedAccounts((s) => ({ ...s, [a.id]: !s[a.id] }))} style={{ accentColor: "var(--accent-gold)" }} />
-                    <span style={{ fontSize: "0.85rem" }}>@{a.username}</span>
+            ) : (() => {
+              // Compute which account usernames have pending posts in existing clone jobs
+              const withPending = new Set<string>();
+              jobs.forEach((j) => { if (j.posts.pending > 0) j.accountUsernames.forEach((u) => withPending.add(u)); });
+              const pendingAccounts = accounts.filter((a) => withPending.has(a.username));
+              const freeAccounts = accounts.filter((a) => !withPending.has(a.username));
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", background: "rgba(201,162,39,0.05)", cursor: "pointer", fontSize: "0.78rem", color: "var(--text-muted)", fontWeight: 600 }}>
+                    <input type="checkbox" checked={accounts.every((a) => selectedAccounts[a.id])} onChange={(e) => { const s: Record<string, boolean> = {}; accounts.forEach((a) => { s[a.id] = e.target.checked; }); setSelectedAccounts(s); }} style={{ accentColor: "var(--accent-gold)" }} />
+                    Selecionar todas
                   </label>
-                ))}
-              </div>
-            )}
+
+                  {/* Accounts WITH pending clone posts */}
+                  {pendingAccounts.length > 0 && (
+                    <>
+                      <p style={{ fontSize: "0.68rem", fontWeight: 700, color: "#f97316", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.25rem", marginBottom: "0.15rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                        <CalendarClock size={11} /> Com posts agendados ({pendingAccounts.length})
+                      </p>
+                      {pendingAccounts.map((a) => {
+                        const pendingCount = jobs.filter((j) => j.posts.pending > 0 && j.accountUsernames.includes(a.username)).reduce((sum, j) => sum + j.posts.pending, 0);
+                        return (
+                          <label key={a.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.6rem", borderRadius: "6px", cursor: "pointer", background: selectedAccounts[a.id] ? "rgba(249,115,22,0.08)" : "rgba(255,255,255,0.02)", border: `1px solid ${selectedAccounts[a.id] ? "rgba(249,115,22,0.25)" : "rgba(249,115,22,0.1)"}` }}>
+                            <input type="checkbox" checked={Boolean(selectedAccounts[a.id])} onChange={() => setSelectedAccounts((s) => ({ ...s, [a.id]: !s[a.id] }))} style={{ accentColor: "#f97316" }} />
+                            <span style={{ fontSize: "0.85rem", flex: 1 }}>@{a.username}</span>
+                            <span style={{ fontSize: "0.68rem", color: "#f97316", background: "rgba(249,115,22,0.12)", padding: "1px 6px", borderRadius: "4px", fontWeight: 700 }}>{pendingCount} pendente{pendingCount !== 1 ? "s" : ""}</span>
+                          </label>
+                        );
+                      })}
+                      {freeAccounts.length > 0 && (
+                        <p style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.4rem", marginBottom: "0.15rem" }}>
+                          Livres ({freeAccounts.length})
+                        </p>
+                      )}
+                    </>
+                  )}
+
+                  {/* Accounts WITHOUT pending posts */}
+                  {freeAccounts.map((a) => (
+                    <label key={a.id} style={{ display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.6rem", borderRadius: "6px", cursor: "pointer", background: selectedAccounts[a.id] ? "rgba(201,162,39,0.07)" : "rgba(255,255,255,0.02)", border: `1px solid ${selectedAccounts[a.id] ? "rgba(201,162,39,0.2)" : "transparent"}` }}>
+                      <input type="checkbox" checked={Boolean(selectedAccounts[a.id])} onChange={() => setSelectedAccounts((s) => ({ ...s, [a.id]: !s[a.id] }))} style={{ accentColor: "var(--accent-gold)" }} />
+                      <span style={{ fontSize: "0.85rem" }}>@{a.username}</span>
+                    </label>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {/* Estimate */}
@@ -799,7 +867,8 @@ export default function ClonarPage() {
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
             {jobs.map((job) => {
-              const isProcessing = job.totalReels === 0 && job.posts.total === 0;
+              const isFailed = job.totalReels === -1;
+              const isProcessing = !isFailed && job.totalReels === 0 && job.posts.total === 0;
               const pct = job.posts.total > 0 ? Math.round((job.posts.done / job.posts.total) * 100) : 0;
               const allDone = job.posts.pending === 0 && job.posts.failed === 0 && job.posts.done > 0;
               const hasFailed = job.posts.failed > 0;
@@ -831,6 +900,11 @@ export default function ClonarPage() {
 
                   {/* Stats */}
                   <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
+                    {isFailed && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "#f87171", fontSize: "0.82rem", fontWeight: 600 }}>
+                        <XCircle size={14} /> Falhou
+                      </div>
+                    )}
                     {isProcessing && (
                       <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "#60a5fa", fontSize: "0.82rem", fontWeight: 600 }}>
                         <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Buscando reels...

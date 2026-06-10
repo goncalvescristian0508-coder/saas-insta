@@ -922,6 +922,7 @@ function MensagemTab() {
 function TestadoresTab() {
   const [input, setInput] = useState("");
   const [appKey, setAppKey] = useState("");
+  const [testerAppKeys, setTesterAppKeys] = useState<string[]>([]);
   const [apps, setApps] = useState<{ key: string; name: string; appId: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -937,9 +938,18 @@ function TestadoresTab() {
       .then((d: { apps?: { key: string; name: string; appId: string }[] }) => {
         const list = d.apps ?? [];
         setApps(list);
-        if (list.length > 0) setAppKey(list[0].key);
+        if (list.length > 0) {
+          setAppKey(list[0].key);
+          setTesterAppKeys(list.map(a => a.key));
+        }
       });
   }, []);
+
+  function toggleTesterApp(key: string) {
+    setTesterAppKeys(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
+  }
 
   async function checkPortal(key: string) {
     setPortalChecking(true);
@@ -955,31 +965,53 @@ function TestadoresTab() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (names.length === 0) return;
+    if (names.length === 0 || testerAppKeys.length === 0) return;
     setInput("");
     setLoading(true);
     setPendingCount(names.length);
-    const selectedApp = apps.find(a => a.key === appKey);
+
+    const multiApp = testerAppKeys.length > 1;
+
     try {
-      const r = await fetch("/api/admin/add-instagram-tester", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ igUsernames: names, appKey: appKey || undefined }),
-      });
-      const d = await r.json() as {
-        results?: { username: string; ok: boolean; error?: string }[];
-        error?: string;
-      };
-      if (!r.ok && !d.results) {
-        // credential error — show single error for all
-        const errRows = names.map(u => ({ username: u, ok: false, error: d.error ?? "Erro", appName: selectedApp?.name }));
-        setResults(prev => [...errRows, ...prev]);
+      if (multiApp) {
+        // Multi-app: VPS puppeteer /add-tester-all
+        const r = await fetch("/api/admin/add-tester-all-apps", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ igUsernames: names, appKeys: testerAppKeys }),
+        });
+        const d = await r.json() as {
+          results?: { username: string; ok: boolean; error?: string; appName?: string }[];
+          error?: string;
+        };
+        if (!r.ok && !d.results) {
+          const errRows = names.map(u => ({ username: u, ok: false, error: d.error ?? "Erro" }));
+          setResults(prev => [...errRows, ...prev]);
+        } else {
+          setResults(prev => [...(d.results ?? []), ...prev]);
+        }
       } else {
-        const rows = (d.results ?? []).map(row => ({ ...row, appName: selectedApp?.name }));
-        setResults(prev => [...rows, ...prev]);
+        // Single app: existing route
+        const selectedApp = apps.find(a => a.key === testerAppKeys[0]);
+        const r = await fetch("/api/admin/add-instagram-tester", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ igUsernames: names, appKey: testerAppKeys[0] }),
+        });
+        const d = await r.json() as {
+          results?: { username: string; ok: boolean; error?: string }[];
+          error?: string;
+        };
+        if (!r.ok && !d.results) {
+          const errRows = names.map(u => ({ username: u, ok: false, error: d.error ?? "Erro", appName: selectedApp?.name }));
+          setResults(prev => [...errRows, ...prev]);
+        } else {
+          const rows = (d.results ?? []).map(row => ({ ...row, appName: selectedApp?.name }));
+          setResults(prev => [...rows, ...prev]);
+        }
       }
     } catch {
-      const errRows = names.map(u => ({ username: u, ok: false, error: "Erro de conexão", appName: selectedApp?.name }));
+      const errRows = names.map(u => ({ username: u, ok: false, error: "Erro de conexão" }));
       setResults(prev => [...errRows, ...prev]);
     } finally {
       setLoading(false);
@@ -1290,28 +1322,48 @@ function TestadoresTab() {
             : <span style={{ color: "#f59e0b" }}> Configure META_PORTAL_COOKIES acima para activar o modo automático.</span>}
         </p>
         <form onSubmit={(e) => void handleSubmit(e)} style={{ display: "flex", flexDirection: "column", gap: ".75rem" }}>
-          {/* App selector */}
+          {/* App selector — multi-select */}
           {apps.length > 0 && (
             <div>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "#555", marginBottom: 6, textTransform: "uppercase", letterSpacing: ".08em" }}>App de destino</label>
-              <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }}>
-                {apps.map(app => (
-                  <button
-                    key={app.key}
-                    type="button"
-                    onClick={() => setAppKey(app.key)}
-                    style={{
-                      padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
-                      background: appKey === app.key ? "rgba(255,213,79,.18)" : "rgba(255,255,255,.04)",
-                      border: appKey === app.key ? "1px solid rgba(255,213,79,.4)" : "1px solid rgba(255,255,255,.08)",
-                      color: appKey === app.key ? "#FFD54F" : "#888",
-                      transition: "all .15s", fontFamily: "var(--font-sans)",
-                    }}
-                  >
-                    {app.name}
-                  </button>
-                ))}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <label style={{ fontSize: 11, fontWeight: 600, color: "#555", textTransform: "uppercase", letterSpacing: ".08em" }}>App de destino</label>
+                <button
+                  type="button"
+                  onClick={() => setTesterAppKeys(testerAppKeys.length === apps.length ? [] : apps.map(a => a.key))}
+                  style={{ fontSize: 10, fontWeight: 700, color: testerAppKeys.length === apps.length ? "#FFD54F" : "#555", background: "none", border: "none", cursor: "pointer", padding: "2px 6px", fontFamily: "var(--font-sans)" }}
+                >
+                  {testerAppKeys.length === apps.length ? "Desmarcar todos" : "Todos"}
+                </button>
               </div>
+              <div style={{ display: "flex", gap: ".4rem", flexWrap: "wrap" }}>
+                {apps.map(app => {
+                  const sel = testerAppKeys.includes(app.key);
+                  return (
+                    <button
+                      key={app.key}
+                      type="button"
+                      onClick={() => toggleTesterApp(app.key)}
+                      style={{
+                        padding: "6px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        background: sel ? "rgba(255,213,79,.18)" : "rgba(255,255,255,.04)",
+                        border: sel ? "1px solid rgba(255,213,79,.4)" : "1px solid rgba(255,255,255,.08)",
+                        color: sel ? "#FFD54F" : "#555",
+                        transition: "all .15s", fontFamily: "var(--font-sans)",
+                      }}
+                    >
+                      {app.name}
+                    </button>
+                  );
+                })}
+              </div>
+              {testerAppKeys.length > 0 && (
+                <p style={{ fontSize: 11, color: "#555", marginTop: 5 }}>
+                  {testerAppKeys.length === apps.length
+                    ? `Todos os ${apps.length} apps selecionados`
+                    : `${testerAppKeys.length} app${testerAppKeys.length !== 1 ? "s" : ""} selecionado${testerAppKeys.length !== 1 ? "s" : ""}`}
+                  {testerAppKeys.length > 1 && <span style={{ color: "#FFD54F" }}> · usará VPS Puppeteer</span>}
+                </p>
+              )}
             </div>
           )}
 
@@ -1331,12 +1383,12 @@ function TestadoresTab() {
 
           <button
             type="submit"
-            disabled={loading || names.length === 0}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || names.length === 0 ? "not-allowed" : "pointer", fontWeight: 700, opacity: names.length === 0 ? 0.5 : 1, fontFamily: "var(--font-sans)" }}
+            disabled={loading || names.length === 0 || testerAppKeys.length === 0}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, padding: "10px 20px", borderRadius: 9, background: "rgba(255,213,79,.15)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 13, cursor: loading || names.length === 0 || testerAppKeys.length === 0 ? "not-allowed" : "pointer", fontWeight: 700, opacity: names.length === 0 || testerAppKeys.length === 0 ? 0.5 : 1, fontFamily: "var(--font-sans)" }}
           >
             {loading
-              ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Enviando {pendingCount} convite{pendingCount !== 1 ? "s" : ""} em paralelo...</>
-              : <><Send size={14} /> Enviar {names.length > 0 ? `${names.length} convite${names.length !== 1 ? "s" : ""}` : "convites"}</>}
+              ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Enviando {pendingCount} convite{pendingCount !== 1 ? "s" : ""}{testerAppKeys.length > 1 ? ` × ${testerAppKeys.length} apps` : ""}...</>
+              : <><Send size={14} /> Enviar {names.length > 0 ? `${names.length} convite${names.length !== 1 ? "s" : ""}` : "convites"}{testerAppKeys.length > 1 ? ` → ${testerAppKeys.length} apps` : ""}</>}
           </button>
         </form>
       </Panel>

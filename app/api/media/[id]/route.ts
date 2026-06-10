@@ -5,6 +5,28 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const { id } = await params;
+  const supabase = await createSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const { coverUrl } = await request.json() as { coverUrl: string | null };
+
+  const video = await prisma.libraryVideo.findFirst({ where: { id, userId: user.id } });
+  if (!video) return NextResponse.json({ error: "Vídeo não encontrado" }, { status: 404 });
+
+  const updated = await prisma.libraryVideo.update({
+    where: { id },
+    data: { coverUrl: coverUrl ?? null },
+  });
+
+  return NextResponse.json({ ok: true, coverUrl: updated.coverUrl });
+}
+
 export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },

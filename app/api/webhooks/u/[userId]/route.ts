@@ -29,15 +29,17 @@ export async function POST(
 
         const utmSource = extractUtmSource(body);
 
+        // Only link igUsername if the account actually exists for this user
+        let igUsername: string | undefined;
         if (utmSource) {
           const account = await prisma.instagramOAuthAccount.findFirst({
-            where: { userId, username: utmSource },
-            select: { id: true },
+            where: { userId, username: { equals: utmSource, mode: "insensitive" } },
+            select: { id: true, username: true },
           });
-          if (!account) return;
+          igUsername = account ? account.username : undefined;
         }
 
-        await processSaleWebhook(gateway, userId, parsed, raw, utmSource);
+        await processSaleWebhook(gateway, userId, parsed, raw, igUsername ?? utmSource);
       } catch {}
     })()
   );

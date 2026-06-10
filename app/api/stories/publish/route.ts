@@ -8,6 +8,34 @@ import { publishStoryPrivate } from "@/lib/instagramService";
 export const runtime = "nodejs";
 export const maxDuration = 240;
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+function isRetryable(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes("media id is not available") ||
+    m.includes("please try again") ||
+    m.includes("temporarily") ||
+    m.includes("service unavailable") ||
+    m.includes("timeout") ||
+    m.includes("network")
+  );
+}
+
+async function withRetry<T extends { ok: boolean; error?: string }>(
+  fn: () => Promise<T>,
+  maxAttempts = 3,
+  delayMs = 3000,
+): Promise<T> {
+  let last!: T;
+  for (let i = 0; i < maxAttempts; i++) {
+    if (i > 0) await sleep(delayMs);
+    last = await fn();
+    if (last.ok || !isRetryable(last.error ?? "")) break;
+  }
+  return last;
+}
+
 export async function GET() {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -87,16 +115,15 @@ export async function POST(request: Request) {
   const results = await Promise.all(
     pairs.map(async ({ account, story }) => {
       try {
-        const storyUrl = links[account.id]?.trim() || undefined;
+        const isVideo = story.mimeType.startsWith("video/");
 
         if (account.source === "private") {
-          const result = await publishStoryPrivate({
+          const result = await withRetry(() => publishStoryPrivate({
             prisma,
             accountId: account.id,
             mediaUrl: story.publicUrl,
-            isVideo: story.mimeType === "video/mp4",
-            link: storyUrl,
-          });
+            isVideo,
+          }));
           return {
             accountId: account.id,
             username: account.username,
@@ -106,19 +133,17 @@ export async function POST(request: Request) {
         }
 
         const accessToken = decryptAccountPassword(account.accessTokenEnc);
-        const result = await publishStoryFromUrl({
+        const result = await withRetry(() => publishStoryFromUrl({
           igUserId: account.instagramUserId,
           accessToken,
           mediaUrl: story.publicUrl,
-          isVideo: story.mimeType === "video/mp4",
-          storyUrl,
-        });
+          isVideo,
+        }));
         return {
           accountId: account.id,
           username: account.username,
           status: result.ok ? "ok" : "error",
           error: result.ok ? undefined : result.error,
-          debug: result.ok ? result.debug : undefined,
         };
       } catch (err) {
         return {

@@ -23,6 +23,8 @@ export async function GET(request: Request) {
   const type = searchParams.get("type");
   const storagePath = type === "stories"
     ? `stories/${user.id}/uploaded/${uuidv4()}.${ext}`
+    : type === "cover"
+    ? `covers/${user.id}/${uuidv4()}.${ext}`
     : `${user.id}/${uuidv4()}.${ext}`;
 
   const admin = storageAdmin();

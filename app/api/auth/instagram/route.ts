@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getMetaOAuthConfig, getMetaAppByKey } from "@/lib/metaInstagramEnv";
+import { getMetaOAuthConfig, getMetaAppByKey, getInstagramOAuthBase } from "@/lib/metaInstagramEnv";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET(request: Request) {
@@ -39,7 +39,7 @@ export async function GET(request: Request) {
   const state = appKey || "";
 
   const url =
-    `https://api.instagram.com/oauth/authorize` +
+    getInstagramOAuthBase(appKey) +
     `?client_id=${appId}` +
     `&redirect_uri=${encodeURIComponent(redirectUri)}` +
     `&scope=${encodeURIComponent(scope)}` +

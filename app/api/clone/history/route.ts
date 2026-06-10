@@ -49,6 +49,7 @@ export async function GET() {
       totalReels: job.totalReels,
       clonedBio: job.clonedBio,
       clonedPhoto: job.clonedPhoto,
+      errorMsg: job.errorMsg ?? null,
       createdAt: job.createdAt,
       posts: { total, done, failed, pending },
     };

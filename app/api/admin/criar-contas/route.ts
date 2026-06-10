@@ -42,13 +42,34 @@ export async function POST(req: NextRequest) {
   return NextResponse.json(data);
 }
 
-// GET /api/admin/criar-contas?jobId=xxx — check status or list all
+// GET /api/admin/criar-contas?jobId=xxx  → single job status
+// GET /api/admin/criar-contas?codes=1    → codes from last 1 minute
+// GET /api/admin/criar-contas            → list all jobs
 export async function GET(req: NextRequest) {
   const supabase = await createSupabase();
   const { data: { user } } = await supabase.auth.getUser();
   if (!isAdmin(user?.email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const jobId = req.nextUrl.searchParams.get("jobId");
+  const codes = req.nextUrl.searchParams.get("codes");
+
+  if (codes !== null) {
+    const minutes = Math.max(1, parseInt(codes) || 1);
+    const data = await vpsReq(`/codes?minutes=${minutes}`);
+    return NextResponse.json(data);
+  }
+
   const data = await vpsReq(jobId ? `/status/${jobId}` : "/jobs");
+  return NextResponse.json(data);
+}
+
+// POST /api/admin/criar-contas/submit-code — relay manual code submission
+export async function PATCH(req: NextRequest) {
+  const supabase = await createSupabase();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!isAdmin(user?.email)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const { jobId, code } = await req.json();
+  const data = await vpsReq("/submit-code", "POST", { jobId, code });
   return NextResponse.json(data);
 }

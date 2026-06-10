@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   Camera, Loader2, Download, Trash2, CheckCircle, XCircle,
   Play, Image as ImageIcon, RefreshCw, Send, Users,
-  Shuffle, Check, Square, CheckSquare, ChevronDown, ChevronUp,
+  Shuffle, Check, Square, CheckSquare,
   UploadCloud,
 } from "lucide-react";
 
@@ -60,6 +60,28 @@ function Toast({ type, msg }: { type: "success" | "error"; msg: string }) {
   );
 }
 
+function LazyVideoThumb({ src, style }: { src: string; style?: React.CSSProperties }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setActive(true); obs.disconnect(); } },
+      { rootMargin: "100px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return (
+    <div ref={wrapRef} style={{ width: "100%", height: "100%" }}>
+      {active
+        ? <video src={`${src}#t=0.5`} style={style ?? { width: "100%", height: "100%", objectFit: "cover" }} preload="metadata" muted playsInline />
+        : <div style={{ width: "100%", height: "100%", background: "rgba(255,255,255,0.04)" }} />}
+    </div>
+  );
+}
+
 function StoryCard({ item, onDelete, onDownload, isDeleting, selectable, selected, onSelect }: {
   item: StoryItem;
   onDelete: () => void;
@@ -69,7 +91,7 @@ function StoryCard({ item, onDelete, onDownload, isDeleting, selectable, selecte
   selected: boolean;
   onSelect: () => void;
 }) {
-  const isVideo = item.mimeType === "video/mp4";
+  const isVideo = item.mimeType.startsWith("video/");
   return (
     <div
       className="glass-panel"
@@ -86,7 +108,7 @@ function StoryCard({ item, onDelete, onDownload, isDeleting, selectable, selecte
       {/* Portrait thumbnail (9:16) */}
       <div style={{ aspectRatio: "9/16", background: "#07090f", position: "relative", overflow: "hidden" }}>
         {isVideo ? (
-          <video src={item.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }} preload="metadata" muted />
+          <LazyVideoThumb src={item.publicUrl} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }} />
         ) : (
           <img src={item.publicUrl} alt={item.originalName} style={{ width: "100%", height: "100%", objectFit: "cover", opacity: .85 }} loading="lazy" />
         )}
@@ -163,9 +185,6 @@ export default function StoriesPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
   const [distribute, setDistribute] = useState(true);
-  const [useLinks, setUseLinks] = useState(false);
-  const [accountLinks, setAccountLinks] = useState<Record<string, string>>({});
-  const [bulkText, setBulkText] = useState("");
   const [publishing, setPublishing] = useState(false);
   const [publishResults, setPublishResults] = useState<PublishResult[] | null>(null);
 
@@ -258,29 +277,6 @@ export default function StoriesPage() {
     setSelectable(v => !v);
     setSelectedIds(new Set());
     setPublishResults(null);
-    setAccountLinks({});
-    setBulkText("");
-  }
-
-  function setLink(accountId: string, url: string) {
-    setAccountLinks(prev => ({ ...prev, [accountId]: url }));
-  }
-
-  function parseBulkLinks() {
-    const lines = bulkText.split("\n").map(l => l.trim()).filter(Boolean);
-    const updates: Record<string, string> = {};
-    for (const line of lines) {
-      const parts = line.split(/\s+/);
-      if (parts.length < 2) continue;
-      const rawUser = parts[0].replace(/^@/, "").toLowerCase();
-      const url = parts[1];
-      if (!url.startsWith("http")) continue;
-      const account = accounts.find(a => a.username.toLowerCase() === rawUser);
-      if (account) updates[account.id] = url;
-    }
-    setAccountLinks(prev => ({ ...prev, ...updates }));
-    const matched = Object.keys(updates).length;
-    showToast(matched > 0 ? "success" : "error", matched > 0 ? `${matched} link(s) aplicado(s)` : "Nenhuma conta encontrada — verifique os @usernames");
   }
 
   function toggleStory(id: string) {
@@ -322,7 +318,6 @@ export default function StoriesPage() {
           storyIds: Array.from(selectedIds),
           accountIds: Array.from(selectedAccountIds),
           distribute,
-          links: accountLinks,
         }),
       });
       const d = await res.json();
@@ -344,7 +339,7 @@ export default function StoriesPage() {
     grouped[u].push(s);
   }
 
-  const totalVideos = stories.filter(s => s.mimeType === "video/mp4").length;
+  const totalVideos = stories.filter(s => s.mimeType.startsWith("video/")).length;
   const totalImages = stories.length - totalVideos;
   const allAccountsSelected = accounts.length > 0 && selectedAccountIds.size === accounts.length;
 
@@ -449,39 +444,6 @@ export default function StoriesPage() {
             </div>
           </div>
 
-          {/* Row 2: link toggle */}
-          <div style={{ marginBottom: "1.25rem" }}>
-            <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".6rem" }}>Link no Story</p>
-            <div style={{ display: "flex", gap: ".5rem" }}>
-              {[{ v: false, label: "Sem link" }, { v: true, label: "Com link" }].map(opt => (
-                <button key={String(opt.v)} onClick={() => setUseLinks(opt.v)}
-                  style={{ padding: ".45rem 1rem", borderRadius: "8px", fontSize: ".8rem", fontWeight: 600, cursor: "pointer", fontFamily: "var(--font-sans)", background: useLinks === opt.v ? "rgba(255,213,79,.15)" : "rgba(255,255,255,.03)", border: useLinks === opt.v ? "1px solid rgba(255,213,79,.35)" : "1px solid rgba(255,255,255,.08)", color: useLinks === opt.v ? "#FFD54F" : "var(--text-muted)" }}>
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Bulk link paste — only when "com link" */}
-          {useLinks && (
-            <div style={{ marginBottom: "1.25rem", padding: "1rem", borderRadius: "10px", background: "rgba(255,255,255,.02)", border: "1px solid rgba(255,255,255,.07)" }}>
-              <p style={{ fontSize: ".75rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: ".08em", marginBottom: ".6rem" }}>
-                Cole os links em massa <span style={{ color: "#555", fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>(@conta https://link — um por linha)</span>
-              </p>
-              <textarea
-                value={bulkText}
-                onChange={e => setBulkText(e.target.value)}
-                placeholder={"@catiasoniavirginia https://apextry.com/go/sx?utm_source=catiasoniavirginia\n@elisaguedeselizabete https://apextry.com/go/sx?utm_source=elisaguedeselizabete"}
-                rows={4}
-                style={{ width: "100%", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.1)", borderRadius: "8px", padding: ".6rem .75rem", fontSize: ".75rem", color: "#f0f0f0", outline: "none", fontFamily: "monospace", resize: "vertical", boxSizing: "border-box" }}
-              />
-              <button onClick={parseBulkLinks}
-                style={{ marginTop: ".5rem", padding: ".4rem .9rem", borderRadius: "7px", background: "rgba(255,213,79,.12)", border: "1px solid rgba(255,213,79,.25)", color: "#FFD54F", fontSize: ".78rem", fontWeight: 700, cursor: "pointer", fontFamily: "var(--font-sans)" }}>
-                Aplicar links
-              </button>
-            </div>
-          )}
-
           {/* Account list */}
           <div style={{ marginBottom: "1.25rem" }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: ".6rem" }}>
@@ -501,30 +463,13 @@ export default function StoriesPage() {
                 <div style={{ display: "flex", flexDirection: "column", gap: ".3rem", maxHeight: "320px", overflowY: "auto" }}>
                   {accounts.map(acc => {
                     const selected = selectedAccountIds.has(acc.id);
-                    const link = accountLinks[acc.id] ?? "";
                     return (
                       <div key={acc.id} style={{ display: "flex", alignItems: "center", gap: ".6rem", padding: ".45rem .6rem", borderRadius: "8px", background: selected ? "rgba(255,213,79,.06)" : "rgba(255,255,255,.02)", border: selected ? "1px solid rgba(255,213,79,.18)" : "1px solid rgba(255,255,255,.05)" }}>
-                        {/* Checkbox */}
                         <button onClick={() => toggleAccount(acc.id)}
                           style={{ width: 18, height: 18, borderRadius: "4px", background: selected ? "#FFD54F" : "rgba(255,255,255,.08)", border: selected ? "none" : "1px solid rgba(255,255,255,.18)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, cursor: "pointer" }}>
                           {selected && <Check size={10} color="#000" strokeWidth={3} />}
                         </button>
-                        {/* Username + badge */}
-                        <span style={{ fontSize: ".8rem", color: selected ? "#fff" : "var(--text-secondary)", minWidth: "120px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
-                        {acc.supportsLinkSticker && (
-                          <span style={{ fontSize: ".6rem", padding: "1px 5px", borderRadius: "4px", background: "rgba(74,222,128,.12)", border: "1px solid rgba(74,222,128,.25)", color: "#4ade80", fontWeight: 700, flexShrink: 0 }}>🔗 link</span>
-                        )}
-                        {/* Link input — only when "com link" */}
-                        {useLinks && (
-                          <input
-                            value={link}
-                            onChange={e => setLink(acc.id, e.target.value)}
-                            placeholder={acc.supportsLinkSticker ? "https://..." : "sem suporte (OAuth)"}
-                            disabled={!acc.supportsLinkSticker}
-                            style={{ flex: 1, background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: "6px", padding: ".3rem .5rem", fontSize: ".72rem", color: link ? "#60a5fa" : "var(--text-muted)", outline: "none", fontFamily: "var(--font-sans)", opacity: acc.supportsLinkSticker ? 1 : 0.35 }}
-                          />
-                        )}
-                        {useLinks && link && acc.supportsLinkSticker && <CheckCircle size={12} color="#4ade80" style={{ flexShrink: 0 }} />}
+                        <span style={{ fontSize: ".8rem", color: selected ? "#fff" : "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>@{acc.username}</span>
                       </div>
                     );
                   })}

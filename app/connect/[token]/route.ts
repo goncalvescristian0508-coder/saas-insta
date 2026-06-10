@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getMetaOAuthConfig } from "@/lib/metaInstagramEnv";
+import { getMetaOAuthConfig, getInstagramOAuthBase } from "@/lib/metaInstagramEnv";
 
 export const runtime = "nodejs";
 
@@ -39,7 +39,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ token: 
     const stateVal = appKey ? `${tokenId}:${appKey}` : tokenId;
     const scope = "instagram_business_basic,instagram_business_content_publish";
     const oauthUrl =
-      `https://api.instagram.com/oauth/authorize` +
+      getInstagramOAuthBase(appKey) +
       `?client_id=${appId}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}` +
       `&scope=${encodeURIComponent(scope)}` +

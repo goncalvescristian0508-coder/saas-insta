@@ -66,14 +66,22 @@ function AccountsPageInner() {
       const res = await fetch("/api/private-ig/accounts", { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Erro ao carregar contas.");
-      setAccounts((data.accounts ?? []).filter((a: OAuthAccount & { lastError?: string | null; accountStatus?: string }) =>
-        !a.lastError && a.accountStatus !== "SUSPENDED" && a.accountStatus !== "QUARANTINE"
+      // Only hide truly suspended/quarantined accounts — lastError is a warning, not a removal
+      setAccounts((data.accounts ?? []).filter((a: OAuthAccount & { accountStatus?: string }) =>
+        a.accountStatus !== "SUSPENDED" && a.accountStatus !== "QUARANTINE"
       ));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Erro ao carregar contas.");
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearAllErrors = async () => {
+    try {
+      await fetch("/api/private-ig/accounts/clear-errors", { method: "POST" });
+      setAccounts((prev) => prev.map((a) => ({ ...a, lastError: null })));
+    } catch { /* ignore */ }
   };
 
   const loadApps = async () => {
@@ -225,6 +233,21 @@ function AccountsPageInner() {
           </p>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+          {/* Clear errors button — only shown when there are accounts with errors */}
+          {accounts.some((a) => a.lastError) && (
+            <button
+              onClick={() => void clearAllErrors()}
+              style={{
+                display: "flex", alignItems: "center", gap: 6,
+                padding: "0 14px", height: 32, borderRadius: 7,
+                background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.25)",
+                color: "#f87171", cursor: "pointer", fontSize: 12.5, fontWeight: 600,
+                fontFamily: "inherit", transition: "all 0.12s",
+              }}
+            >
+              <X size={13} /> Limpar erros
+            </button>
+          )}
           {/* Icon group */}
           <button
             onClick={() => setShowPasswords((v) => !v)}
@@ -262,8 +285,8 @@ function AccountsPageInner() {
             onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.14)"; e.currentTarget.style.color = "#ededed"; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = copiedLink ? "#4ade80" : "#a0a0a0"; }}
           >
-            {copiedLink ? <CheckCircle size={13} /> : <Folder size={13} />}
-            {copiedLink ? "Copiado!" : "Pasta"}
+            {copiedLink ? <CheckCircle size={13} /> : <Link size={13} />}
+            {copiedLink ? "Copiado!" : "Copiar link"}
           </button>
           <button
             onClick={() => { setShowDirectLogin(true); setDirectError(""); fetch("/api/story-api/wake").catch(() => {}); }}

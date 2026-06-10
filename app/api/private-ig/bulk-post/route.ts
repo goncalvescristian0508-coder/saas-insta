@@ -87,9 +87,9 @@ export async function POST(request: Request) {
     );
   }
 
-  // Cap interval so total wait time never exceeds 180s (leaves ~120s for actual posting)
+  // Enforce a minimum of 10s between accounts to avoid Instagram rate-limiting ("too many actions")
   const n = safeAccountIds.length;
-  const intervalSeconds = n <= 1 ? 0 : Math.min(rawInterval, Math.floor(180 / (n - 1)));
+  const intervalSeconds = n <= 1 ? 0 : Math.max(10, rawInterval);
 
   // Download video buffer from Supabase Storage (server-to-server, no Vercel limit)
   let videoBuffer: Buffer;
@@ -121,7 +121,10 @@ export async function POST(request: Request) {
             push({ accountId: id, username: "", success: false, error: mapInstagramError(err) });
           }
           if (intervalSeconds > 0 && i < safeAccountIds.length - 1) {
-            await new Promise((resolve) => setTimeout(resolve, intervalSeconds * 1000));
+            // Add ±25% jitter so the pattern looks less robotic to Instagram
+            const jitter = intervalSeconds * 0.25;
+            const delay = intervalSeconds + (Math.random() * jitter * 2 - jitter);
+            await new Promise((resolve) => setTimeout(resolve, delay * 1000));
           }
         }
       } catch (err: unknown) {

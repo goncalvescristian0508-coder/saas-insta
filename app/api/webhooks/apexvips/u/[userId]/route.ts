@@ -35,18 +35,13 @@ export async function POST(
         const tracking = (body.tracking ?? {}) as Record<string, unknown>;
         const utmSource = String(tracking.utm_source ?? "").replace("@", "").toLowerCase().trim() || undefined;
 
-        if (utmSource) {
-          const account = await prisma.instagramOAuthAccount.findFirst({
-            where: { userId, username: utmSource },
-            select: { id: true },
-          });
-          if (!account) return;
-        }
+        // Try to normalize igUsername from utm_source — save even if not a connected account
+        const igUsername = utmSource ?? undefined;
 
         const transaction = (body.transaction ?? {}) as Record<string, unknown>;
         const gateway = String(transaction.payment_platform ?? "apexvips");
 
-        await processSaleWebhook(gateway, userId, parsed, raw, utmSource);
+        await processSaleWebhook(gateway, userId, parsed, raw, igUsername);
       } catch {}
     })()
   );

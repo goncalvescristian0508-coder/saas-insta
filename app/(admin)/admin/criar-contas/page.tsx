@@ -2,8 +2,8 @@
 
 export const dynamic = "force-dynamic";
 
-import { useState, useEffect, useRef } from "react";
-import { Loader2, Plus, RefreshCw, CheckCircle2, XCircle, Clock, Copy, Download } from "lucide-react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { Loader2, Plus, RefreshCw, CheckCircle2, XCircle, Clock, Copy, Download, MessageSquare, Send, Upload } from "lucide-react";
 
 interface Job {
   id: string;
@@ -18,6 +18,15 @@ interface Job {
   } | null;
   error: string | null;
   createdAt: string;
+}
+
+interface CodeEntry {
+  jobId: string;
+  type: "email" | "phone";
+  contact: string;
+  code: string | null;
+  receivedAt: string;
+  resolvedAt?: string;
 }
 
 const STATUS_ICON = {
@@ -40,11 +49,32 @@ function copyText(text: string) {
 
 export default function CriarContasPage() {
   const [quantity, setQuantity] = useState(1);
+  const [emailsText, setEmailsText] = useState(""); // "email:senha" per line
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
+  const [codes, setCodes] = useState<CodeEntry[]>([]);
+  const [submitCode, setSubmitCode] = useState<{ jobId: string; value: string } | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const codesPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const handleFileImport = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = (ev.target?.result as string) || "";
+      // Support both email:pass and email;pass formats
+      const normalized = text.replace(/;/g, ":").trim();
+      setEmailsText(prev => prev ? prev + "\n" + normalized : normalized);
+    };
+    reader.readAsText(file);
+    // Reset input so same file can be imported again
+    e.target.value = "";
+  }, []);
 
   async function fetchJobs() {
     setFetching(true);
@@ -52,26 +82,57 @@ export default function CriarContasPage() {
       const r = await fetch("/api/admin/criar-contas");
       if (r.ok) {
         const data = await r.json();
-        setJobs(Array.isArray(data) ? data : []);
+        const list: Job[] = Array.isArray(data) ? data : [];
+        setJobs(list);
+        // Keep selectedJob in sync
+        setSelectedJob(prev => prev ? (list.find(j => j.id === prev.id) ?? prev) : null);
       }
     } finally {
       setFetching(false);
     }
   }
 
+  async function fetchCodes() {
+    try {
+      const r = await fetch("/api/admin/criar-contas?codes=1");
+      if (r.ok) {
+        const data = await r.json();
+        if (Array.isArray(data)) setCodes(data);
+      }
+    } catch {}
+  }
+
   useEffect(() => {
     fetchJobs();
+    fetchCodes();
     pollRef.current = setInterval(fetchJobs, 5000);
-    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+    codesPollRef.current = setInterval(fetchCodes, 5000);
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      if (codesPollRef.current) clearInterval(codesPollRef.current);
+    };
   }, []);
+
+  function parseEmails() {
+    return emailsText.split("\n")
+      .map(l => l.trim()).filter(Boolean)
+      .map(l => {
+        // Support both "email:senha" and "email;senha" formats
+        const sep = l.includes(";") && !l.includes(":") ? ";" : ":";
+        const idx = l.indexOf(sep);
+        if (idx === -1) return { email: l, emailPassword: "" };
+        return { email: l.slice(0, idx).trim(), emailPassword: l.slice(idx + 1).trim() };
+      });
+  }
 
   async function handleCreate() {
     setLoading(true);
     try {
+      const emails = parseEmails();
       const r = await fetch("/api/admin/criar-contas", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ quantity }),
+        body: JSON.stringify({ quantity, emails: emails.length ? emails : undefined }),
       });
       const data = await r.json();
       if (!r.ok) {
@@ -81,6 +142,24 @@ export default function CriarContasPage() {
       await fetchJobs();
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSubmitCode(jobId: string, code: string) {
+    if (!code.trim()) return;
+    setSubmitting(true);
+    try {
+      const r = await fetch("/api/admin/criar-contas", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId, code: code.trim() }),
+      });
+      if (r.ok) {
+        setSubmitCode(null);
+        await fetchCodes();
+      }
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -105,9 +184,10 @@ export default function CriarContasPage() {
   const doneCount = jobs.filter(j => j.status === "done").length;
   const runningCount = jobs.filter(j => j.status === "running" || j.status === "pending").length;
   const failedCount = jobs.filter(j => j.status === "failed").length;
+  const pendingCodes = codes.filter(c => !c.code);
 
   return (
-    <div style={{ padding: "28px 24px", maxWidth: 960, margin: "0 auto", fontFamily: "var(--font-geist-sans, sans-serif)" }}>
+    <div style={{ padding: "28px 24px", maxWidth: 1100, margin: "0 auto", fontFamily: "var(--font-geist-sans, sans-serif)" }}>
       <div style={{ marginBottom: 24 }}>
         <h1 style={{ fontSize: 22, fontWeight: 700, color: "#fff", margin: 0 }}>Criar Contas Instagram</h1>
         <p style={{ color: "#666", fontSize: 13, marginTop: 4 }}>Criação automática via bot — somente admin</p>
@@ -119,6 +199,7 @@ export default function CriarContasPage() {
           { label: "Concluídas", value: doneCount, color: "#22c55e" },
           { label: "Em andamento", value: runningCount, color: "#FFB800" },
           { label: "Falhou", value: failedCount, color: "#ef4444" },
+          { label: "Códigos pendentes", value: pendingCodes.length, color: "#a78bfa" },
         ].map(s => (
           <div key={s.label} style={{
             background: "#111", border: "1px solid #222", borderRadius: 10,
@@ -151,9 +232,50 @@ export default function CriarContasPage() {
           <div style={{ fontSize: 11, color: "#555", marginTop: 4 }}>Máx. 10 por vez</div>
         </div>
 
+        {/* Email list */}
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <label style={{ fontSize: 12, color: "#888", display: "block", marginBottom: 6 }}>
+            Emails Hotmail/Outlook <span style={{ color: "#555" }}>(email:senha — uma por linha)</span>
+          </label>
+          <textarea
+            value={emailsText}
+            onChange={e => setEmailsText(e.target.value)}
+            placeholder={"exemplo@hotmail.com:minhasenha123\noutro@outlook.com:outrasenha"}
+            rows={3}
+            style={{
+              width: "100%", padding: "8px 10px", borderRadius: 6, border: "1px solid #333",
+              background: "#0a0a0a", color: "#ddd", fontSize: 12, fontFamily: "monospace",
+              resize: "vertical", outline: "none", boxSizing: "border-box",
+            }}
+          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 5 }}>
+            <span style={{ fontSize: 11, color: "#555" }}>
+              Bot entra no email automaticamente para pegar o código
+            </span>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              title="Importar arquivo .txt (email:senha)"
+              style={{
+                display: "flex", alignItems: "center", gap: 5, padding: "4px 10px",
+                borderRadius: 6, border: "1px solid #333", background: "#1a1a1a",
+                color: "#aaa", cursor: "pointer", fontSize: 11,
+              }}
+            >
+              <Upload size={11} /> Importar .txt
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".txt,text/plain"
+              style={{ display: "none" }}
+              onChange={handleFileImport}
+            />
+          </div>
+        </div>
+
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button
-            onClick={fetchJobs}
+            onClick={() => { fetchJobs(); fetchCodes(); }}
             disabled={fetching}
             style={{
               height: 40, padding: "0 16px", borderRadius: 8, border: "1px solid #333",
@@ -193,6 +315,128 @@ export default function CriarContasPage() {
         </div>
       </div>
 
+      {/* Códigos Recentes (last 1 min) */}
+      <div style={{
+        background: "#0d0b17", border: `1px solid ${pendingCodes.length > 0 ? "#4c1d95" : "#1e1a2e"}`,
+        borderRadius: 12, marginBottom: 24, overflow: "hidden",
+        boxShadow: pendingCodes.length > 0 ? "0 0 0 1px #7c3aed33" : "none",
+      }}>
+        <div style={{
+          padding: "14px 16px", borderBottom: "1px solid #1e1a2e",
+          display: "flex", alignItems: "center", gap: 8,
+        }}>
+          <MessageSquare size={14} style={{ color: "#a78bfa" }} />
+          <span style={{ fontSize: 13, color: "#a78bfa", fontWeight: 600 }}>
+            CÓDIGOS RECENTES
+          </span>
+          <span style={{ fontSize: 11, color: "#555", marginLeft: 4 }}>— últimos 60 segundos</span>
+          {pendingCodes.length > 0 && (
+            <span style={{
+              marginLeft: "auto", fontSize: 11, padding: "2px 8px",
+              borderRadius: 4, background: "#4c1d95", color: "#c4b5fd", fontWeight: 700,
+            }}>
+              {pendingCodes.length} AGUARDANDO
+            </span>
+          )}
+        </div>
+
+        {codes.length === 0 ? (
+          <div style={{ padding: "20px 16px", textAlign: "center", color: "#3a3550", fontSize: 13 }}>
+            Nenhum código recebido no último minuto
+          </div>
+        ) : (
+          <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+            {codes.map((c, i) => (
+              <div key={i} style={{
+                background: "#0a0a14", border: `1px solid ${c.code ? "#1a2a1a" : "#3b1f6a"}`,
+                borderRadius: 8, padding: "12px 14px",
+                display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+              }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                    <span style={{
+                      fontSize: 10, padding: "1px 6px", borderRadius: 3,
+                      background: c.type === "phone" ? "#1a2a3a" : "#2a1a3a",
+                      color: c.type === "phone" ? "#60a5fa" : "#c084fc", fontWeight: 600,
+                    }}>
+                      {c.type === "phone" ? "📱 SMS" : "✉️ EMAIL"}
+                    </span>
+                    <span style={{ fontSize: 12, color: "#888", fontFamily: "monospace" }}>{c.contact}</span>
+                    <span style={{ fontSize: 11, color: "#444" }}>
+                      job: {c.jobId.slice(0, 10)}...
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#555" }}>
+                    Recebido às {new Date(c.receivedAt).toLocaleTimeString("pt-BR")}
+                    {c.resolvedAt && <span style={{ color: "#22c55e", marginLeft: 8 }}>✓ Código enviado</span>}
+                  </div>
+                </div>
+
+                {c.code ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      fontSize: 18, fontWeight: 700, fontFamily: "monospace", letterSpacing: 4,
+                      color: "#22c55e", background: "#0d2010", padding: "6px 14px", borderRadius: 6,
+                    }}>
+                      {c.code}
+                    </span>
+                    <button onClick={() => copyText(c.code!)} style={{ background: "none", border: "none", cursor: "pointer", color: "#555", padding: 4 }}>
+                      <Copy size={13} />
+                    </button>
+                  </div>
+                ) : (
+                  /* Manual code submission */
+                  submitCode?.jobId === c.jobId ? (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                      <input
+                        autoFocus
+                        value={submitCode.value}
+                        onChange={e => setSubmitCode({ jobId: c.jobId, value: e.target.value })}
+                        onKeyDown={e => e.key === "Enter" && handleSubmitCode(c.jobId, submitCode.value)}
+                        placeholder="Digite o código"
+                        style={{
+                          height: 34, padding: "0 10px", borderRadius: 6, border: "1px solid #4c1d95",
+                          background: "#0a0a14", color: "#fff", fontSize: 14, fontFamily: "monospace",
+                          width: 140, outline: "none",
+                        }}
+                      />
+                      <button
+                        onClick={() => handleSubmitCode(c.jobId, submitCode.value)}
+                        disabled={submitting || !submitCode.value.trim()}
+                        style={{
+                          height: 34, padding: "0 12px", borderRadius: 6, border: "none",
+                          background: "#7c3aed", color: "#fff", cursor: "pointer", display: "flex", alignItems: "center", gap: 4, fontSize: 13,
+                          opacity: submitting ? 0.6 : 1,
+                        }}
+                      >
+                        {submitting ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                        Enviar
+                      </button>
+                      <button
+                        onClick={() => setSubmitCode(null)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "#555", padding: 4, fontSize: 18 }}
+                      >×</button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setSubmitCode({ jobId: c.jobId, value: "" })}
+                      style={{
+                        height: 32, padding: "0 12px", borderRadius: 6, border: "1px solid #4c1d95",
+                        background: "#1e0a4e", color: "#a78bfa", cursor: "pointer", fontSize: 12, fontWeight: 600,
+                        display: "flex", alignItems: "center", gap: 5,
+                      }}
+                    >
+                      <MessageSquare size={12} />
+                      Inserir código
+                    </button>
+                  )
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Job list + detail */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
         {/* List */}
@@ -202,7 +446,7 @@ export default function CriarContasPage() {
           </div>
           {jobs.length === 0 ? (
             <div style={{ padding: 32, textAlign: "center", color: "#444", fontSize: 13 }}>
-              Nenhum job ainda. Clique em "Criar contas" para começar.
+              Nenhum job ainda. Clique em &quot;Criar contas&quot; para começar.
             </div>
           ) : (
             <div style={{ maxHeight: 480, overflowY: "auto" }}>
