@@ -28,20 +28,25 @@ export async function POST(request: Request) {
 
   const body = await request.json();
   const {
-    accountIds, videoId, videoIds, caption, scheduledAt,
+    accountIds, videoId, videoIds, caption, captions: captionsRaw, scheduledAt,
     intervalSeconds = 30, batchSize, batchIntervalHours, distributeVideos = false,
   } = body as {
-    accountIds: string[]; videoId?: string; videoIds?: string[]; caption: string;
+    accountIds: string[]; videoId?: string; videoIds?: string[]; caption?: string; captions?: string[];
     scheduledAt: string; intervalSeconds?: number; batchSize?: number;
     batchIntervalHours?: number; distributeVideos?: boolean;
   };
+
+  // Normalise captions: prefer array, fallback to single caption string
+  const captionsList: string[] = Array.isArray(captionsRaw) && captionsRaw.length > 0
+    ? captionsRaw.filter(Boolean)
+    : caption ? [caption] : [];
 
   const vIdsRaw: string[] = Array.isArray(videoIds) && videoIds.length > 0
     ? videoIds : videoId ? [videoId] : [];
   // Deduplicate — never schedule the same video twice to the same account
   const vIds = [...new Set(vIdsRaw)];
 
-  if (!accountIds || vIds.length === 0 || !caption || !scheduledAt) {
+  if (!accountIds || vIds.length === 0 || captionsList.length === 0 || !scheduledAt) {
     return NextResponse.json({ error: "Campos obrigatórios faltando" }, { status: 400 });
   }
 
@@ -92,6 +97,7 @@ export async function POST(request: Request) {
       const totalVids = distributeVideos
         ? Math.ceil(validVIds.length / accounts.length)
         : validVIds.length;
+      const caption = captionsList[videoIdx % captionsList.length];
       return prisma.scheduledPost.create({
         data: { userId: user.id, accountId, videoId: vId, caption, scheduledAt: getScheduledAt(videoIdx, accountIdx, totalVids) },
         include: {

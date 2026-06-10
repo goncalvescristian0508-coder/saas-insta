@@ -490,7 +490,8 @@ export default function SchedulePage() {
     const pad = (n: number) => String(n).padStart(2, "0");
     return { date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`, time: `${pad(d.getHours())}:${pad(d.getMinutes())}` };
   }
-  const [form, setForm] = useState({ caption: "", ...getDefaultDateTime(), intervalSeconds: 120, batchMode: false, batchSize: 3, batchIntervalHours: 2, distributeVideos: false });
+  const [form, setForm] = useState({ ...getDefaultDateTime(), intervalSeconds: 120, batchMode: false, batchSize: 3, batchIntervalHours: 2, distributeVideos: false });
+  const [captions, setCaptions] = useState<string[]>([""]);
 
   // Preset form
   const [presetSelectedId, setPresetSelectedId] = useState<string | null>(null);
@@ -552,8 +553,9 @@ export default function SchedulePage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const accountIds = Object.entries(selectedAccounts).filter(([, v]) => v).map(([k]) => k);
-    if (accountIds.length === 0 || selectedVideoIds.length === 0 || !form.caption || !form.date || !form.time) {
-      showToast("error", "Preencha todos os campos, selecione ao menos uma conta e um vídeo");
+    const validCaptions = captions.map(c => c.trim()).filter(Boolean);
+    if (accountIds.length === 0 || selectedVideoIds.length === 0 || validCaptions.length === 0 || !form.date || !form.time) {
+      showToast("error", "Preencha todos os campos, selecione ao menos uma conta, um vídeo e uma legenda");
       return;
     }
     const scheduledAt = new Date(`${form.date}T${form.time}`).toISOString();
@@ -562,13 +564,14 @@ export default function SchedulePage() {
     const res = await fetch("/api/schedule", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accountIds, videoIds: selectedVideoIds, caption: form.caption, scheduledAt, intervalSeconds: form.intervalSeconds, distributeVideos: form.distributeVideos, ...(form.batchMode ? { batchSize: form.batchSize, batchIntervalHours: form.batchIntervalHours } : {}) }),
+      body: JSON.stringify({ accountIds, videoIds: selectedVideoIds, captions: validCaptions, scheduledAt, intervalSeconds: form.intervalSeconds, distributeVideos: form.distributeVideos, ...(form.batchMode ? { batchSize: form.batchSize, batchIntervalHours: form.batchIntervalHours } : {}) }),
     });
     if (res.ok) {
       const data = await res.json();
       showToast("success", `${Array.isArray(data.schedules) ? data.schedules.length : 1} post(s) agendado(s) com sucesso!`);
       setSelectedVideoIds([]);
-      setForm({ caption: "", ...getDefaultDateTime(), intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2, distributeVideos: false });
+      setCaptions([""]);
+      setForm({ ...getDefaultDateTime(), intervalSeconds: 30, batchMode: false, batchSize: 3, batchIntervalHours: 2, distributeVideos: false });
       await loadData();
     } else {
       const data = await res.json();
@@ -833,10 +836,41 @@ export default function SchedulePage() {
                     </div>
                   </div>
 
-                  {/* Caption */}
+                  {/* Captions */}
                   <div>
-                    <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Legenda</label>
-                    <textarea value={form.caption} onChange={(e) => setForm(f => ({ ...f, caption: e.target.value }))} className="input-field" rows={3} placeholder="Escreva a legenda..." style={{ resize: "vertical", width: "100%" }} />
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
+                      <label style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                        Legendas {captions.length > 1 && <span style={{ color: "var(--accent-gold)" }}>({captions.length})</span>}
+                      </label>
+                      <button type="button" onClick={() => setCaptions(prev => [...prev, ""])} style={{ fontSize: "0.72rem", fontWeight: 600, color: "var(--accent-gold)", background: "transparent", border: "none", cursor: "pointer", padding: 0, display: "flex", alignItems: "center", gap: "3px" }}>
+                        <Plus size={12} /> Adicionar legenda
+                      </button>
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                      {captions.map((cap, idx) => (
+                        <div key={idx} style={{ position: "relative" }}>
+                          <textarea
+                            value={cap}
+                            onChange={(e) => setCaptions(prev => prev.map((c, i) => i === idx ? e.target.value : c))}
+                            className="input-field"
+                            rows={2}
+                            placeholder={captions.length > 1 ? `Legenda ${idx + 1}` : "Escreva a legenda..."}
+                            style={{ resize: "vertical", width: "100%", paddingRight: captions.length > 1 ? "4rem" : undefined }}
+                          />
+                          {captions.length > 1 && (
+                            <div style={{ position: "absolute", top: "0.45rem", right: "0.45rem", display: "flex", alignItems: "center", gap: "4px" }}>
+                              <span style={{ fontSize: "0.62rem", fontWeight: 700, color: "var(--accent-gold)", background: "rgba(201,162,39,0.15)", border: "1px solid rgba(201,162,39,0.3)", borderRadius: "4px", padding: "1px 5px" }}>{idx + 1}</span>
+                              <button type="button" onClick={() => setCaptions(prev => prev.filter((_, i) => i !== idx))} style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: "4px", width: "20px", height: "20px", cursor: "pointer", color: "#f87171", fontSize: "0.9rem", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}>×</button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    {captions.length > 1 && (
+                      <p style={{ fontSize: "0.71rem", color: "var(--text-muted)", marginTop: "0.35rem", display: "flex", alignItems: "center", gap: "4px" }}>
+                        <RefreshCw size={11} /> Legendas rotacionadas a cada postagem
+                      </p>
+                    )}
                   </div>
 
                   {/* Date + Time */}
