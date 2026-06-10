@@ -1,20 +1,63 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, memo } from "react";
 import {
   UploadCloud, FileVideo, Trash2, Clock, HardDrive,
-  CheckCircle, XCircle, Loader2, Film, Copy, AlertTriangle, Wand2
+  CheckCircle, XCircle, Loader2, Film, Copy, AlertTriangle, Wand2, ImagePlus, X
 } from "lucide-react";
 
 interface Video {
   id: string;
   originalName: string;
   publicUrl: string;
+  coverUrl?: string | null;
   sizeBytes: number;
   durationSecs: number | null;
   mimeType: string;
   createdAt: string;
 }
+
+const videoThumbStyle: React.CSSProperties = { width: "100%", height: "100%", objectFit: "cover" };
+
+const LazyVideoThumb = memo(function LazyVideoThumb({ src, coverUrl }: { src: string; coverUrl?: string | null }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [active, setActive] = useState(false);
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.isIntersecting) { setActive(true); obs.disconnect(); } },
+      { rootMargin: "100px" }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+  return (
+    <div ref={wrapRef} style={{ width: "100%", height: "100%", position: "relative" }}>
+      {active ? (
+        // poster=coverUrl shows instantly; preload="none" when poster available (no video bytes loaded)
+        <video
+          src={src}
+          poster={coverUrl || undefined}
+          style={videoThumbStyle}
+          preload={coverUrl ? "none" : "metadata"}
+          muted
+          playsInline
+          onLoadedMetadata={!coverUrl ? (e) => {
+            const v = e.target as HTMLVideoElement;
+            if (v.duration > 0.5) v.currentTime = 0.5;
+          } : undefined}
+        />
+      ) : coverUrl ? (
+        <img src={coverUrl} alt="" style={videoThumbStyle} />
+      ) : (
+        <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(10,12,20,0.9)" }}>
+          <Film size={20} color="rgba(255,255,255,0.12)" />
+        </div>
+      )}
+    </div>
+  );
+});
 
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
@@ -35,6 +78,18 @@ export default function LibraryPage() {
   const [uploadFileName, setUploadFileName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [uploadingCoverId, setUploadingCoverId] = useState<string | null>(null);
+  const [uploadingCoverAll, setUploadingCoverAll] = useState(false);
+  const [globalCoverPreview, setGlobalCoverPreview] = useState<string | null>(null);
+  const [showCoverModal, setShowCoverModal] = useState(false);
+  const [modalCoverFile, setModalCoverFile] = useState<File | null>(null);
+  const [modalCoverPreview, setModalCoverPreview] = useState<string | null>(null);
+  const [modalDragOver, setModalDragOver] = useState(false);
+  const coverInputRef = useRef<HTMLInputElement>(null);
+  const coverTargetId = useRef<string | null>(null);
+  const modalCoverInputRef = useRef<HTMLInputElement>(null);
+  const [removingCoverAll, setRemovingCoverAll] = useState(false);
+  const [removingCoverId, setRemovingCoverId] = useState<string | null>(null);
   const [cleaning, setCleaning] = useState(false);
   const [confirmClean, setConfirmClean] = useState<"duplicates" | "all" | null>(null);
   const [cleaningMeta, setCleaningMeta] = useState(false);
@@ -56,6 +111,19 @@ export default function LibraryPage() {
   }, []);
 
   useEffect(() => { fetchVideos(); }, [fetchVideos]);
+
+  // Restore global cover from localStorage on mount
+  useEffect(() => {
+    const saved = localStorage.getItem("library_global_cover");
+    if (saved) setGlobalCoverPreview(saved);
+  }, []);
+
+  useEffect(() => {
+    if (videos.length > 0 && videos.every((v) => v.coverUrl && v.coverUrl === videos[0].coverUrl)) {
+      setGlobalCoverPreview(videos[0].coverUrl!);
+      localStorage.setItem("library_global_cover", videos[0].coverUrl!);
+    }
+  }, [videos]);
 
   async function uploadFile(file: File): Promise<boolean> {
     const allowed = ["video/mp4", "video/quicktime", "video/mov", "video/x-msvideo"];
@@ -151,6 +219,143 @@ export default function LibraryPage() {
       setUploadTotal(0);
       setUploadFileName("");
     }, 600);
+  }
+
+  async function uploadCoverForAll(file: File): Promise<boolean> {
+    setUploadingCoverAll(true);
+    try {
+      const signRes = await fetch(`/api/media/sign-upload?type=cover&filename=${encodeURIComponent(file.name)}`);
+      const { signedUrl, publicUrl } = await signRes.json() as { signedUrl: string; publicUrl: string };
+      await fetch(signedUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      const BATCH = 5;
+      for (let i = 0; i < videos.length; i += BATCH) {
+        await Promise.all(videos.slice(i, i + BATCH).map((v) =>
+          fetch(`/api/media/${v.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ coverUrl: publicUrl }),
+          })
+        ));
+      }
+      setVideos((vs) => vs.map((v) => ({ ...v, coverUrl: publicUrl })));
+      setGlobalCoverPreview(publicUrl);
+      localStorage.setItem("library_global_cover", publicUrl);
+      showToast("success", `Capa definida para ${videos.length} vídeo${videos.length !== 1 ? "s" : ""}!`);
+      return true;
+    } catch {
+      showToast("error", "Erro ao definir capa para todos");
+      return false;
+    } finally {
+      setUploadingCoverAll(false);
+    }
+  }
+
+  async function uploadCover(file: File, videoId: string) {
+    setUploadingCoverId(videoId);
+    try {
+      const signRes = await fetch(`/api/media/sign-upload?type=cover&filename=${encodeURIComponent(file.name)}`);
+      const { signedUrl, publicUrl } = await signRes.json() as { signedUrl: string; publicUrl: string };
+      await fetch(signedUrl, { method: "PUT", body: file, headers: { "Content-Type": file.type } });
+      const patchRes = await fetch(`/api/media/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coverUrl: publicUrl }),
+      });
+      if (patchRes.ok) {
+        setVideos((vs) => vs.map((v) => v.id === videoId ? { ...v, coverUrl: publicUrl } : v));
+        showToast("success", "Capa definida com sucesso");
+      } else {
+        showToast("error", "Erro ao salvar capa");
+      }
+    } catch {
+      showToast("error", "Erro no upload da capa");
+    }
+    setUploadingCoverId(null);
+  }
+
+  async function removeCoverFromAll() {
+    setRemovingCoverAll(true);
+    try {
+      const BATCH = 5;
+      for (let i = 0; i < videos.length; i += BATCH) {
+        await Promise.all(videos.slice(i, i + BATCH).map((v) =>
+          fetch(`/api/media/${v.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ coverUrl: null }),
+          })
+        ));
+      }
+      setVideos((vs) => vs.map((v) => ({ ...v, coverUrl: null })));
+      setGlobalCoverPreview(null);
+      localStorage.removeItem("library_global_cover");
+      showToast("success", "Capa removida de todos os vídeos");
+    } catch {
+      showToast("error", "Erro ao remover capas");
+    } finally {
+      setRemovingCoverAll(false);
+    }
+  }
+
+  async function removeCover(videoId: string) {
+    setRemovingCoverId(videoId);
+    try {
+      const res = await fetch(`/api/media/${videoId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coverUrl: null }),
+      });
+      if (res.ok) {
+        setVideos((vs) => vs.map((v) => v.id === videoId ? { ...v, coverUrl: null } : v));
+        // Update global cover banner if needed
+        const remaining = videos.filter((v) => v.id !== videoId && v.coverUrl);
+        if (remaining.length === 0) {
+          setGlobalCoverPreview(null);
+          localStorage.removeItem("library_global_cover");
+        }
+        showToast("success", "Capa removida");
+      } else {
+        showToast("error", "Erro ao remover capa");
+      }
+    } catch {
+      showToast("error", "Erro ao remover capa");
+    } finally {
+      setRemovingCoverId(null);
+    }
+  }
+
+  function openCoverAllModal() {
+    setModalCoverFile(null);
+    setModalCoverPreview(globalCoverPreview);
+    setShowCoverModal(true);
+  }
+
+  function closeModal() {
+    if (modalCoverPreview && modalCoverPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(modalCoverPreview);
+    }
+    setShowCoverModal(false);
+    setModalCoverFile(null);
+    setModalCoverPreview(null);
+  }
+
+  function handleModalCoverFile(file: File) {
+    if (modalCoverPreview && modalCoverPreview.startsWith("blob:")) {
+      URL.revokeObjectURL(modalCoverPreview);
+    }
+    setModalCoverFile(file);
+    setModalCoverPreview(URL.createObjectURL(file));
+  }
+
+  async function applyGlobalCover() {
+    if (!modalCoverFile) { closeModal(); return; }
+    const ok = await uploadCoverForAll(modalCoverFile);
+    if (ok) closeModal();
+  }
+
+  function openCoverPicker(videoId: string) {
+    coverTargetId.current = videoId;
+    coverInputRef.current?.click();
   }
 
   async function deleteVideo(id: string) {
@@ -291,6 +496,16 @@ export default function LibraryPage() {
           {videos.length > 0 && (
             <div style={{ display: "flex", gap: "0.4rem" }}>
               <button
+                onClick={openCoverAllModal}
+                disabled={uploadingCoverAll || cleaning || cleaningMeta}
+                title="Aplica a mesma imagem de capa em todos os vídeos da biblioteca"
+                style={{ display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.45rem 0.85rem", borderRadius: "8px", border: "1px solid rgba(255,184,0,0.3)", background: "rgba(255,184,0,0.08)", color: "var(--accent-gold)", fontSize: "0.78rem", cursor: uploadingCoverAll ? "not-allowed" : "pointer", fontWeight: 600, opacity: uploadingCoverAll ? 0.7 : 1 }}>
+                {uploadingCoverAll
+                  ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+                  : <ImagePlus size={13} />}
+                {uploadingCoverAll ? "Aplicando..." : "Capa para todos"}
+              </button>
+              <button
                 onClick={() => void cleanVideoMeta()}
                 disabled={cleaningMeta || cleaning}
                 title="Remove metadados, re-encoda e aplica micro-variações para o Instagram tratar como vídeo novo"
@@ -411,9 +626,55 @@ export default function LibraryPage() {
         </div>
       ) : (
         <>
+          {globalCoverPreview && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: "1rem",
+              padding: "0.85rem 1.1rem", borderRadius: "12px", marginBottom: "1.25rem",
+              background: "rgba(255,184,0,0.06)", border: "1px solid rgba(255,184,0,0.2)",
+            }}>
+              <img
+                src={globalCoverPreview}
+                alt="Capa global"
+                style={{ width: "52px", height: "52px", borderRadius: "8px", objectFit: "cover", border: "1px solid rgba(255,184,0,0.3)", flexShrink: 0 }}
+              />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <p style={{ fontSize: "0.82rem", fontWeight: 700, color: "var(--accent-gold)", marginBottom: "0.15rem" }}>Capa global ativa</p>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>Esta imagem será usada como capa de todos os Reels ao publicar no Instagram.</p>
+              </div>
+              <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+                <button
+                  onClick={openCoverAllModal}
+                  disabled={uploadingCoverAll || removingCoverAll}
+                  style={{ padding: "0.4rem 0.8rem", borderRadius: "7px", border: "1px solid rgba(255,184,0,0.3)", background: "rgba(255,184,0,0.1)", color: "var(--accent-gold)", fontSize: "0.75rem", cursor: "pointer", fontWeight: 600 }}>
+                  Trocar
+                </button>
+                <button
+                  onClick={() => void removeCoverFromAll()}
+                  disabled={removingCoverAll || uploadingCoverAll}
+                  title="Remove a capa de todos os vídeos"
+                  style={{ padding: "0.4rem 0.8rem", borderRadius: "7px", border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.08)", color: "#f87171", fontSize: "0.75rem", cursor: removingCoverAll ? "not-allowed" : "pointer", fontWeight: 600, display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                  {removingCoverAll ? <Loader2 size={12} style={{ animation: "spin 1s linear infinite" }} /> : <X size={12} />}
+                  {removingCoverAll ? "Removendo..." : "Remover"}
+                </button>
+              </div>
+            </div>
+          )}
           <h2 style={{ marginBottom: "1rem", fontSize: "1rem", fontWeight: 600, color: "var(--text-secondary)" }}>
             Seus Vídeos
           </h2>
+          {/* Hidden input for cover image upload */}
+          <input
+            ref={coverInputRef}
+            type="file"
+            accept="image/jpeg,image/jpg,image/png"
+            style={{ display: "none" }}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file && coverTargetId.current) void uploadCover(file, coverTargetId.current);
+              e.target.value = "";
+            }}
+          />
+
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "1rem" }}>
             {videos.map((video) => (
               <div key={video.id} className="glass-panel" style={{
@@ -426,42 +687,27 @@ export default function LibraryPage() {
                 onMouseLeave={(e) => (e.currentTarget.style.transform = "translateY(0)")}
               >
                 {/* Thumbnail */}
-                <div style={{
-                  height: "130px",
-                  background: "rgba(10,12,20,0.9)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  position: "relative",
-                  overflow: "hidden",
-                }}>
-                  <video
-                    src={video.publicUrl}
-                    style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.7 }}
-                    preload="none"
-                    muted
-                  />
-                  <div style={{
-                    position: "absolute",
-                    inset: 0,
-                    background: "linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 50%)",
-                  }} />
-                  {video.durationSecs && (
+                <div style={{ height: "130px", position: "relative", overflow: "hidden" }}>
+                  <LazyVideoThumb src={video.publicUrl} coverUrl={video.coverUrl} />
+                  <div style={{ position: "absolute", inset: 0, background: "linear-gradient(to top, rgba(0,0,0,0.55) 0%, transparent 55%)", pointerEvents: "none" }} />
+                  {video.durationSecs != null && (
                     <div style={{
-                      position: "absolute",
-                      bottom: "0.5rem",
-                      right: "0.5rem",
-                      background: "rgba(0,0,0,0.7)",
-                      borderRadius: "4px",
-                      padding: "2px 6px",
-                      fontSize: "0.7rem",
-                      color: "#fff",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "3px",
+                      position: "absolute", bottom: "0.5rem", right: "0.5rem",
+                      background: "rgba(0,0,0,0.7)", borderRadius: "4px",
+                      padding: "2px 6px", fontSize: "0.7rem", color: "#fff",
+                      display: "flex", alignItems: "center", gap: "3px",
                     }}>
                       <Clock size={10} />
                       {Math.floor(video.durationSecs / 60)}:{String(Math.round(video.durationSecs % 60)).padStart(2, "0")}
+                    </div>
+                  )}
+                  {video.coverUrl && (
+                    <div style={{
+                      position: "absolute", top: "0.4rem", left: "0.4rem",
+                      background: "rgba(255,184,0,0.92)", borderRadius: "4px",
+                      padding: "2px 6px", fontSize: "0.62rem", fontWeight: 700, color: "#1a1300",
+                    }}>
+                      CAPA
                     </div>
                   )}
                 </div>
@@ -487,11 +733,60 @@ export default function LibraryPage() {
                     </span>
                   </div>
 
+                  <div style={{ marginTop: "0.75rem", display: "flex", gap: "0.35rem" }}>
+                    <button
+                      onClick={() => openCoverPicker(video.id)}
+                      disabled={uploadingCoverId === video.id || removingCoverId === video.id}
+                      style={{
+                        flex: 1,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        gap: "0.4rem",
+                        padding: "0.5rem",
+                        background: video.coverUrl ? "rgba(255,184,0,0.1)" : "rgba(255,255,255,0.04)",
+                        border: `1px solid ${video.coverUrl ? "rgba(255,184,0,0.3)" : "rgba(255,255,255,0.1)"}`,
+                        borderRadius: "8px",
+                        color: video.coverUrl ? "var(--accent)" : "var(--text-secondary)",
+                        fontSize: "0.78rem",
+                        cursor: uploadingCoverId === video.id ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {uploadingCoverId === video.id
+                        ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+                        : <Film size={13} />}
+                      {video.coverUrl ? "Trocar capa" : "Definir capa"}
+                    </button>
+                    {video.coverUrl && (
+                      <button
+                        onClick={() => void removeCover(video.id)}
+                        disabled={removingCoverId === video.id || uploadingCoverId === video.id}
+                        title="Remover capa"
+                        style={{
+                          flexShrink: 0,
+                          padding: "0.5rem 0.55rem",
+                          background: "rgba(239,68,68,0.07)",
+                          border: "1px solid rgba(239,68,68,0.2)",
+                          borderRadius: "8px",
+                          color: "#f87171",
+                          cursor: removingCoverId === video.id ? "not-allowed" : "pointer",
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        {removingCoverId === video.id
+                          ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} />
+                          : <X size={13} />}
+                      </button>
+                    )}
+                  </div>
+
                   <button
                     onClick={() => deleteVideo(video.id)}
                     disabled={deletingId === video.id}
                     style={{
-                      marginTop: "0.75rem",
+                      marginTop: "0.4rem",
                       width: "100%",
                       display: "flex",
                       alignItems: "center",
@@ -527,9 +822,120 @@ export default function LibraryPage() {
         </>
       )}
 
+      {/* Capa para todos modal */}
+      {showCoverModal && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) closeModal(); }}
+          style={{ position: "fixed", inset: 0, zIndex: 300, background: "rgba(0,0,0,0.75)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center" }}
+        >
+          <div className="glass-panel" style={{ padding: "1.75rem", borderRadius: "18px", maxWidth: "420px", width: "90%", display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+            {/* Title row */}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <h3 style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.2rem" }}>Capa para todos os vídeos</h3>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>Esta imagem será usada como capa de todos os Reels ao publicar.</p>
+              </div>
+              <button onClick={closeModal} style={{ background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer", padding: "0.25rem", flexShrink: 0 }}>
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Preview / drop zone */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setModalDragOver(true); }}
+              onDragLeave={() => setModalDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setModalDragOver(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file && file.type.startsWith("image/")) handleModalCoverFile(file);
+              }}
+              onClick={() => modalCoverInputRef.current?.click()}
+              style={{
+                height: "210px",
+                borderRadius: "12px",
+                border: `2px dashed ${modalDragOver ? "rgba(255,184,0,0.7)" : modalCoverPreview ? "rgba(255,184,0,0.35)" : "rgba(255,184,0,0.25)"}`,
+                background: modalDragOver ? "rgba(255,184,0,0.05)" : "rgba(0,0,0,0.3)",
+                overflow: "hidden",
+                cursor: "pointer",
+                position: "relative",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                transition: "border-color 0.2s",
+              }}
+            >
+              {modalCoverPreview ? (
+                <>
+                  <img src={modalCoverPreview} alt="Capa" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                  <div
+                    className="cover-hover-overlay"
+                    style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "0.5rem", opacity: 0, transition: "opacity 0.2s" }}
+                  >
+                    <ImagePlus size={24} color="#fff" />
+                    <p style={{ color: "#fff", fontSize: "0.82rem", fontWeight: 600 }}>Clique para trocar</p>
+                  </div>
+                </>
+              ) : (
+                <div style={{ textAlign: "center", padding: "1rem" }}>
+                  <ImagePlus size={36} color="rgba(255,184,0,0.45)" style={{ margin: "0 auto 0.75rem" }} />
+                  <p style={{ fontSize: "0.88rem", color: "var(--text-secondary)", fontWeight: 500 }}>Clique ou arraste uma imagem</p>
+                  <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>JPG ou PNG</p>
+                </div>
+              )}
+              <input
+                ref={modalCoverInputRef}
+                type="file"
+                accept="image/jpeg,image/jpg,image/png"
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleModalCoverFile(file);
+                  e.target.value = "";
+                }}
+              />
+            </div>
+
+            {modalCoverPreview && !modalCoverFile && (
+              <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", textAlign: "center", marginTop: "-0.5rem" }}>
+                Capa salva · Clique na imagem para trocar
+              </p>
+            )}
+
+            {/* Actions */}
+            <div style={{ display: "flex", gap: "0.75rem" }}>
+              <button
+                onClick={closeModal}
+                style={{ flex: 1, padding: "0.65rem", borderRadius: "8px", border: "1px solid rgba(255,255,255,0.1)", background: "transparent", color: "var(--text-secondary)", cursor: "pointer", fontSize: "0.875rem" }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => void applyGlobalCover()}
+                disabled={uploadingCoverAll || !modalCoverFile}
+                style={{
+                  flex: 1, padding: "0.65rem", borderRadius: "8px",
+                  border: "1px solid rgba(255,184,0,0.4)", background: "rgba(255,184,0,0.12)",
+                  color: "var(--accent-gold)", cursor: (!modalCoverFile || uploadingCoverAll) ? "not-allowed" : "pointer",
+                  fontSize: "0.875rem", fontWeight: 600,
+                  display: "flex", alignItems: "center", justifyContent: "center", gap: "0.45rem",
+                  opacity: !modalCoverFile ? 0.5 : 1,
+                  transition: "opacity 0.2s",
+                }}
+              >
+                {uploadingCoverAll
+                  ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Aplicando...</>
+                  : "Aplicar para todos"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <style>{`
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+        .cover-hover-overlay:hover { opacity: 1 !important; }
       `}</style>
     </div>
   );
