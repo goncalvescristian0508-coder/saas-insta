@@ -61,15 +61,14 @@ export async function POST(request: Request) {
   const start = new Date(scheduledAt);
   const intervalMs = (intervalSeconds ?? 30) * 1000;
 
-  function getScheduledAt(videoIdx: number, accountIdx: number, totalVidsForAccount: number): Date {
-    const accountOffset = accountIdx * totalVidsForAccount * intervalMs;
+  function getScheduledAt(videoIdx: number, _accountIdx: number, _totalVidsForAccount: number): Date {
     if (batchSize && batchIntervalHours) {
       const batchIntervalMs = batchIntervalHours * 3600 * 1000;
       const blockIdx = Math.floor(videoIdx / batchSize);
       const posInBlock = videoIdx % batchSize;
-      return new Date(start.getTime() + accountOffset + blockIdx * batchIntervalMs + posInBlock * intervalMs);
+      return new Date(start.getTime() + blockIdx * batchIntervalMs + posInBlock * intervalMs);
     }
-    return new Date(start.getTime() + accountOffset + videoIdx * intervalMs);
+    return new Date(start.getTime() + videoIdx * intervalMs);
   }
 
   let pairs: { accountIdx: number; accountId: string; vId: string; videoIdx: number }[];
