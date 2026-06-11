@@ -311,11 +311,25 @@ async function processCloneJob(p: ProcessParams) {
             apifyRunWithRetry(t, "apify/instagram-profile-scraper", { usernames: [p.cleanUsername], ...proxyConfig }),
           ]);
           // Detect error items (proxy blocked)
-          const profileItem = profileItems[0] ?? {};
+          let profileItem = profileItems[0] ?? {};
           if (!profileItem.username) {
-            const errMsg = String(profileItem.errorDescription ?? profileItem.error ?? "Perfil bloqueado pelo proxy do Apify");
-            lastTokenErr = new Error(errMsg);
-            continue;
+            // Profile scraper blocked — try to synthesize from reel owner metadata
+            const ownerReel = reelsItems.find((r) => r.ownerUsername || r.authorUsername);
+            if (ownerReel) {
+              profileItem = {
+                username: ownerReel.ownerUsername ?? ownerReel.authorUsername ?? p.cleanUsername,
+                fullName: ownerReel.ownerFullName ?? ownerReel.authorFullName ?? ownerReel.ownerUsername,
+                profilePicUrlHD: ownerReel.ownerProfilePicUrl ?? ownerReel.authorProfilePicUrl,
+                profilePicUrl: ownerReel.ownerProfilePicUrl ?? ownerReel.authorProfilePicUrl,
+                biography: "",
+                followersCount: ownerReel.ownerFollowersCount ?? ownerReel.authorFollowersCount ?? 0,
+              };
+              profileItems[0] = profileItem; // keep in sync so post-loop code reads correct data
+            } else {
+              const errMsg = String(profileItem.errorDescription ?? profileItem.error ?? "Perfil bloqueado pelo proxy do Apify");
+              lastTokenErr = new Error(errMsg);
+              continue;
+            }
           }
           const hasValidReels = reelsItems.some((r) => r.videoUrl || r.shortCode || r.id);
           if (!hasValidReels && reelsItems.length > 0) {

@@ -75,7 +75,7 @@ export async function POST(request: Request) {
     // ── 2nd: HikerAPI ──
     if (process.env.HIKERAPI_KEY) {
       try {
-        const { profile, reels } = await hikerScrapeProfileAndReels(cleanUsername);
+        const { profile, reels } = await hikerScrapeProfileAndReels(cleanUsername, 50);
         const videos = reels.map((r, i) => ({
           id: i + 1, shortCode: r.shortCode, caption: r.caption || "(sem legenda)",
           videoUrl: r.videoUrl, thumbnailUrl: r.thumbnailUrl,
@@ -93,7 +93,7 @@ export async function POST(request: Request) {
     // ── 3rd: RapidAPI Instagram120 ──
     if (process.env.RAPIDAPI_KEY) {
       try {
-        const { profile, reels } = await rapidScrapeProfileAndReels(cleanUsername);
+        const { profile, reels } = await rapidScrapeProfileAndReels(cleanUsername, 50);
         const videos = reels.map((r, i) => ({
           id: i + 1, shortCode: r.shortCode, caption: r.caption || "(sem legenda)",
           videoUrl: r.videoUrl, thumbnailUrl: r.thumbnailUrl,
@@ -134,7 +134,7 @@ export async function POST(request: Request) {
     for (const token of apifyTokens) {
       try {
         const [reelsResult, profileResult] = await Promise.allSettled([
-          runApifyActor(token, "apify/instagram-reel-scraper", { username: [cleanUsername], resultsLimit: 9999, ...proxyConfig }),
+          runApifyActor(token, "apify/instagram-reel-scraper", { username: [cleanUsername], resultsLimit: 50, ...proxyConfig }),
           runApifyActor(token, "apify/instagram-profile-scraper", { usernames: [cleanUsername], ...proxyConfig }),
         ]);
 
@@ -148,12 +148,26 @@ export async function POST(request: Request) {
           continue;
         }
 
-        const profileItem = ((profileResult.value[0] ?? {}) as Record<string, unknown>);
+        let profileItem = ((profileResult.value[0] ?? {}) as Record<string, unknown>);
 
         if (!profileItem.username) {
-          const errMsg = String(profileItem.errorDescription ?? profileItem.error ?? "Perfil não encontrado (proxy bloqueado)");
-          lastError = errMsg;
-          continue;
+          // Profile scraper blocked — try to build profile from reel owner metadata
+          const reelsForFallback = reelsResult.status === "fulfilled" ? reelsResult.value as Record<string, unknown>[] : [];
+          const ownerReel = reelsForFallback.find((r) => r.ownerUsername || r.authorUsername);
+          if (ownerReel) {
+            profileItem = {
+              username: ownerReel.ownerUsername ?? ownerReel.authorUsername ?? cleanUsername,
+              fullName: ownerReel.ownerFullName ?? ownerReel.authorFullName ?? ownerReel.ownerUsername,
+              profilePicUrlHD: ownerReel.ownerProfilePicUrl ?? ownerReel.authorProfilePicUrl,
+              profilePicUrl: ownerReel.ownerProfilePicUrl ?? ownerReel.authorProfilePicUrl,
+              biography: "",
+              followersCount: ownerReel.ownerFollowersCount ?? ownerReel.authorFollowersCount ?? 0,
+            };
+          } else {
+            const errMsg = String(profileItem.errorDescription ?? profileItem.error ?? "Perfil não encontrado (proxy bloqueado)");
+            lastError = errMsg;
+            continue;
+          }
         }
 
         const reelsRaw = reelsResult.status === "fulfilled" ? reelsResult.value as Record<string, unknown>[] : [];
