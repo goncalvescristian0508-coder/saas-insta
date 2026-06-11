@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Activity, RefreshCw, Loader2, AlertCircle, Users, Heart, MessageCircle, TrendingUp, Calendar, BarChart3 } from "lucide-react";
+import { Activity, RefreshCw, Loader2, AlertCircle, Users, Heart, MessageCircle, TrendingUp, Calendar, BarChart3, Eye, Image } from "lucide-react";
 
 interface AccountInsight {
   id: string;
@@ -11,6 +11,10 @@ interface AccountInsight {
   mediaCount: number;
   avgLikes: number;
   avgComments: number;
+  avgViews: number;
+  totalLikes: number;
+  totalComments: number;
+  totalViews: number;
   engagementRate: number;
   postsAnalyzed: number;
   lastPostAt: string | null;
@@ -60,6 +64,10 @@ export default function EngajamentoPage() {
     ? Math.round((okAccounts.reduce((s, a) => s + a.engagementRate, 0) / okAccounts.length) * 10) / 10
     : 0;
   const totalFollowers = okAccounts.reduce((s, a) => s + a.followers, 0);
+  const totalViews = okAccounts.reduce((s, a) => s + (a.totalViews ?? 0), 0);
+  const totalLikes = okAccounts.reduce((s, a) => s + (a.totalLikes ?? 0), 0);
+  const totalComments = okAccounts.reduce((s, a) => s + (a.totalComments ?? 0), 0);
+  const totalPosts = okAccounts.reduce((s, a) => s + a.mediaCount, 0);
   const bestAccount = okAccounts[0] ?? null;
 
   return (
@@ -134,6 +142,27 @@ export default function EngajamentoPage() {
                 icon: <Activity size={18} color="var(--accent-gold)" />,
                 color: "var(--accent-gold)",
                 sub: bestAccount ? `@${bestAccount.username}` : "sem dados",
+              },
+              {
+                label: "Views em reels",
+                value: fmt(totalViews),
+                icon: <Eye size={18} color="#a78bfa" />,
+                color: "#a78bfa",
+                sub: "total de visualizações",
+              },
+              {
+                label: "Total de curtidas",
+                value: fmt(totalLikes),
+                icon: <Heart size={18} color="#f472b6" />,
+                color: "#f472b6",
+                sub: "soma de todas as contas",
+              },
+              {
+                label: "Total de comentários",
+                value: fmt(totalComments),
+                icon: <MessageCircle size={18} color="#34d399" />,
+                color: "#34d399",
+                sub: `${totalPosts} posts analisados`,
               },
             ].map((card) => (
               <div key={card.label} className="glass-panel" style={{ padding: "1.25rem 1.5rem", borderRadius: "12px" }}>
@@ -219,10 +248,12 @@ export default function EngajamentoPage() {
                   {/* Stats grid */}
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
                     {[
-                      { icon: <Heart size={13} color="#f472b6" />, label: "Média likes", value: fmt(account.avgLikes) },
-                      { icon: <MessageCircle size={13} color="#60a5fa" />, label: "Média comments", value: fmt(account.avgComments) },
-                      { icon: <BarChart3 size={13} color="var(--accent-gold)" />, label: "Posts analisados", value: String(account.postsAnalyzed) },
-                      { icon: <Calendar size={13} color="#a78bfa" />, label: "Último post", value: account.lastPostAt ? new Date(account.lastPostAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) : "—" },
+                      { icon: <Eye size={13} color="#a78bfa" />, label: "Views (reels)", value: fmt(account.totalViews ?? 0) },
+                      { icon: <Heart size={13} color="#f472b6" />, label: "Curtidas", value: fmt(account.totalLikes ?? 0) },
+                      { icon: <MessageCircle size={13} color="#34d399" />, label: "Comentários", value: fmt(account.totalComments ?? 0) },
+                      { icon: <Users size={13} color="#60a5fa" />, label: "Seguidores", value: fmt(account.followers) },
+                      { icon: <Image size={13} color="var(--accent-gold)" />, label: "Posts", value: String(account.mediaCount) },
+                      { icon: <Calendar size={13} color="#f59e0b" />, label: "Último post", value: account.lastPostAt ? new Date(account.lastPostAt).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) : "—" },
                     ].map((stat) => (
                       <div key={stat.label} style={{ padding: "0.6rem 0.75rem", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: "8px" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.25rem" }}>

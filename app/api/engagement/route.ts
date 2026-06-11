@@ -12,6 +12,7 @@ interface MediaItem {
   id: string;
   like_count?: number;
   comments_count?: number;
+  video_views?: number;
   timestamp?: string;
   media_type?: string;
 }
@@ -24,6 +25,10 @@ interface AccountInsight {
   mediaCount: number;
   avgLikes: number;
   avgComments: number;
+  avgViews: number;
+  totalLikes: number;
+  totalComments: number;
+  totalViews: number;
   engagementRate: number;
   postsAnalyzed: number;
   lastPostAt: string | null;
@@ -35,14 +40,13 @@ async function fetchAccountEngagement(
   accessToken: string,
   igUserId: string,
 ): Promise<Omit<AccountInsight, "id" | "username" | "profilePicUrl">> {
-  // Fetch account info + recent media in parallel
   const [profileRes, mediaRes] = await Promise.all([
     fetch(
       `${GRAPH}/${igUserId}?fields=followers_count,media_count&access_token=${accessToken}`,
       { signal: AbortSignal.timeout(15_000) }
     ),
     fetch(
-      `${GRAPH}/${igUserId}/media?fields=id,like_count,comments_count,timestamp,media_type&limit=30&access_token=${accessToken}`,
+      `${GRAPH}/${igUserId}/media?fields=id,like_count,comments_count,video_views,timestamp,media_type&limit=50&access_token=${accessToken}`,
       { signal: AbortSignal.timeout(15_000) }
     ),
   ]);
@@ -59,26 +63,26 @@ async function fetchAccountEngagement(
   let posts: MediaItem[] = [];
   if (mediaRes.ok) {
     const mediaData = await mediaRes.json() as { data?: MediaItem[] };
-    posts = (mediaData.data ?? []).filter(
-      (p) => p.media_type !== "STORY"
-    );
+    posts = (mediaData.data ?? []).filter((p) => p.media_type !== "STORY");
   }
 
   if (posts.length === 0) {
-    return { followers, mediaCount, avgLikes: 0, avgComments: 0, engagementRate: 0, postsAnalyzed: 0, lastPostAt: null, status: "ok" };
+    return { followers, mediaCount, avgLikes: 0, avgComments: 0, avgViews: 0, totalLikes: 0, totalComments: 0, totalViews: 0, engagementRate: 0, postsAnalyzed: 0, lastPostAt: null, status: "ok" };
   }
 
   const totalLikes = posts.reduce((s, p) => s + (p.like_count ?? 0), 0);
   const totalComments = posts.reduce((s, p) => s + (p.comments_count ?? 0), 0);
+  const totalViews = posts.reduce((s, p) => s + (p.video_views ?? 0), 0);
   const avgLikes = Math.round(totalLikes / posts.length);
   const avgComments = Math.round(totalComments / posts.length);
+  const avgViews = Math.round(totalViews / posts.length);
   const engagementRate = followers > 0
     ? Math.round(((totalLikes + totalComments) / posts.length / followers) * 1000) / 10
     : 0;
 
   const lastPostAt = posts[0]?.timestamp ?? null;
 
-  return { followers, mediaCount, avgLikes, avgComments, engagementRate, postsAnalyzed: posts.length, lastPostAt, status: "ok" };
+  return { followers, mediaCount, avgLikes, avgComments, avgViews, totalLikes, totalComments, totalViews, engagementRate, postsAnalyzed: posts.length, lastPostAt, status: "ok" };
 }
 
 export async function GET() {
@@ -109,13 +113,9 @@ export async function GET() {
           id: account.id,
           username: account.username,
           profilePicUrl: account.profilePictureUrl ?? null,
-          followers: 0,
-          mediaCount: 0,
-          avgLikes: 0,
-          avgComments: 0,
-          engagementRate: 0,
-          postsAnalyzed: 0,
-          lastPostAt: null,
+          followers: 0, mediaCount: 0, avgLikes: 0, avgComments: 0, avgViews: 0,
+          totalLikes: 0, totalComments: 0, totalViews: 0,
+          engagementRate: 0, postsAnalyzed: 0, lastPostAt: null,
           status: "error",
           error: "Token expirado — reconecte a conta",
         };
@@ -135,13 +135,9 @@ export async function GET() {
           id: account.id,
           username: account.username,
           profilePicUrl: account.profilePictureUrl ?? null,
-          followers: 0,
-          mediaCount: 0,
-          avgLikes: 0,
-          avgComments: 0,
-          engagementRate: 0,
-          postsAnalyzed: 0,
-          lastPostAt: null,
+          followers: 0, mediaCount: 0, avgLikes: 0, avgComments: 0, avgViews: 0,
+          totalLikes: 0, totalComments: 0, totalViews: 0,
+          engagementRate: 0, postsAnalyzed: 0, lastPostAt: null,
           status: "error",
           error: err instanceof Error ? err.message : "Erro desconhecido",
         };
