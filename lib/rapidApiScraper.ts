@@ -48,18 +48,27 @@ interface ProfileData {
   id?: string;
   pk?: string;
   instagram_pk?: string;
+  user_id?: string;
   username?: string;
   full_name?: string;
+  fullName?: string;
   biography?: string;
+  bio?: string;
   profile_pic_url?: string;
+  profile_picture_url?: string;
   hd_profile_pic_url_info?: { url?: string };
   follower_count?: number;
+  followers_count?: number;
+  followers?: number;
 }
 
 interface ReelItem {
   code?: string;
-  media_type?: number;
-  caption?: { text?: string } | null;
+  shortcode?: string;
+  media_type?: number | string;
+  is_video?: boolean;
+  product_type?: string;
+  caption?: { text?: string } | string | null;
   // /userposts/ fields (preferred — has thumbnail_url)
   video_url?: string;
   thumbnail_url?: string;
@@ -67,6 +76,7 @@ interface ReelItem {
   // /userreels/ fields
   video_versions?: { url?: string }[];
   image_versions2?: { candidates?: { url?: string }[] };
+  display_url?: string;
   like_count?: number;
   comment_count?: number;
   view_count?: number;
@@ -78,22 +88,24 @@ interface ReelItem {
 interface ItemsData {
   count?: number;
   items?: ReelItem[];
+  // some APIs return posts directly as array at root
+  [key: string]: unknown;
 }
 
 function parseReelItem(item: ReelItem): RapidReel | null {
-  if (item.media_type !== 2) return null;
   // video_url (userposts) takes priority, then video_versions[0].url (userreels)
   const videoUrl = item.video_url ?? item.video_versions?.[0]?.url ?? "";
-  if (!videoUrl) return null;
+  if (!videoUrl) return null; // no video URL = not a video, skip regardless of media_type
   // thumbnail_url (userposts) → first_frame → candidates[0]
   const thumbnailUrl =
     item.thumbnail_url ??
     item.image_versions?.additional_items?.first_frame?.url ??
     item.image_versions2?.candidates?.[0]?.url ??
     "";
+  const captionText = typeof item.caption === "string" ? item.caption : item.caption?.text ?? "";
   return {
-    shortCode: item.code ?? "",
-    caption: item.caption?.text ?? "",
+    shortCode: item.code ?? item.shortcode ?? "",
+    caption: captionText,
     videoUrl,
     thumbnailUrl,
     likes: item.like_count ?? 0,
@@ -116,23 +128,35 @@ export async function rapidScrapeProfileAndReels(
 
   // Parse profile — some responses nest under .data, others return at root level
   const profileRaw = profileRes as Record<string, unknown>;
-  const profileData = (profileRaw.data ?? profileRaw) as ProfileData;
-  const userId = String(profileData.id ?? profileData.pk ?? profileData.instagram_pk ?? "");
+  // Handle nesting: {data:{...}} or root-level or {user:{...}}
+  const profileNested = (profileRaw.data ?? profileRaw.user ?? profileRaw) as ProfileData;
+  const profileData = profileNested as ProfileData;
+  const userId = String(profileData.id ?? profileData.pk ?? profileData.instagram_pk ?? profileData.user_id ?? "");
   if (!userId) throw new Error(`RapidAPI: perfil não encontrado para @${username}`);
 
   const profile: RapidProfile = {
     id: userId,
     username: profileData.username ?? username,
-    fullName: profileData.full_name ?? "",
-    biography: profileData.biography ?? "",
-    profilePicUrl: profileData.hd_profile_pic_url_info?.url ?? profileData.profile_pic_url ?? "",
-    followersCount: profileData.follower_count ?? 0,
+    fullName: profileData.full_name ?? profileData.fullName ?? "",
+    biography: profileData.biography ?? profileData.bio ?? "",
+    profilePicUrl: profileData.hd_profile_pic_url_info?.url ?? profileData.profile_pic_url ?? profileData.profile_picture_url ?? "",
+    followersCount: profileData.follower_count ?? profileData.followers_count ?? profileData.followers ?? 0,
   };
 
-  // Parse posts (filter media_type === 2 for videos only)
-  const postsRaw = postsRes as Record<string, unknown>;
-  const postsData = (postsRaw.data ?? postsRaw) as ItemsData;
-  const postItems = postsData.items ?? [];
+  // Parse posts — handle array response, {items:[...]}, {data:{items:[...]}}
+  function extractItems(res: unknown): ReelItem[] {
+    if (Array.isArray(res)) return res as ReelItem[];
+    const r = res as Record<string, unknown>;
+    const inner = r.data ?? r;
+    const obj = inner as Record<string, unknown>;
+    if (Array.isArray(obj.items)) return obj.items as ReelItem[];
+    if (Array.isArray(obj.reels)) return obj.reels as ReelItem[];
+    if (Array.isArray(obj.posts)) return obj.posts as ReelItem[];
+    if (Array.isArray(obj.medias)) return obj.medias as ReelItem[];
+    return [];
+  }
+
+  const postItems = extractItems(postsRes);
 
   const reels: RapidReel[] = [];
   for (const item of postItems) {
@@ -144,9 +168,7 @@ export async function rapidScrapeProfileAndReels(
   // Fallback to /userreels/ if userposts returned no videos
   if (reels.length === 0) {
     const reelsRes = await getJson(`/userreels/?username_or_id=${encodeURIComponent(username)}`);
-    const reelsRaw2 = reelsRes as Record<string, unknown>;
-    const reelsData = (reelsRaw2.data ?? reelsRaw2) as ItemsData;
-    for (const item of reelsData.items ?? []) {
+    for (const item of extractItems(reelsRes)) {
       if (reels.length >= limit) break;
       const reel = parseReelItem(item);
       if (reel) reels.push(reel);
