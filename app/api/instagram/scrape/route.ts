@@ -32,7 +32,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const { profile, reels } = await rapidScrapeProfileAndReels(cleanUsername, 300);
+      const { profile, reels } = await rapidScrapeProfileAndReels(cleanUsername, 120, 10);
       const videos = reels.map((r, i) => ({
         id: i + 1,
         shortCode: r.shortCode,

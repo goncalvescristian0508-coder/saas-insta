@@ -136,6 +136,7 @@ function parseReelItem(item: ReelItem): RapidReel | null {
 export async function rapidScrapeProfileAndReels(
   username: string,
   limit = 9999,
+  maxPages = 30,
 ): Promise<{ profile: RapidProfile; reels: RapidReel[] }> {
   // Use /userposts/ as primary (has thumbnail_url + video_url)
   // Fetch sequentially to avoid hitting rate limit simultaneously
@@ -191,7 +192,7 @@ export async function rapidScrapeProfileAndReels(
   }
 
   const reels: RapidReel[] = [];
-  const MAX_PAGES = 30;
+  const MAX_PAGES = maxPages;
 
   // Paginate /userposts/
   let cursor: string | null = null;

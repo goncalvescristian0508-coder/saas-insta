@@ -300,8 +300,8 @@ export default function ClonarPage() {
         postsPerMonth,
         hourlyData,
       });
-    } catch {
-      setSearchError("Erro de conexão");
+    } catch (e) {
+      setSearchError(e instanceof Error ? e.message : "Erro de conexão");
     } finally {
       setSearching(false);
     }
