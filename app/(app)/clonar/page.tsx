@@ -901,8 +901,13 @@ export default function ClonarPage() {
                   {/* Stats */}
                   <div style={{ display: "flex", gap: "1rem", flexShrink: 0 }}>
                     {isFailed && (
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "#f87171", fontSize: "0.82rem", fontWeight: 600 }}>
-                        <XCircle size={14} /> Falhou
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.25rem" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "#f87171", fontSize: "0.82rem", fontWeight: 600 }}>
+                          <XCircle size={14} /> Falhou
+                        </div>
+                        {job.errorMsg && (
+                          <span style={{ fontSize: "0.7rem", color: "#f87171", opacity: 0.8, maxWidth: "220px", textAlign: "right", lineHeight: 1.3 }}>{job.errorMsg}</span>
+                        )}
                       </div>
                     )}
                     {isProcessing && (
