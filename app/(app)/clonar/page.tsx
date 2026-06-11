@@ -73,6 +73,8 @@ export default function ClonarPage() {
   const [cloneBio, setCloneBio] = useState(true);
   const [cloneStories, setCloneStories] = useState(false);
   const [cloneHighlights, setCloneHighlights] = useState(false);
+  const [autoCaptions, setAutoCaptions] = useState(false);
+  const [captionTheme, setCaptionTheme] = useState<"mundo" | "tops" | "complexas">("mundo");
   const [alternateSequence, setAlternateSequence] = useState(false);
   const [groupSize, setGroupSize] = useState(5);
   const [startDate, setStartDate] = useState("");
@@ -336,6 +338,8 @@ export default function ClonarPage() {
           alternateSequence,
           groupSize,
           globalCoverUrl,
+          autoCaptions,
+          captionTheme,
         }),
       });
       const data = await res.json();
@@ -667,6 +671,37 @@ export default function ClonarPage() {
                 <span style={{ fontSize: "0.85rem" }}>Reels (sempre)</span>
               </label>
             </div>
+          </div>
+
+          {/* Auto captions */}
+          <div style={{ marginBottom: "1.25rem" }}>
+            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "0.6rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>Legendas automáticas</label>
+            <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.7rem", borderRadius: "8px", cursor: "pointer", background: autoCaptions ? "rgba(139,92,246,0.08)" : "rgba(255,255,255,0.02)", border: `1px solid ${autoCaptions ? "rgba(139,92,246,0.3)" : "transparent"}` }}>
+              <input type="checkbox" checked={autoCaptions} onChange={() => setAutoCaptions(!autoCaptions)} style={{ accentColor: "#8b5cf6" }} />
+              <span style={{ fontSize: "0.85rem" }}>Gerar legendas automáticas (curiosidades)</span>
+            </label>
+            {autoCaptions && (
+              <div style={{ marginTop: "0.75rem", padding: "0.85rem", borderRadius: "8px", background: "rgba(139,92,246,0.05)", border: "1px solid rgba(139,92,246,0.18)", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
+                  Cada post receberá uma legenda diferente com curiosidades em português. As legendas originais dos reels serão substituídas.
+                </p>
+                <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+                  {([
+                    { v: "mundo", label: "🌍 Curiosidades do mundo" },
+                    { v: "tops", label: "🏆 Curiosidades tops" },
+                    { v: "complexas", label: "🔬 Fatos complexos" },
+                  ] as { v: "mundo" | "tops" | "complexas"; label: string }[]).map(({ v, label }) => (
+                    <button
+                      key={v}
+                      onClick={() => setCaptionTheme(v)}
+                      style={{ padding: "0.35rem 0.85rem", borderRadius: "8px", border: `1px solid ${captionTheme === v ? "rgba(139,92,246,0.55)" : "rgba(255,255,255,0.1)"}`, background: captionTheme === v ? "rgba(139,92,246,0.2)" : "transparent", color: captionTheme === v ? "#a78bfa" : "var(--text-secondary)", fontWeight: captionTheme === v ? 700 : 400, fontSize: "0.8rem", cursor: "pointer" }}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Alternate sequence */}

@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { createHash } from "crypto";
 import { rapidScrapeProfileAndReels } from "@/lib/rapidApiScraper";
+import { type CaptionTheme, shufflePool } from "@/lib/autoCaptions";
 
 // Strip embedded MP4 metadata (mvhd/tkhd timestamps + udta box) without ffmpeg
 function stripMp4Metadata(input: Buffer): Buffer {
@@ -198,6 +199,8 @@ interface ProcessParams {
   alternateSequence: boolean;
   groupSize: number;
   globalCoverUrl?: string | null;
+  autoCaptions?: boolean;
+  captionTheme?: CaptionTheme;
 }
 
 async function processCloneJob(p: ProcessParams) {
@@ -302,7 +305,13 @@ async function processCloneJob(p: ProcessParams) {
       if (r.caption) acctSeenCaptions.get(r.accountId)?.add(r.caption.trim());
     }
 
+    // Build caption pool if auto-captions enabled (shuffled per job for variety)
+    const autoCaptionPool = p.autoCaptions && p.captionTheme
+      ? shufflePool(p.captionTheme, Math.abs(p.cloneJobId.split("").reduce((s, c) => s + c.charCodeAt(0), 0)))
+      : null;
+
     // Create all posts immediately with rawVideoUrl (skipping duplicates per account)
+    let autoCaptionIdx = 0;
     const postsToCreate = reelsRaw.flatMap((reel, i) =>
       p.accounts.flatMap((account, accountIdx) => {
         // Alternate sequence: each group of accounts starts from a different video
@@ -314,14 +323,19 @@ async function processCloneJob(p: ProcessParams) {
         if (acctSeenUrls.get(account.id)!.has(effectiveReel.videoUrl)) return [];
         const libId = pathToLibId.get(storagePaths[effectiveI]);
         if (libId && acctSeenVideoIds.get(account.id)!.has(libId)) return [];
-        const caption = effectiveReel.caption.trim();
-        if (caption.length > 10 && acctSeenCaptions.get(account.id)!.has(caption)) return [];
+        const originalCaption = effectiveReel.caption.trim();
+        if (!autoCaptionPool && originalCaption.length > 10 && acctSeenCaptions.get(account.id)!.has(originalCaption)) return [];
+
+        const caption = autoCaptionPool
+          ? autoCaptionPool[autoCaptionIdx++ % autoCaptionPool.length]
+          : effectiveReel.caption;
+
         return [{
           userId: p.userId,
           accountId: account.id,
           videoId: null,
           rawVideoUrl: effectiveReel.videoUrl,
-          caption: effectiveReel.caption,
+          caption,
           scheduledAt: new Date(p.start.getTime() + i * p.intervalMs + accountIdx * 60_000),
           cloneJobId: p.cloneJobId,
         }];
@@ -378,9 +392,11 @@ export async function POST(request: Request) {
       alternateSequence?: boolean;
       groupSize?: number;
       globalCoverUrl?: string | null;
+      autoCaptions?: boolean;
+      captionTheme?: CaptionTheme;
     };
 
-    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, startAt, alternateSequence = false, groupSize = 5, globalCoverUrl = null } = body;
+    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, startAt, alternateSequence = false, groupSize = 5, globalCoverUrl = null, autoCaptions = false, captionTheme = "mundo" } = body;
     if (!username || !accountIds?.length || !startAt) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }
@@ -423,6 +439,8 @@ export async function POST(request: Request) {
       alternateSequence,
       groupSize: Math.max(1, groupSize),
       globalCoverUrl: globalCoverUrl || null,
+      autoCaptions,
+      captionTheme,
     }));
 
     // Respond immediately — client polls for completion
