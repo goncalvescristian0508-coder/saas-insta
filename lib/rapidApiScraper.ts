@@ -172,22 +172,63 @@ export async function rapidScrapeProfileAndReels(
     return [];
   }
 
-  const postItems = extractItems(postsRes);
+  function extractCursor(res: unknown): string | null {
+    if (!res || typeof res !== "object") return null;
+    const r = res as Record<string, unknown>;
+    const inner = (r.data ?? r) as Record<string, unknown>;
+    // common cursor field names used by RapidAPI Instagram scrapers
+    const cursor =
+      inner.next_max_id ??
+      inner.next_cursor ??
+      inner.pagination_token ??
+      inner.end_cursor ??
+      inner.nextCursor ??
+      r.next_max_id ??
+      r.next_cursor ??
+      r.pagination_token;
+    if (!cursor) return null;
+    return String(cursor);
+  }
 
   const reels: RapidReel[] = [];
-  for (const item of postItems) {
-    if (reels.length >= limit) break;
-    const reel = parseReelItem(item);
-    if (reel) reels.push(reel);
+  const MAX_PAGES = 20;
+
+  // Paginate /userposts/
+  let cursor: string | null = null;
+  let page = 0;
+  let firstRes = postsRes;
+  while (page < MAX_PAGES && reels.length < limit) {
+    const pageRes = page === 0 ? firstRes : await getJson(
+      `/userposts/?username_or_id=${encodeURIComponent(username)}&max_id=${encodeURIComponent(cursor ?? "")}`
+    );
+    const items = extractItems(pageRes);
+    for (const item of items) {
+      if (reels.length >= limit) break;
+      const reel = parseReelItem(item);
+      if (reel) reels.push(reel);
+    }
+    cursor = extractCursor(pageRes);
+    page++;
+    if (!cursor || items.length === 0) break;
   }
 
   // Fallback to /userreels/ if userposts returned no videos
   if (reels.length === 0) {
-    const reelsRes = await getJson(`/userreels/?username_or_id=${encodeURIComponent(username)}`);
-    for (const item of extractItems(reelsRes)) {
-      if (reels.length >= limit) break;
-      const reel = parseReelItem(item);
-      if (reel) reels.push(reel);
+    cursor = null;
+    page = 0;
+    while (page < MAX_PAGES && reels.length < limit) {
+      const pageRes = await getJson(
+        `/userreels/?username_or_id=${encodeURIComponent(username)}${cursor ? `&max_id=${encodeURIComponent(cursor)}` : ""}`
+      );
+      const items = extractItems(pageRes);
+      for (const item of items) {
+        if (reels.length >= limit) break;
+        const reel = parseReelItem(item);
+        if (reel) reels.push(reel);
+      }
+      cursor = extractCursor(pageRes);
+      page++;
+      if (!cursor || items.length === 0) break;
     }
   }
 
