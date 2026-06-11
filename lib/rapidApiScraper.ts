@@ -191,7 +191,7 @@ export async function rapidScrapeProfileAndReels(
   }
 
   const reels: RapidReel[] = [];
-  const MAX_PAGES = 20;
+  const MAX_PAGES = 30;
 
   // Paginate /userposts/
   let cursor: string | null = null;
