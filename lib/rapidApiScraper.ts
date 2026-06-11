@@ -7,21 +7,39 @@ function getKey(): string {
   return key;
 }
 
-async function getJson(path: string): Promise<unknown> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: {
-      "x-rapidapi-host": HOST,
-      "x-rapidapi-key": getKey(),
-      "Accept": "application/json",
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!res.ok) throw new Error(`RapidAPI HTTP ${res.status}`);
-  const data = await res.json() as Record<string, unknown>;
-  if (data.status === "error" || data.status === false) {
-    throw new Error(String(data.message ?? data.error ?? "RapidAPI error"));
+async function getJson(path: string, retries = 3): Promise<unknown> {
+  let lastErr: Error | null = null;
+  const delays = [3000, 7000, 15000];
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    if (attempt > 0) {
+      await new Promise(r => setTimeout(r, delays[attempt - 1] ?? 15000));
+    }
+    const res = await fetch(`${BASE}${path}`, {
+      headers: {
+        "x-rapidapi-host": HOST,
+        "x-rapidapi-key": getKey(),
+        "Accept": "application/json",
+      },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status === 429) {
+      const retryAfter = res.headers.get("Retry-After");
+      const waitMs = retryAfter ? Number(retryAfter) * 1000 : delays[attempt] ?? 15000;
+      if (attempt < retries) {
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      lastErr = new Error("Limite de requisições da RapidAPI atingido (429). Aguarde alguns segundos e tente novamente.");
+      break;
+    }
+    if (!res.ok) throw new Error(`RapidAPI HTTP ${res.status}`);
+    const data = await res.json() as Record<string, unknown>;
+    if (data.status === "error" || data.status === false) {
+      throw new Error(String(data.message ?? data.error ?? "RapidAPI error"));
+    }
+    return data;
   }
-  return data;
+  throw lastErr ?? new Error("RapidAPI: falha após múltiplas tentativas");
 }
 
 export interface RapidProfile {
@@ -120,11 +138,9 @@ export async function rapidScrapeProfileAndReels(
   limit = 9999,
 ): Promise<{ profile: RapidProfile; reels: RapidReel[] }> {
   // Use /userposts/ as primary (has thumbnail_url + video_url)
-  // Fetch profile and posts in parallel
-  const [profileRes, postsRes] = await Promise.all([
-    getJson(`/userinfo/?username_or_id=${encodeURIComponent(username)}`),
-    getJson(`/userposts/?username_or_id=${encodeURIComponent(username)}`),
-  ]);
+  // Fetch sequentially to avoid hitting rate limit simultaneously
+  const profileRes = await getJson(`/userinfo/?username_or_id=${encodeURIComponent(username)}`);
+  const postsRes = await getJson(`/userposts/?username_or_id=${encodeURIComponent(username)}`);
 
   // Parse profile — some responses nest under .data, others return at root level
   const profileRaw = profileRes as Record<string, unknown>;
