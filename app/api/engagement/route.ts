@@ -249,16 +249,8 @@ export async function GET(request: Request) {
     })
   );
 
-  // ── Step 2: Apify views for top-15 accounts with 0 graph views ──────────
-  const needViews = graphResults
-    .filter(r => r.status === "ok" && r.data !== null && r.data.graphViews === 0)
-    .sort((a, b) => (b.data?.followers ?? 0) - (a.data?.followers ?? 0))
-    .slice(0, 15)
-    .map(r => ({ accountId: r.account.id, username: r.account.username }));
-
-  const apifyViewsMap = needViews.length > 0
-    ? await fetchViewsApify(needViews, 15, 42_000)
-    : new Map<string, number>();
+  // Views vêm apenas do Graph API (play_count) — Apify removido para evitar custo
+  const apifyViewsMap = new Map<string, number>();
 
   // ── Step 3: Build final results ──────────────────────────────────────────
   const results: AccountInsight[] = graphResults.map(r => {
