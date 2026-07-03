@@ -79,15 +79,19 @@ function errorMessage(err: unknown): string {
 
 export function isQuotaOrBillingError(err: unknown): boolean {
   const msg = errorMessage(err).toLowerCase();
+  // Erros de memória são transitórios — não marcar o token como esgotado
+  if (msg.includes("memory limit") || msg.includes("exceed the memory") || msg.includes("16384")) {
+    return false;
+  }
   const hints = [
     "billing", "quota", "limit exceeded", "usage limit", "credit",
     "payment required", "insufficient", "out of credits", "plan limit",
-    "subscribe", "monthly", "exceeded your", "no credits", "402",
+    "subscribe", "monthly", "exceeded your", "no credits",
   ];
   if (hints.some((h) => msg.includes(h))) return true;
   if (typeof err === "object" && err !== null) {
     const status = (err as { statusCode?: number }).statusCode;
-    if (status === 402 || status === 429) return true;
+    if (status === 429) return true;
     const code = (err as { code?: string }).code;
     if (code === "APIFY_MONTHLY_CAP") return true;
   }
