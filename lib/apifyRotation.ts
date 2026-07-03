@@ -235,7 +235,7 @@ async function apifyStartRun(
 async function apifyWaitRun(
   token: string,
   runId: string,
-  maxMs = 0, // 0 = sem limite (aguarda até terminar ou Vercel cortar)
+  maxMs = 240_000, // 4 min — garante tempo para catch() rodar antes do Vercel cortar
 ): Promise<string> {
   const deadline = maxMs > 0 ? Date.now() + maxMs : Infinity;
   while (Date.now() < deadline) {
