@@ -13,8 +13,8 @@ function isAdmin(email: string | undefined) {
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  if (!user) {
+    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
 
   const { runId, username } = await request.json() as { runId?: string; username?: string };
