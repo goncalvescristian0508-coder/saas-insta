@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { apifyPollScrapeRuns } from "@/lib/apifyRotation";
+import { saveScraperCache } from "@/lib/scraper";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -15,11 +16,14 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Parâmetros inválidos" }, { status: 400 });
     }
 
-    const result = await apifyPollScrapeRuns(profileRunId, reelRunId, username, 120);
+    const result = await apifyPollScrapeRuns(profileRunId, reelRunId, username, 9999);
 
     if (!result.done) {
       return NextResponse.json({ pending: true, runStatus: result.runStatus });
     }
+
+    // Salva todos os reels no cache para reusar em clones futuros
+    void saveScraperCache(username, result.profile, result.reels);
 
     const videos = result.reels.map((r, i) => ({
       id: i + 1,
