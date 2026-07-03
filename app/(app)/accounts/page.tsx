@@ -466,8 +466,8 @@ function AccountsPageInner() {
         }}>
           <div style={{
             background: "rgba(14,16,26,0.98)", border: "1px solid var(--border-color)",
-            borderRadius: "16px", width: "100%", maxWidth: "420px", padding: "1.5rem",
-            backdropFilter: "blur(24px)",
+            borderRadius: "16px", width: "100%", maxWidth: "560px", padding: "1.5rem",
+            backdropFilter: "blur(24px)", maxHeight: "90vh", overflowY: "auto",
           }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.5rem" }}>
               <h2 style={{ fontSize: "1.1rem", fontWeight: 700 }}>Escolher aplicativo</h2>
@@ -478,30 +478,29 @@ function AccountsPageInner() {
             <p style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginBottom: "1.25rem" }}>
               Selecione qual aplicativo Meta usar para conectar esta conta:
             </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxHeight: "400px", overflowY: "auto" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
               {metaApps.map((app) => (
                 <button
                   key={app.key}
+                  data-appkey={app.key}
                   onClick={() => !app.isLotado && handleConnectApp(app.key)}
                   style={{
-                    width: "100%", padding: "0.85rem 1rem", borderRadius: "10px",
+                    padding: "0.75rem 0.85rem", borderRadius: "10px",
                     background: app.isLotado ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.04)",
                     border: `1px solid ${app.isLotado ? "rgba(255,255,255,0.06)" : "var(--border-color)"}`,
                     color: app.isLotado ? "var(--text-muted)" : "#fff",
                     cursor: app.isLotado ? "not-allowed" : "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "space-between",
-                    fontSize: "0.88rem", fontWeight: 600, textAlign: "left",
+                    display: "flex", flexDirection: "column", alignItems: "flex-start", gap: "0.2rem",
+                    fontSize: "0.85rem", fontWeight: 600, textAlign: "left",
                     transition: "all 0.2s",
                   }}
                   onMouseEnter={(e) => { if (!app.isLotado) e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
                   onMouseLeave={(e) => { if (!app.isLotado) e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
                 >
-                  <span>
-                    <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginRight: "0.5rem" }}>App {app.key}</span>
-                    {app.name}
-                  </span>
+                  <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontWeight: 500 }}>App {app.key}</span>
+                  <span style={{ fontSize: "0.82rem" }}>{app.name}</span>
                   {app.isLotado && (
-                    <span style={{ fontSize: "0.72rem", color: "#f87171", fontWeight: 700 }}>(LOTADO)</span>
+                    <span style={{ fontSize: "0.68rem", color: "#f87171", fontWeight: 700 }}>LOTADO</span>
                   )}
                 </button>
               ))}
