@@ -169,7 +169,7 @@ async function processCloneJob(p: ProcessParams) {
   try {
     const { profile: rProfile, reels: rReels } = await scrapeProfileAndReels(
       p.cleanUsername,
-      p.postLimit ?? 9999,
+      p.postLimit ?? 150, // cap em 150 quando "Todos" — evita runs caros de 300+ reels
     );
 
     const reelsItems: Record<string, unknown>[] = rReels.map((r) => ({

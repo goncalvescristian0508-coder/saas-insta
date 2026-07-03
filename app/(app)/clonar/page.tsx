@@ -310,7 +310,7 @@ export default function ClonarPage() {
         const { profileRunId, reelRunId } = data as { profileRunId: string; reelRunId: string; username: string };
         const cleanUsername = (data.username as string) || username.replace("@", "").trim();
         let attempts = 0;
-        const maxAttempts = 36; // 36 × 5s = 3 min max
+        const maxAttempts = 72; // 72 × 5s = 6 min max
         while (attempts < maxAttempts) {
           await new Promise(r => setTimeout(r, 5000));
           attempts++;
