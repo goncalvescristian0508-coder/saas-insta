@@ -69,7 +69,12 @@ export class ApifyTokensNotConfiguredError extends Error {
 
 export function getApifyTokensFromEnv(): string[] {
   const raw = process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "";
-  return raw.split(",").map((t) => t.trim()).filter(Boolean);
+  const extra = process.env.APIFY_TOKEN_EXTRA ?? "";
+  return [raw, extra]
+    .join(",")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
 }
 
 function errorMessage(err: unknown): string {
