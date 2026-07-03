@@ -20,6 +20,7 @@ interface MediaItem {
   play_count?: number;
   timestamp?: string;
   media_type?: string;
+  media_product_type?: string;
 }
 
 export interface AccountInsight {
@@ -73,7 +74,7 @@ async function fetchGraphEngagement(accessToken: string, igUserId: string) {
   const [profileRes, mediaRes] = await Promise.all([
     fetch(`${GRAPH}/${igUserId}?fields=followers_count,media_count&access_token=${accessToken}`,
       { signal: AbortSignal.timeout(15_000) }),
-    fetch(`${GRAPH}/${igUserId}/media?fields=id,like_count,comments_count,video_views,play_count,timestamp,media_type&limit=50&access_token=${accessToken}`,
+    fetch(`${GRAPH}/${igUserId}/media?fields=id,like_count,comments_count,play_count,timestamp,media_type,media_product_type&limit=50&access_token=${accessToken}`,
       { signal: AbortSignal.timeout(15_000) }),
   ]);
 
@@ -93,15 +94,21 @@ async function fetchGraphEngagement(accessToken: string, igUserId: string) {
   }
 
   if (posts.length === 0) {
-    return { followers, mediaCount, totalLikes: 0, totalComments: 0, graphViews: 0, postsAnalyzed: 0, lastPostAt: null };
+    return { followers, mediaCount, totalLikes: 0, totalComments: 0, graphViews: 0, postsAnalyzed: 0, reelsAnalyzed: 0, lastPostAt: null };
   }
+
+  // Reels são VIDEO com play_count disponível
+  const reels = posts.filter(p =>
+    p.media_type === "VIDEO" && (p.play_count != null && p.play_count > 0)
+  );
 
   const totalLikes = posts.reduce((s, p) => s + (p.like_count ?? 0), 0);
   const totalComments = posts.reduce((s, p) => s + (p.comments_count ?? 0), 0);
-  const graphViews = posts.reduce((s, p) => s + (p.play_count ?? p.video_views ?? 0), 0);
+  // Views: soma apenas dos reels (videos com play_count)
+  const graphViews = reels.reduce((s, p) => s + (p.play_count ?? 0), 0);
   const lastPostAt = posts[0]?.timestamp ?? null;
 
-  return { followers, mediaCount, totalLikes, totalComments, graphViews, postsAnalyzed: posts.length, lastPostAt };
+  return { followers, mediaCount, totalLikes, totalComments, graphViews, postsAnalyzed: posts.length, reelsAnalyzed: reels.length, lastPostAt };
 }
 
 // ── Apify view fetching ───────────────────────────────────────────────────────
@@ -266,19 +273,20 @@ export async function GET(request: Request) {
       };
     }
 
-    const { followers, mediaCount, totalLikes, totalComments, graphViews, postsAnalyzed, lastPostAt } = r.data;
+    const { followers, mediaCount, totalLikes, totalComments, graphViews, postsAnalyzed, reelsAnalyzed, lastPostAt } = r.data;
     const totalViews = graphViews > 0 ? graphViews : (apifyViewsMap.get(account.id) ?? 0);
-    const n = postsAnalyzed || 1;
+    const nPosts = postsAnalyzed || 1;
+    const nReels = (reelsAnalyzed ?? 0) > 0 ? (reelsAnalyzed ?? 1) : 1;
     const engagementRate = followers > 0
-      ? Math.round(((totalLikes + totalComments) / n / followers) * 1000) / 10
+      ? Math.round(((totalLikes + totalComments) / nPosts / followers) * 1000) / 10
       : 0;
 
     return {
       id: account.id, username: account.username, profilePicUrl: account.profilePictureUrl ?? null,
       followers, mediaCount,
-      avgLikes: Math.round(totalLikes / n),
-      avgComments: Math.round(totalComments / n),
-      avgViews: Math.round(totalViews / n),
+      avgLikes: Math.round(totalLikes / nPosts),
+      avgComments: Math.round(totalComments / nPosts),
+      avgViews: Math.round(totalViews / nReels), // média só dos reels com views
       totalLikes, totalComments, totalViews,
       engagementRate, postsAnalyzed, lastPostAt,
       status: "ok" as const,
