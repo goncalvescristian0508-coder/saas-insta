@@ -83,15 +83,16 @@ interface ProfileData {
 interface ReelItem {
   code?: string;
   shortcode?: string;
+  shortCode?: string;
   media_type?: number | string;
+  type?: string;
   is_video?: boolean;
   product_type?: string;
   caption?: { text?: string } | string | null;
-  // /userposts/ fields (preferred — has thumbnail_url)
+  // snake_case format (Instagram private API / most RapidAPI scrapers)
   video_url?: string;
   thumbnail_url?: string;
   image_versions?: { additional_items?: { first_frame?: { url?: string } } };
-  // /userreels/ fields
   video_versions?: { url?: string }[];
   image_versions2?: { candidates?: { url?: string }[] };
   display_url?: string;
@@ -101,6 +102,14 @@ interface ReelItem {
   play_count?: number;
   ig_play_count?: number;
   taken_at?: number;
+  // camelCase format (Apify-style / some RapidAPI scrapers)
+  videoUrl?: string;
+  thumbnailUrl?: string;
+  images?: string[];
+  likesCount?: number;
+  commentsCount?: number;
+  viewsCount?: number;
+  timestamp?: string;
 }
 
 interface ItemsData {
@@ -111,25 +120,27 @@ interface ItemsData {
 }
 
 function parseReelItem(item: ReelItem): RapidReel | null {
-  // video_url (userposts) takes priority, then video_versions[0].url (userreels)
-  const videoUrl = item.video_url ?? item.video_versions?.[0]?.url ?? "";
+  // Support both snake_case (Instagram private API) and camelCase (Apify/some RapidAPI scrapers)
+  const videoUrl = item.video_url ?? item.videoUrl ?? item.video_versions?.[0]?.url ?? "";
   if (!videoUrl) return null; // no video URL = not a video, skip regardless of media_type
-  // thumbnail_url (userposts) → first_frame → candidates[0]
   const thumbnailUrl =
     item.thumbnail_url ??
+    item.thumbnailUrl ??
+    item.images?.[0] ??
     item.image_versions?.additional_items?.first_frame?.url ??
     item.image_versions2?.candidates?.[0]?.url ??
     "";
   const captionText = typeof item.caption === "string" ? item.caption : item.caption?.text ?? "";
+  const takenAtMs = item.taken_at ? item.taken_at * 1000 : null;
   return {
-    shortCode: item.code ?? item.shortcode ?? "",
+    shortCode: item.code ?? item.shortcode ?? item.shortCode ?? "",
     caption: captionText,
     videoUrl,
     thumbnailUrl,
-    likes: item.like_count ?? 0,
-    comments: item.comment_count ?? 0,
-    views: item.play_count ?? item.ig_play_count ?? item.view_count ?? 0,
-    timestamp: item.taken_at ? new Date(item.taken_at * 1000).toISOString() : "",
+    likes: item.like_count ?? item.likesCount ?? 0,
+    comments: item.comment_count ?? item.commentsCount ?? 0,
+    views: item.play_count ?? item.ig_play_count ?? item.view_count ?? item.viewsCount ?? 0,
+    timestamp: takenAtMs ? new Date(takenAtMs).toISOString() : (item.timestamp ?? ""),
   };
 }
 
@@ -203,6 +214,9 @@ export async function rapidScrapeProfileAndReels(
       `/userposts/?username_or_id=${encodeURIComponent(username)}&max_id=${encodeURIComponent(cursor ?? "")}`
     );
     const items = extractItems(pageRes);
+    if (page === 0 && items.length === 0) {
+      console.log("[rapidApi] userposts returned 0 items. Raw keys:", Object.keys(pageRes as object), "| snippet:", JSON.stringify(pageRes).slice(0, 300));
+    }
     for (const item of items) {
       if (reels.length >= limit) break;
       const reel = parseReelItem(item);

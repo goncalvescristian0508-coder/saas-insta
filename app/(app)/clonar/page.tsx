@@ -254,6 +254,41 @@ export default function ClonarPage() {
     loadJobs();
   }, [loadJobs]);
 
+  function processSearchData(data: { profile: { username: string; fullName: string; profilePicUrl: string; biography?: string; followersCount: number }; videos: { likes: number; views: number; comments: number; timestamp: string }[]; totalVideos: number }) {
+    const videos = (data.videos ?? []) as { likes: number; views: number; comments: number; timestamp: string }[];
+    const followers = data.profile.followersCount ?? 0;
+    const avgLikes = videos.length ? Math.round(videos.reduce((s, v) => s + v.likes, 0) / videos.length) : 0;
+    const avgViews = videos.length ? Math.round(videos.reduce((s, v) => s + v.views, 0) / videos.length) : 0;
+    const avgComments = videos.length ? videos.reduce((s, v) => s + v.comments, 0) / videos.length : 0;
+    const engagementRate = followers > 0 ? Math.round(((avgLikes + avgComments) / followers) * 1000) / 10 : 0;
+    const postsPerMonth = (() => {
+      const dated = videos.filter(v => v.timestamp).map(v => new Date(v.timestamp).getTime()).sort((a, b) => b - a);
+      if (dated.length < 2) return videos.length;
+      const spanDays = (dated[0] - dated[dated.length - 1]) / (1000 * 60 * 60 * 24);
+      return Math.round((videos.length / Math.max(spanDays, 1)) * 30);
+    })();
+    const hourBuckets = Array.from({ length: 24 }, () => ({ total: 0, count: 0 }));
+    videos.filter(v => v.timestamp).forEach(v => {
+      const h = new Date(v.timestamp).getUTCHours();
+      hourBuckets[h].total += v.likes + v.comments;
+      hourBuckets[h].count++;
+    });
+    const hourlyData = hourBuckets.map(b => b.count > 0 ? Math.round(b.total / b.count) : 0);
+    setProfile({
+      username: data.profile.username,
+      fullName: data.profile.fullName,
+      profilePicUrl: data.profile.profilePicUrl,
+      biography: data.profile.biography ?? "",
+      totalReels: data.totalVideos,
+      followersCount: followers,
+      avgLikes,
+      avgViews,
+      engagementRate,
+      postsPerMonth,
+      hourlyData,
+    });
+  }
+
   const handleSearch = useCallback(async () => {
     if (!username.trim()) return;
     setSearching(true);
@@ -269,39 +304,28 @@ export default function ClonarPage() {
       });
       const data = await res.json();
       if (!res.ok) { setSearchError(data.error || "Erro ao buscar perfil"); return; }
-      const videos = (data.videos ?? []) as { likes: number; views: number; comments: number; timestamp: string }[];
-      const followers = data.profile.followersCount ?? 0;
-      const avgLikes = videos.length ? Math.round(videos.reduce((s, v) => s + v.likes, 0) / videos.length) : 0;
-      const avgViews = videos.length ? Math.round(videos.reduce((s, v) => s + v.views, 0) / videos.length) : 0;
-      const avgComments = videos.length ? videos.reduce((s, v) => s + v.comments, 0) / videos.length : 0;
-      const engagementRate = followers > 0 ? Math.round(((avgLikes + avgComments) / followers) * 1000) / 10 : 0;
-      const postsPerMonth = (() => {
-        const dated = videos.filter(v => v.timestamp).map(v => new Date(v.timestamp).getTime()).sort((a, b) => b - a);
-        if (dated.length < 2) return videos.length;
-        const spanDays = (dated[0] - dated[dated.length - 1]) / (1000 * 60 * 60 * 24);
-        return Math.round((videos.length / Math.max(spanDays, 1)) * 30);
-      })();
-      // Hourly engagement heatmap: group by UTC hour, avg likes+comments per post
-      const hourBuckets = Array.from({ length: 24 }, () => ({ total: 0, count: 0 }));
-      videos.filter(v => v.timestamp).forEach(v => {
-        const h = new Date(v.timestamp).getUTCHours();
-        hourBuckets[h].total += v.likes + v.comments;
-        hourBuckets[h].count++;
-      });
-      const hourlyData = hourBuckets.map(b => b.count > 0 ? Math.round(b.total / b.count) : 0);
-      setProfile({
-        username: data.profile.username,
-        fullName: data.profile.fullName,
-        profilePicUrl: data.profile.profilePicUrl,
-        biography: data.profile.biography ?? "",
-        totalReels: data.totalVideos,
-        followersCount: followers,
-        avgLikes,
-        avgViews,
-        engagementRate,
-        postsPerMonth,
-        hourlyData,
-      });
+
+      // Apify assíncrono: faz polling até ter resultado (spinner continua visível)
+      if (data.pending && data.profileRunId && data.reelRunId) {
+        const { profileRunId, reelRunId } = data as { profileRunId: string; reelRunId: string; username: string };
+        const cleanUsername = (data.username as string) || username.replace("@", "").trim();
+        let attempts = 0;
+        const maxAttempts = 36; // 36 × 5s = 3 min max
+        while (attempts < maxAttempts) {
+          await new Promise(r => setTimeout(r, 5000));
+          attempts++;
+          const statusRes = await fetch(
+            `/api/instagram/scrape/status?profileRunId=${encodeURIComponent(profileRunId)}&reelRunId=${encodeURIComponent(reelRunId)}&username=${encodeURIComponent(cleanUsername)}`,
+          );
+          const statusData = await statusRes.json();
+          if (!statusRes.ok) { setSearchError(statusData.error || "Erro ao buscar resultados"); return; }
+          if (!statusData.pending) { processSearchData(statusData); return; }
+        }
+        setSearchError("Apify demorou muito para responder. Tente novamente.");
+        return;
+      }
+
+      processSearchData(data);
     } catch (e) {
       setSearchError(e instanceof Error ? e.message : "Erro de conexão");
     } finally {

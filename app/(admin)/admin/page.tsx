@@ -818,23 +818,42 @@ function ErrosTab({ users }: { users: UserRow[] }) {
 /* ═══════════════════════ logs tab ═══════════════════════ */
 function LogsTab({ posts }: { posts: RecentPost[] }) {
   const [filter, setFilter] = useState("TODOS");
+  const [retrying, setRetrying] = useState(false);
+  const [retryResult, setRetryResult] = useState<{ count: number } | null>(null);
   const statuses = ["TODOS", "DONE", "FAILED", "PENDING", "RUNNING"];
   const filtered = filter === "TODOS" ? posts : posts.filter(p => p.status === filter);
 
+  async function retryFailed() {
+    setRetrying(true);
+    setRetryResult(null);
+    try {
+      const r = await fetch("/api/admin/retry-failed", { method: "POST" });
+      const d = await r.json() as { reset?: number };
+      setRetryResult({ count: d.reset ?? 0 });
+    } finally { setRetrying(false); }
+  }
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
         <PageHeader title="Registros" subtitle="Posts de todos os usuários" />
-        <div style={{ display: "flex", gap: ".3rem", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 10, padding: "3px" }}>
-          {statuses.map(s => {
-            const c = ST_COLOR[s] ?? "#FFD54F";
-            const isActive = filter === s;
-            return (
-              <button key={s} onClick={() => setFilter(s)} style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer", background: isActive ? `${c}20` : "transparent", border: isActive ? `1px solid ${c}44` : "1px solid transparent", color: isActive ? c : "#666", fontFamily: "var(--font-sans)" }}>
-                {s === "TODOS" ? "Todos" : ST_LABEL[s] ?? s}
-              </button>
-            );
-          })}
+        <div style={{ display: "flex", gap: ".5rem", alignItems: "center" }}>
+          <button onClick={() => void retryFailed()} disabled={retrying} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 14px", borderRadius: 9, background: "rgba(255,213,79,.12)", border: "1px solid rgba(255,213,79,.3)", color: "#FFD54F", fontSize: 12, fontWeight: 700, cursor: retrying ? "not-allowed" : "pointer", fontFamily: "var(--font-sans)" }}>
+            {retrying ? <Loader2 size={13} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={13} />}
+            {retrying ? "Resetando..." : "Retry Posts Falhos"}
+          </button>
+          {retryResult && <span style={{ fontSize: 12, color: "#4ade80" }}>{retryResult.count} post{retryResult.count !== 1 ? "s" : ""} resetado{retryResult.count !== 1 ? "s" : ""}</span>}
+          <div style={{ display: "flex", gap: ".3rem", background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.07)", borderRadius: 10, padding: "3px" }}>
+            {statuses.map(s => {
+              const c = ST_COLOR[s] ?? "#FFD54F";
+              const isActive = filter === s;
+              return (
+                <button key={s} onClick={() => setFilter(s)} style={{ padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 600, cursor: "pointer", background: isActive ? `${c}20` : "transparent", border: isActive ? `1px solid ${c}44` : "1px solid transparent", color: isActive ? c : "#666", fontFamily: "var(--font-sans)" }}>
+                  {s === "TODOS" ? "Todos" : ST_LABEL[s] ?? s}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 

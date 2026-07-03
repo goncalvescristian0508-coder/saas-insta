@@ -51,6 +51,7 @@ model LibraryVideo {
   originalName   String
   storagePath    String
   publicUrl      String
+  coverUrl       String?
   sizeBytes      Int
   durationSecs   Float?
   mimeType       String         @default("video/mp4")
@@ -69,6 +70,7 @@ model CloneJob {
   totalReels       Int
   clonedBio        Boolean  @default(false)
   clonedPhoto      Boolean  @default(false)
+  errorMsg         String?
   createdAt        DateTime @default(now())
 
   posts ScheduledPost[]
@@ -77,20 +79,23 @@ model CloneJob {
 }
 
 model ScheduledPost {
-  id            String                @id @default(cuid())
-  userId        String
-  accountId     String
-  videoId       String?
-  rawVideoUrl   String?
-  cloneJobId    String?
-  caption       String                @db.Text
-  scheduledAt   DateTime
-  status        ScheduledPostStatus   @default(PENDING)
-  errorMsg      String?
-  retryCount    Int                   @default(0)
-  postedAt      DateTime?
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
+  id                  String                @id @default(cuid())
+  userId              String
+  accountId           String
+  videoId             String?
+  rawVideoUrl         String?
+  cloneJobId          String?
+  caption             String                @db.Text
+  scheduledAt         DateTime
+  status              ScheduledPostStatus   @default(PENDING)
+  errorMsg            String?
+  retryCount          Int                   @default(0)
+  postedAt            DateTime?
+  containerCreationId String?
+  containerCreatedAt  DateTime?
+  rehostStoragePath   String?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
 
   account  InstagramOAuthAccount  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   video    LibraryVideo?          @relation(fields: [videoId], references: [id], onDelete: Cascade)
@@ -191,6 +196,19 @@ enum SaleStatus {
   APPROVED
   REFUNDED
   CANCELLED
+}
+
+model SchedulePreset {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  description String?
+  times       String[]
+  caption     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model PushSubscription {

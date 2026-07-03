@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Activity, RefreshCw, Loader2, AlertCircle, Users, Heart, MessageCircle, TrendingUp, Calendar, BarChart3, Eye, Image } from "lucide-react";
+import { useState, useCallback, useEffect } from "react";
+import { Activity, RefreshCw, Loader2, AlertCircle, Users, Heart, MessageCircle, TrendingUp, Calendar, BarChart3, Eye, Image, Trophy, Clock } from "lucide-react";
 
 interface AccountInsight {
   id: string;
@@ -35,20 +35,111 @@ function fmt(n: number): string {
   return String(n);
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "agora mesmo";
+  if (mins < 60) return `há ${mins} min`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `há ${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `há ${days} dia${days > 1 ? "s" : ""}`;
+}
+
+const MEDALS = ["🥇", "🥈", "🥉", "4º", "5º", "6º", "7º", "8º", "9º", "10º"];
+const MEDAL_COLORS = ["#f5c518", "#adb5bd", "#cd7f32", "#777", "#777", "#777", "#777", "#777", "#777", "#777"];
+
+function RankingBlock({
+  title,
+  icon,
+  color,
+  accounts,
+  valueKey,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  color: string;
+  accounts: AccountInsight[];
+  valueKey: keyof Pick<AccountInsight, "followers" | "totalViews" | "totalLikes">;
+}) {
+  const top = [...accounts].sort((a, b) => (b[valueKey] as number) - (a[valueKey] as number)).slice(0, 10);
+
+  return (
+    <div className="glass-panel" style={{ padding: "1.25rem 1.4rem", borderRadius: "12px", border: "1px solid rgba(255,255,255,0.07)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1.1rem" }}>
+        <span style={{ color }}>{icon}</span>
+        <span style={{ fontWeight: 700, fontSize: "0.82rem", color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.07em" }}>{title}</span>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
+        {top.length === 0 && (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem dados</p>
+        )}
+        {top.map((account, idx) => (
+          <div key={account.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <span style={{
+              fontSize: idx < 3 ? "1.1rem" : "0.78rem",
+              fontWeight: idx < 3 ? 400 : 700,
+              width: 26,
+              textAlign: "center",
+              flexShrink: 0,
+              color: MEDAL_COLORS[idx],
+            }}>{MEDALS[idx]}</span>
+            {account.profilePicUrl ? (
+              <img
+                src={`/api/media/proxy?url=${encodeURIComponent(account.profilePicUrl)}`}
+                alt={account.username}
+                style={{ width: 30, height: 30, borderRadius: "50%", objectFit: "cover", border: `2px solid ${MEDAL_COLORS[idx]}44`, flexShrink: 0 }}
+              />
+            ) : (
+              <div style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(201,162,39,0.15)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.72rem", fontWeight: 700, color: "var(--accent-gold)", flexShrink: 0 }}>
+                {account.username[0].toUpperCase()}
+              </div>
+            )}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontWeight: 700, fontSize: "0.8rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "#fff" }}>
+                @{account.username}
+              </p>
+              <p style={{ fontSize: "0.72rem", fontWeight: 700, color, marginTop: "0.05rem" }}>
+                {fmt(account[valueKey] as number)}
+              </p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function EngajamentoPage() {
   const [accounts, setAccounts] = useState<AccountInsight[]>([]);
   const [loading, setLoading] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
+  // Auto-load cached data on mount
+  useEffect(() => {
+    fetch("/api/engagement")
+      .then((r) => r.json())
+      .then((data: { accounts?: AccountInsight[]; lastUpdated?: string | null }) => {
+        if (data.accounts && data.accounts.length > 0) {
+          setAccounts(data.accounts);
+          setLastUpdated(data.lastUpdated ?? null);
+          setLoaded(true);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/engagement");
-      const data = await res.json();
+      const res = await fetch("/api/engagement?refresh=true");
+      const data = await res.json() as { accounts?: AccountInsight[]; lastUpdated?: string; error?: string };
       if (!res.ok) { setError(data.error || "Erro ao carregar"); return; }
       setAccounts(data.accounts ?? []);
+      setLastUpdated(data.lastUpdated ?? null);
       setLoaded(true);
     } catch {
       setError("Erro de conexão");
@@ -79,10 +170,18 @@ export default function EngajamentoPage() {
             <Activity size={22} color="var(--accent-gold)" />
             <h1 className="page-title" style={{ marginBottom: 0 }}>Engajamento</h1>
           </div>
-          <p className="page-subtitle">Métricas reais das suas contas Instagram via Graph API</p>
+          <p className="page-subtitle" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            Métricas reais das suas contas Instagram via Graph API
+            {lastUpdated && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.72rem", color: "var(--text-muted)", marginLeft: "0.5rem" }}>
+                <Clock size={11} />
+                Atualizado {timeAgo(lastUpdated)}
+              </span>
+            )}
+          </p>
         </div>
         <button
-          onClick={load}
+          onClick={refresh}
           disabled={loading}
           className="btn btn-primary"
           style={{ display: "flex", alignItems: "center", gap: "0.5rem", minWidth: 130 }}
@@ -100,7 +199,7 @@ export default function EngajamentoPage() {
             Clique em <strong style={{ color: "#fff" }}>Carregar dados</strong> para buscar as métricas das suas contas
           </p>
           <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>
-            Os dados são buscados em tempo real na API do Instagram
+            Os dados são buscados em tempo real na API do Instagram e ficam salvos para próximas visitas
           </p>
         </div>
       )}
@@ -175,6 +274,41 @@ export default function EngajamentoPage() {
               </div>
             ))}
           </div>
+
+          {/* Top Ranking */}
+          {okAccounts.length >= 2 && (
+            <div style={{ marginBottom: "1.75rem" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "1rem" }}>
+                <Trophy size={17} color="var(--accent-gold)" />
+                <h2 style={{ fontSize: "0.95rem", fontWeight: 700, margin: 0, color: "var(--text-secondary)", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+                  Top 10 Ranking das Contas
+                </h2>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "1rem" }}>
+                <RankingBlock
+                  title="Mais Seguidores"
+                  icon={<Users size={15} />}
+                  color="#60a5fa"
+                  accounts={okAccounts}
+                  valueKey="followers"
+                />
+                <RankingBlock
+                  title="Mais Visualizações"
+                  icon={<Eye size={15} />}
+                  color="#a78bfa"
+                  accounts={okAccounts}
+                  valueKey="totalViews"
+                />
+                <RankingBlock
+                  title="Mais Curtidas"
+                  icon={<Heart size={15} />}
+                  color="#f472b6"
+                  accounts={okAccounts}
+                  valueKey="totalLikes"
+                />
+              </div>
+            </div>
+          )}
 
           {/* Account cards */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: "1rem" }}>

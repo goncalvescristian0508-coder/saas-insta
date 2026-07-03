@@ -5,47 +5,9 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { createHash } from "crypto";
-import { rapidScrapeProfileAndReels } from "@/lib/rapidApiScraper";
+import { scrapeProfileAndReels } from "@/lib/scraper";
 import { type CaptionTheme, shufflePool } from "@/lib/autoCaptions";
-
-// Strip embedded MP4 metadata (mvhd/tkhd timestamps + udta box) without ffmpeg
-function stripMp4Metadata(input: Buffer): Buffer {
-  const buf = Buffer.from(input);
-  let offset = 0;
-  while (offset + 8 <= buf.length) {
-    const size = buf.readUInt32BE(offset);
-    if (size < 8 || offset + size > buf.length) break;
-    const type = buf.toString("ascii", offset + 4, offset + 8);
-    if (type === "moov") {
-      stripBoxes(buf, offset + 8, offset + size);
-    }
-    offset += size;
-  }
-  return buf;
-}
-
-function stripBoxes(buf: Buffer, start: number, end: number): void {
-  let offset = start;
-  while (offset + 8 <= end) {
-    const size = buf.readUInt32BE(offset);
-    if (size < 8 || offset + size > end) break;
-    const type = buf.toString("ascii", offset + 4, offset + 8);
-    if (type === "mvhd" || type === "tkhd") {
-      // version byte at offset+8; v0: 4-byte times; v1: 8-byte times
-      const v = buf[offset + 8];
-      const timeStart = offset + 8 + 4;
-      const timeLen = v === 1 ? 16 : 8;
-      buf.fill(0, timeStart, timeStart + timeLen);
-    } else if (type === "udta" || type === "meta" || type === "ilst") {
-      // Convert to free space — players skip free boxes
-      buf.write("free", offset + 4, "ascii");
-      buf.fill(0, offset + 8, offset + size);
-    } else if (type === "trak" || type === "mdia" || type === "minf" || type === "stbl") {
-      stripBoxes(buf, offset + 8, offset + size);
-    }
-    offset += size;
-  }
-}
+import { stripMp4Metadata } from "@/lib/videoUtils";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -205,10 +167,7 @@ interface ProcessParams {
 
 async function processCloneJob(p: ProcessParams) {
   try {
-    // ── RapidAPI only ──
-    if (!process.env.RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY não configurado");
-
-    const { profile: rProfile, reels: rReels } = await rapidScrapeProfileAndReels(
+    const { profile: rProfile, reels: rReels } = await scrapeProfileAndReels(
       p.cleanUsername,
       p.postLimit ?? 9999,
     );
@@ -399,10 +358,6 @@ export async function POST(request: Request) {
     const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, startAt, alternateSequence = false, groupSize = 5, globalCoverUrl = null, autoCaptions = false, captionTheme = "mundo" } = body;
     if (!username || !accountIds?.length || !startAt) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
-    }
-
-    if (!process.env.RAPIDAPI_KEY) {
-      return NextResponse.json({ error: "RAPIDAPI_KEY não configurado no servidor" }, { status: 500 });
     }
 
     const accounts = await prisma.instagramOAuthAccount.findMany({

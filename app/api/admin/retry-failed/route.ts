@@ -13,10 +13,18 @@ export async function POST() {
     return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
   }
 
-  // Reset ALL failed posts to pending (manual override by admin)
+  const now = new Date();
+
+  // Reset ALL failed posts to pending, zeroing retryCount and scheduledAt so the cron picks them up immediately
   const result = await prisma.scheduledPost.updateMany({
     where: { status: "FAILED" },
-    data: { status: "PENDING", errorMsg: null },
+    data: { status: "PENDING", errorMsg: null, retryCount: 0, scheduledAt: now, containerCreationId: null, containerCreatedAt: null },
+  });
+
+  // Reativa contas em quarentena (podem ter sido colocadas em quarentena durante o downtime do banco)
+  await prisma.instagramOAuthAccount.updateMany({
+    where: { accountStatus: "QUARANTINE" },
+    data: { accountStatus: "ACTIVE", quarantinedUntil: null, lastError: null },
   });
 
   return NextResponse.json({ reset: result.count });

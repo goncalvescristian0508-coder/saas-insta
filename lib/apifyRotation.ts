@@ -1,23 +1,26 @@
-import { ApifyClient, ApifyApiError } from "apify-client";
 import { prisma } from "@/lib/prisma";
 
-export const APIFY_SERVICE_UNAVAILABLE =
-  "Serviço temporariamente indisponível";
+export const APIFY_SERVICE_UNAVAILABLE = "Serviço temporariamente indisponível";
 
-const ACTORS_PREFLIGHT = [
-  "apify/instagram-reel-scraper",
-  "apify/instagram-profile-scraper",
-] as const;
-
+const APIFY_BASE = "https://api.apify.com/v2";
 const DB_KEY = "apify_exhausted_tokens";
 
-/** In-memory cache to avoid DB reads on every call within the same process. */
 let cachedExhausted: Set<string> | null = null;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("db-timeout")), ms)),
+  ]);
+}
 
 export async function loadExhaustedTokens(): Promise<Set<string>> {
   if (cachedExhausted !== null) return cachedExhausted;
   try {
-    const row = await prisma.appSetting.findUnique({ where: { key: DB_KEY } });
+    const row = await withTimeout(
+      prisma.appSetting.findUnique({ where: { key: DB_KEY } }),
+      3000,
+    );
     const tokens: string[] = row ? JSON.parse(row.value) : [];
     cachedExhausted = new Set(tokens);
   } catch {
@@ -30,11 +33,14 @@ export async function persistExhaustedToken(token: string): Promise<void> {
   const set = await loadExhaustedTokens();
   set.add(token);
   try {
-    await prisma.appSetting.upsert({
-      where: { key: DB_KEY },
-      create: { key: DB_KEY, value: JSON.stringify([...set]) },
-      update: { value: JSON.stringify([...set]) },
-    });
+    await withTimeout(
+      prisma.appSetting.upsert({
+        where: { key: DB_KEY },
+        create: { key: DB_KEY, value: JSON.stringify([...set]) },
+        update: { value: JSON.stringify([...set]) },
+      }),
+      3000,
+    );
   } catch {
     /* falha silenciosa — in-memory ainda funciona */
   }
@@ -63,10 +69,7 @@ export class ApifyTokensNotConfiguredError extends Error {
 
 export function getApifyTokensFromEnv(): string[] {
   const raw = process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "";
-  return raw
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
+  return raw.split(",").map((t) => t.trim()).filter(Boolean);
 }
 
 function errorMessage(err: unknown): string {
@@ -74,133 +77,296 @@ function errorMessage(err: unknown): string {
   return String(err);
 }
 
-function isMonthlyCapError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    (err as { code?: string }).code === "APIFY_MONTHLY_CAP"
-  );
-}
-
 export function isQuotaOrBillingError(err: unknown): boolean {
-  if (isMonthlyCapError(err)) return true;
-
   const msg = errorMessage(err).toLowerCase();
   const hints = [
-    "billing",
-    "quota",
-    "limit exceeded",
-    "usage limit",
-    "credit",
-    "payment required",
-    "insufficient",
-    "out of credits",
-    "plan limit",
-    "subscribe",
-    "monthly",
-    "exceeded your",
-    "no credits",
+    "billing", "quota", "limit exceeded", "usage limit", "credit",
+    "payment required", "insufficient", "out of credits", "plan limit",
+    "subscribe", "monthly", "exceeded your", "no credits", "402",
   ];
   if (hints.some((h) => msg.includes(h))) return true;
-
-  if (err instanceof ApifyApiError) {
-    const code = err.statusCode;
-    if (code === 402 || code === 429) return true;
-    const t = (err.type ?? "").toLowerCase();
-    if (
-      t.includes("limit") ||
-      t.includes("quota") ||
-      t.includes("billing") ||
-      t.includes("usage")
-    ) {
-      return true;
-    }
+  if (typeof err === "object" && err !== null) {
+    const status = (err as { statusCode?: number }).statusCode;
+    if (status === 402 || status === 429) return true;
+    const code = (err as { code?: string }).code;
+    if (code === "APIFY_MONTHLY_CAP") return true;
   }
   return false;
 }
 
-function shouldTryNextToken(err: unknown): boolean {
-  if (isQuotaOrBillingError(err)) return true;
-  if (err instanceof ApifyApiError && err.statusCode === 401) return true;
+// ── Helpers para status de run individual ────────────────────────────────────
 
-  const msg = errorMessage(err).toLowerCase();
-  if (
-    msg.includes("unauthorized") ||
-    msg.includes("invalid token") ||
-    msg.includes("access denied")
-  ) {
-    return true;
-  }
-  return false;
+async function apifyGetRunStatus(
+  token: string,
+  runId: string,
+): Promise<{ status: string; defaultDatasetId: string }> {
+  const res = await fetch(`${APIFY_BASE}/actor-runs/${runId}?token=${token}`, {
+    signal: AbortSignal.timeout(10_000),
+  });
+  const json = await res.json() as {
+    data?: { status?: string; defaultDatasetId?: string };
+    error?: { message?: string };
+  };
+  if (!res.ok) throw new Error(`Apify run status: ${json.error?.message ?? `HTTP ${res.status}`}`);
+  return {
+    status: json.data?.status ?? "UNKNOWN",
+    defaultDatasetId: json.data?.defaultDatasetId ?? "",
+  };
 }
 
-type LimitsPayload = NonNullable<
-  Awaited<ReturnType<ReturnType<ApifyClient["user"]>["limits"]>>
->;
+/** Inicia os dois actors e retorna os run IDs imediatamente (sem aguardar). */
+export async function apifyStartScrapeRuns(
+  username: string,
+  limit: number,
+): Promise<{ profileRunId: string; reelRunId: string }> {
+  const tokens = getApifyTokensFromEnv();
+  if (tokens.length === 0) throw new ApifyTokensNotConfiguredError();
+  const token = tokens[0];
 
-function assertMonthlyHeadroom(limits: LimitsPayload): void {
-  const max = limits.limits.maxMonthlyUsageUsd;
-  if (max > 0 && limits.current.monthlyUsageUsd >= max) {
-    const e = new Error("Monthly usage limit reached");
-    (e as Error & { code?: string }).code = "APIFY_MONTHLY_CAP";
+  const [profileRunId, reelRunId] = await Promise.all([
+    apifyStartRun(token, "apify~instagram-profile-scraper", { usernames: [username] }),
+    apifyStartRun(token, "apify~instagram-reel-scraper", {
+      username: [username],
+      resultsLimit: limit,
+    }),
+  ]);
+
+  return { profileRunId, reelRunId };
+}
+
+/** Verifica se os runs terminaram; se sim, retorna os resultados parseados. */
+export async function apifyPollScrapeRuns(
+  profileRunId: string,
+  reelRunId: string,
+  username: string,
+  limit: number,
+): Promise<
+  | { done: true; profile: ApifyScraperProfile; reels: ApifyScraperReel[] }
+  | { done: false; runStatus: string }
+> {
+  const tokens = getApifyTokensFromEnv();
+  if (tokens.length === 0) throw new ApifyTokensNotConfiguredError();
+  const token = tokens[0];
+
+  const [prof, reel] = await Promise.all([
+    apifyGetRunStatus(token, profileRunId),
+    apifyGetRunStatus(token, reelRunId),
+  ]);
+
+  const terminal = ["SUCCEEDED", "FAILED", "ABORTED", "TIMED-OUT"];
+  if (prof.status === "FAILED" || prof.status === "ABORTED") throw new Error(`Apify profile run: ${prof.status}`);
+  if (reel.status === "FAILED" || reel.status === "ABORTED") throw new Error(`Apify reel run: ${reel.status}`);
+
+  if (!terminal.includes(prof.status) || !terminal.includes(reel.status)) {
+    return { done: false, runStatus: `${prof.status}/${reel.status}` };
+  }
+
+  const [profileItems, reelItems] = await Promise.all([
+    apifyGetDataset(token, prof.defaultDatasetId),
+    apifyGetDataset(token, reel.defaultDatasetId),
+  ]);
+
+  const p = (profileItems[0] ?? {}) as Record<string, unknown>;
+  const id = String(p.id ?? p.pk ?? p.igId ?? p.userId ?? "");
+  if (!id) throw new Error(`Apify: perfil não encontrado para @${username}`);
+
+  const profile: ApifyScraperProfile = {
+    id,
+    username: String(p.username ?? username),
+    fullName: String(p.fullName ?? p.full_name ?? ""),
+    biography: String(p.biography ?? p.bio ?? ""),
+    profilePicUrl: String(p.profilePicUrlHD ?? p.profilePicUrl ?? p.profile_pic_url ?? ""),
+    followersCount: Number(p.followersCount ?? p.followers_count ?? p.followers ?? 0),
+  };
+
+  const reels: ApifyScraperReel[] = reelItems
+    .filter((i) => !!(i.videoUrl ?? i.video_url))
+    .slice(0, limit)
+    .map((i) => {
+      const images = Array.isArray(i.images) ? (i.images as string[]) : [];
+      return {
+        shortCode: String(i.shortCode ?? i.code ?? i.shortcode ?? ""),
+        caption: String(i.caption ?? ""),
+        videoUrl: String(i.videoUrl ?? i.video_url ?? ""),
+        thumbnailUrl: images[0] ?? String(i.thumbnailUrl ?? i.displayUrl ?? i.thumbnail_url ?? ""),
+        likes: Number(i.likesCount ?? i.like_count ?? 0),
+        comments: Number(i.commentsCount ?? i.comment_count ?? 0),
+        views: Number(i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? 0),
+        timestamp: String(i.timestamp ?? ""),
+      };
+    });
+
+  return { done: true, profile, reels };
+}
+
+// ── REST API helpers (sem dependência do apify-client SDK) ───────────────────
+
+async function apifyStartRun(
+  token: string,
+  actorSlug: string,
+  input: object,
+): Promise<string> {
+  const res = await fetch(`${APIFY_BASE}/acts/${actorSlug}/runs?token=${token}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const json = await res.json() as { data?: { id?: string }; error?: { message?: string } };
+  if (!res.ok) {
+    const msg = json.error?.message ?? `HTTP ${res.status}`;
+    const e = Object.assign(new Error(`Apify start run: ${msg}`), { statusCode: res.status });
     throw e;
   }
+  const runId = json.data?.id;
+  if (!runId) throw new Error("Apify: run ID não retornado");
+  return runId;
 }
 
-export async function preflightApifyToken(client: ApifyClient): Promise<void> {
-  await client.user().get();
-
-  const lim = await client.user().limits();
-  if (lim) assertMonthlyHeadroom(lim);
-
-  await Promise.all(
-    ACTORS_PREFLIGHT.map(async (id) => {
-      const actor = await client.actor(id).get();
-      if (!actor) throw new Error(`Actor não encontrado: ${id}`);
-    }),
-  );
-}
-
-/**
- * Executa uma operação com o primeiro token válido disponível.
- * Tokens esgotados são persistidos no banco para sobreviver a cold starts.
- */
-export async function runWithApifyRotation<T>(
-  operation: (client: ApifyClient) => Promise<T>,
-): Promise<T> {
-  const configured = getApifyTokensFromEnv();
-  if (configured.length === 0) {
-    throw new ApifyTokensNotConfiguredError();
+async function apifyWaitRun(
+  token: string,
+  runId: string,
+  maxMs = 0, // 0 = sem limite (aguarda até terminar ou Vercel cortar)
+): Promise<string> {
+  const deadline = maxMs > 0 ? Date.now() + maxMs : Infinity;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 4000));
+    const res = await fetch(`${APIFY_BASE}/actor-runs/${runId}?token=${token}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    const json = await res.json() as {
+      data?: { status?: string; defaultDatasetId?: string };
+      error?: { message?: string };
+    };
+    if (!res.ok) throw new Error(`Apify poll: ${json.error?.message ?? `HTTP ${res.status}`}`);
+    const status = json.data?.status;
+    if (status === "SUCCEEDED") return json.data?.defaultDatasetId ?? "";
+    if (status === "FAILED" || status === "ABORTED" || status === "TIMED-OUT") {
+      throw new Error(`Apify run encerrado com status: ${status}`);
+    }
   }
+  throw new Error("Apify: timeout aguardando run completar");
+}
+
+async function apifyGetDataset(
+  token: string,
+  datasetId: string,
+): Promise<Record<string, unknown>[]> {
+  const res = await fetch(
+    `${APIFY_BASE}/datasets/${datasetId}/items?token=${token}&format=json`,
+    { signal: AbortSignal.timeout(30_000) },
+  );
+  if (!res.ok) throw new Error(`Apify dataset: HTTP ${res.status}`);
+  return res.json() as Promise<Record<string, unknown>[]>;
+}
+
+// ── Interfaces públicas ───────────────────────────────────────────────────────
+
+export interface ApifyScraperProfile {
+  id: string;
+  username: string;
+  fullName: string;
+  biography: string;
+  profilePicUrl: string;
+  followersCount: number;
+}
+
+export interface ApifyScraperReel {
+  shortCode: string;
+  caption: string;
+  videoUrl: string;
+  thumbnailUrl: string;
+  likes: number;
+  comments: number;
+  views: number;
+  timestamp: string;
+}
+
+export async function apifyScrapeProfileAndReels(
+  username: string,
+  limit = 9999,
+): Promise<{ profile: ApifyScraperProfile; reels: ApifyScraperReel[] }> {
+  const configured = getApifyTokensFromEnv();
+  if (configured.length === 0) throw new ApifyTokensNotConfiguredError();
 
   const exhausted = await loadExhaustedTokens();
   const tokens = configured.filter((t) => !exhausted.has(t));
+  if (tokens.length === 0) throw new ApifyAllTokensExhaustedError();
 
-  if (tokens.length === 0) {
-    throw new ApifyAllTokensExhaustedError();
-  }
-
-  let lastError: unknown;
+  let lastError: Error | null = null;
 
   for (const token of tokens) {
-    const client = new ApifyClient({ token });
     try {
-      await preflightApifyToken(client);
-      return await operation(client);
+      // Inicia os dois actors em paralelo
+      // profile-scraper: campo "usernames" (plural, array)
+      // reel-scraper:    campo "username"  (singular, array)
+      const [profileRunId, reelRunId] = await Promise.all([
+        apifyStartRun(token, "apify~instagram-profile-scraper", { usernames: [username] }),
+        apifyStartRun(token, "apify~instagram-reel-scraper", {
+          username: [username],
+          resultsLimit: limit,
+        }),
+      ]);
+
+      // Aguarda ambos terminarem sem limite de tempo
+      const [profileDatasetId, reelDatasetId] = await Promise.all([
+        apifyWaitRun(token, profileRunId),
+        apifyWaitRun(token, reelRunId),
+      ]);
+
+      // Busca os resultados
+      const [profileItems, reelItems] = await Promise.all([
+        apifyGetDataset(token, profileDatasetId),
+        apifyGetDataset(token, reelDatasetId),
+      ]);
+
+      // Parse do perfil
+      const p = (profileItems[0] ?? {}) as Record<string, unknown>;
+      const id = String(p.id ?? p.pk ?? p.igId ?? p.userId ?? "");
+      if (!id) throw new Error(`Apify: perfil não encontrado para @${username}`);
+
+      const profile: ApifyScraperProfile = {
+        id,
+        username: String(p.username ?? username),
+        fullName: String(p.fullName ?? p.full_name ?? ""),
+        biography: String(p.biography ?? p.bio ?? ""),
+        profilePicUrl: String(p.profilePicUrlHD ?? p.profilePicUrl ?? p.profile_pic_url ?? ""),
+        followersCount: Number(p.followersCount ?? p.followers_count ?? p.followers ?? 0),
+      };
+
+      // Parse dos reels (aceita camelCase e snake_case)
+      const reels: ApifyScraperReel[] = reelItems
+        .filter((i) => !!(i.videoUrl ?? i.video_url))
+        .slice(0, limit)
+        .map((i) => {
+          const images = Array.isArray(i.images) ? (i.images as string[]) : [];
+          return {
+            shortCode: String(i.shortCode ?? i.code ?? i.shortcode ?? ""),
+            caption: String(i.caption ?? ""),
+            videoUrl: String(i.videoUrl ?? i.video_url ?? ""),
+            thumbnailUrl:
+              images[0] ?? String(i.thumbnailUrl ?? i.displayUrl ?? i.thumbnail_url ?? ""),
+            likes: Number(i.likesCount ?? i.like_count ?? 0),
+            comments: Number(i.commentsCount ?? i.comment_count ?? 0),
+            views: Number(
+              i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? 0,
+            ),
+            timestamp: String(i.timestamp ?? ""),
+          };
+        });
+
+      console.log(`[apify] @${username}: ${reels.length} reels`);
+      return { profile, reels };
     } catch (err) {
-      lastError = err;
-      if (shouldTryNextToken(err)) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (isQuotaOrBillingError(err)) {
         await persistExhaustedToken(token);
-        console.warn(
-          "[apifyRotation] token esgotado, persistindo e tentando próximo…",
-          errorMessage(err),
-        );
+        console.warn("[apifyRotation] token esgotado, tentando próximo:", errorMessage(err));
         continue;
       }
       throw err;
     }
   }
 
-  console.error("[apifyRotation] todos os tokens falharam:", lastError);
-  throw new ApifyAllTokensExhaustedError();
+  throw lastError ?? new ApifyAllTokensExhaustedError();
 }

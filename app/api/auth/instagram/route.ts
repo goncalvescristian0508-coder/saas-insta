@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "META_APP_ID ou META_REDIRECT_URI não configurados." }, { status: 500 });
   }
 
-  const scope = "instagram_business_basic,instagram_business_content_publish";
+  const scope = "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights";
   // state encodes the appKey so the callback knows which credentials to use
   const state = appKey || "";
 

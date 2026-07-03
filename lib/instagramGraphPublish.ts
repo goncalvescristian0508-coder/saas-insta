@@ -187,6 +187,64 @@ async function pollContainerReady(
   return { ok: false, error: "Timeout aguardando processamento do vídeo." };
 }
 
+/** Creates an Instagram media container for a Reel. */
+export async function createReelContainer(params: {
+  igUserId: string;
+  accessToken: string;
+  videoUrl: string;
+  caption: string;
+  coverUrl?: string | null;
+}): Promise<{ ok: true; containerId: string } | { ok: false; error: string }> {
+  const { igUserId, accessToken, videoUrl, caption, coverUrl } = params;
+  const url = new URL(`${GRAPH}/${igUserId}/media`);
+  url.searchParams.set("media_type", "REELS");
+  url.searchParams.set("video_url", videoUrl);
+  url.searchParams.set("caption", caption);
+  if (coverUrl) url.searchParams.set("cover_url", coverUrl);
+  url.searchParams.set("access_token", accessToken);
+
+  const res = await fetch(url.toString(), { method: "POST", signal: AbortSignal.timeout(15_000) });
+  const data = (await res.json()) as { id?: string; error?: { message?: string } };
+
+  if (!res.ok || !data.id) {
+    return { ok: false, error: data.error?.message || JSON.stringify(data) };
+  }
+  return { ok: true, containerId: data.id };
+}
+
+/** Returns the processing status of an Instagram media container. */
+export async function checkContainerStatus(
+  containerId: string,
+  accessToken: string,
+): Promise<string> {
+  const u = new URL(`${GRAPH}/${containerId}`);
+  u.searchParams.set("fields", "status_code,status");
+  u.searchParams.set("access_token", accessToken);
+
+  const res = await fetch(u.toString(), { signal: AbortSignal.timeout(12_000) });
+  const data = (await res.json()) as { status_code?: string; error?: { message?: string } };
+
+  if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data));
+  return data.status_code ?? "IN_PROGRESS";
+}
+
+/** Publishes a previously created media container. */
+export async function publishMediaContainer(
+  igUserId: string,
+  accessToken: string,
+  containerId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const url = new URL(`${GRAPH}/${igUserId}/media_publish`);
+  url.searchParams.set("creation_id", containerId);
+  url.searchParams.set("access_token", accessToken);
+
+  const res = await fetch(url.toString(), { method: "POST", signal: AbortSignal.timeout(15_000) });
+  const data = (await res.json()) as { id?: string; error?: { message?: string } };
+
+  if (!res.ok) return { ok: false, error: data.error?.message || JSON.stringify(data) };
+  return { ok: true };
+}
+
 /**
  * Publica um Reel via Graph API. O vídeo precisa estar em uma URL HTTPS pública
  * (ex.: mesmo host com ngrok + arquivo em /public/uploads/...).

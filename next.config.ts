@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
   allowedDevOrigins: ['luster-discuss-hurried.ngrok-free.dev'],
   serverExternalPackages: [
     'apify-client',
+    'proxy-agent',
     'ffmpeg-static',
     'ffprobe-static',
     'instagram-private-api',

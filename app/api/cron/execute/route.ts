@@ -11,10 +11,7 @@ import {
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID, createHash } from "crypto";
 import { sendPushToUser } from "@/lib/sendPush";
-import { writeFile, readFile, unlink } from "fs/promises";
-import { join } from "path";
-import ffmpegStatic from "ffmpeg-static";
-import Ffmpeg from "fluent-ffmpeg";
+import { stripMp4Metadata } from "@/lib/videoUtils";
 
 function storageAdmin() {
   return createClient(
@@ -23,47 +20,18 @@ function storageAdmin() {
   );
 }
 
-async function cleanVideoBuffer(input: Buffer): Promise<Buffer | null> {
-  const id = randomUUID();
-  const inputPath = join("/tmp", `${id}_in.mp4`);
-  const outputPath = join("/tmp", `${id}_out.mp4`);
-  try {
-    await writeFile(inputPath, input);
-    await new Promise<void>((resolve, reject) => {
-      Ffmpeg(inputPath)
-        .setFfmpegPath(ffmpegStatic!)
-        .outputOptions([
-          "-map_metadata -1", "-map_chapters -1",
-          "-c:v libx264", "-crf 23", "-preset fast",
-          "-vf scale=trunc(iw/2)*2:trunc(ih/2)*2",
-          "-c:a aac", "-b:a 128k", "-ar 44100",
-          "-movflags +faststart",
-          "-metadata creation_time=", "-metadata encoder=",
-          "-metadata:s:v handler_name=", "-metadata:s:v vendor_id=",
-          "-metadata:s:a handler_name=",
-        ])
-        .save(outputPath)
-        .on("end", () => resolve())
-        .on("error", (err: Error) => reject(err));
-    });
-    return await readFile(outputPath);
-  } catch {
-    return null;
-  } finally {
-    await unlink(inputPath).catch(() => {});
-    await unlink(outputPath).catch(() => {});
-  }
-}
-
-async function rehostVideo(rawUrl: string): Promise<{ publicUrl: string; storagePath: string }> {
-  const res = await fetch(rawUrl, { signal: AbortSignal.timeout(90_000) });
-  if (!res.ok) throw new Error(`Falha ao baixar vídeo clonado: HTTP ${res.status}`);
-  const raw = Buffer.from(await res.arrayBuffer());
-  const buffer = (await cleanVideoBuffer(raw)) ?? raw;
-  const storagePath = `_cloned/${randomUUID()}.mp4`;
+async function downloadAndStripVideo(rawUrl: string, userId: string): Promise<{ publicUrl: string; storagePath: string }> {
+  const urlHash = createHash("md5").update(rawUrl).digest("hex");
+  const storagePath = `cloned/${userId}/${urlHash}.mp4`;
   const admin = storageAdmin();
+
+  const res = await fetch(rawUrl, { signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`Falha ao baixar vídeo: HTTP ${res.status}`);
+  const raw = Buffer.from(await res.arrayBuffer());
+  const buffer = stripMp4Metadata(raw);
+
   const { error } = await admin.storage.from("library-videos").upload(storagePath, buffer, {
-    contentType: "video/mp4", upsert: false,
+    contentType: "video/mp4", upsert: true,
   });
   if (error) throw new Error(`Falha ao salvar vídeo: ${error.message}`);
   const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
@@ -114,17 +82,23 @@ async function ensureSchema() {
 }
 
 async function runCron() {
-  await ensureSchema();
-  const now = new Date();
+  try {
+    await ensureSchema();
+  } catch (e) {
+    console.error("[cron] ensureSchema error:", e);
+  }
 
-  // Reset Phase-1 posts stuck in RUNNING (no container yet) after 5 min
+  const now = new Date();
+  console.log("[cron] start", now.toISOString());
+
+  // ── Pre-flight DB resets (all guarded) ──────────────────────────────────────
+
   const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
   await prisma.scheduledPost.updateMany({
     where: { status: "RUNNING", containerCreationId: null, updatedAt: { lte: fiveMinutesAgo } },
     data: { status: "PENDING" },
-  });
+  }).catch(e => console.error("[cron] reset stuck RUNNING:", e));
 
-  // Retry failed posts (up to 6 total retries, at least 1 min between retries)
   const oneMinuteAgo = new Date(now.getTime() - 60 * 1000);
   await prisma.scheduledPost.updateMany({
     where: {
@@ -134,35 +108,45 @@ async function runCron() {
       updatedAt: { lte: oneMinuteAgo },
     },
     data: { status: "PENDING", errorMsg: null, containerCreationId: null, containerCreatedAt: null },
-  });
+  }).catch(e => console.error("[cron] retry failed:", e));
 
-  // Load warmup configs (table may not exist yet — fail silently)
-  const warmups = await prisma.accountWarmup.findMany({ where: { isActive: true } }).catch(() => []);
-  const warmupMap = new Map(warmups.map((w) => [w.accountId, w]));
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+  await prisma.scheduledPost.updateMany({
+    where: {
+      status: "FAILED",
+      retryCount: { gte: 6 },
+      updatedAt: { lte: twoHoursAgo },
+      account: { accountStatus: "ACTIVE" },
+    },
+    data: { status: "PENDING", retryCount: 0, scheduledAt: now, errorMsg: null, containerCreationId: null, containerCreatedAt: null },
+  }).catch(e => console.error("[cron] auto-reset exhausted:", e));
 
-  // Release quarantine
   await prisma.instagramOAuthAccount.updateMany({
     where: { accountStatus: "QUARANTINE", quarantinedUntil: { lte: now } },
     data: { accountStatus: "ACTIVE", quarantinedUntil: null },
-  });
+  }).catch(e => console.error("[cron] release quarantine:", e));
 
-  // Accounts busy with Phase-1 (creating container right now)
+  const warmups = await prisma.accountWarmup.findMany({ where: { isActive: true } }).catch(() => []);
+  const warmupMap = new Map(warmups.map((w) => [w.accountId, w]));
+
   const phase1Running = await prisma.scheduledPost.findMany({
     where: { status: "RUNNING", containerCreationId: null },
     select: { accountId: true },
-  });
+  }).catch(() => []);
   const busyPhase1 = new Set(phase1Running.map((p) => p.accountId));
 
-  // ── PHASE 2: Publish containers that finished processing ─────────────────────
+  // ── PHASE 2: Publish containers (parallel, 15 at a time) ─────────────────────
   const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
   const runningWithContainer = await prisma.scheduledPost.findMany({
     where: { status: "RUNNING", containerCreationId: { not: null } },
     include: { account: true, video: true },
     orderBy: { containerCreatedAt: "asc" },
-    take: 30,
-  });
+    take: 15,
+  }).catch(() => []);
 
-  for (const post of runningWithContainer) {
+  console.log("[cron] phase2:", runningWithContainer.length, "containers to check");
+
+  await Promise.all(runningWithContainer.map(async (post) => {
     try {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
       const containerStatus = await checkContainerStatus(post.containerCreationId!, accessToken);
@@ -176,24 +160,15 @@ async function runCron() {
             data: { status: "DONE", postedAt: now, errorMsg: null, containerCreationId: null, containerCreatedAt: null },
           });
 
-          // Clean up temp rehosted video
-          if (post.rehostStoragePath) {
-            await storageAdmin().storage.from("library-videos").remove([post.rehostStoragePath]).catch(() => null);
-            await prisma.scheduledPost.update({ where: { id: post.id }, data: { rehostStoragePath: null } });
-          }
-
-          // Warmup progress
           const warmup = warmupMap.get(post.accountId);
           if (warmup) {
             const newCount = warmup.completedPosts + 1;
-            const finished = newCount >= warmup.targetPosts;
             await prisma.accountWarmup.update({
               where: { id: warmup.id },
-              data: { completedPosts: newCount, lastPostedAt: now, isActive: !finished },
-            });
+              data: { completedPosts: newCount, lastPostedAt: now, isActive: newCount < warmup.targetPosts },
+            }).catch(() => {});
           }
 
-          // Push notification
           const notifIntegration = await prisma.userIntegration.findUnique({
             where: { userId_type: { userId: post.userId, type: "notifications" } },
           }).catch(() => null);
@@ -206,30 +181,23 @@ async function runCron() {
               url: "/schedule",
             }).catch(() => {});
           }
+          console.log("[cron] published @", post.account.username);
         } else {
-          await failPost(post, pubResult.error, now);
+          await failPost(post, pubResult.error ?? "Falha ao publicar container", now);
         }
       } else if (containerStatus === "ERROR" || containerStatus === "EXPIRED") {
         await failPost(post, `Container ${containerStatus.toLowerCase()} — vídeo inválido ou fora das especificações do Instagram`, now);
-        if (post.rehostStoragePath) {
-          await storageAdmin().storage.from("library-videos").remove([post.rehostStoragePath]).catch(() => null);
-        }
       } else {
-        // IN_PROGRESS — timeout check
         if (post.containerCreatedAt && post.containerCreatedAt < tenMinutesAgo) {
           await failPost(post, "Timeout: vídeo não processado pelo Instagram em 10 minutos", now);
-          if (post.rehostStoragePath) {
-            await storageAdmin().storage.from("library-videos").remove([post.rehostStoragePath]).catch(() => null);
-          }
         }
-        // else: still processing, will check next cron run
       }
     } catch (err) {
       await failPost(post, err instanceof Error ? err.message : "Erro desconhecido", now);
     }
-  }
+  }));
 
-  // ── PHASE 1: Create containers for pending posts ──────────────────────────────
+  // ── PHASE 1: Create containers for pending posts (parallel) ──────────────────
   const allPending = await prisma.scheduledPost.findMany({
     where: {
       status: "PENDING",
@@ -240,26 +208,37 @@ async function runCron() {
     include: { account: true, video: true },
     orderBy: { scheduledAt: "asc" },
     take: 150,
-  });
+  }).catch(() => []);
 
   const seenAccounts = new Set<string>();
   const pending = allPending.filter((post) => {
     if (seenAccounts.has(post.accountId)) return false;
     seenAccounts.add(post.accountId);
     return true;
-  }).slice(0, 5); // Create up to 5 containers per cron run
+  }).slice(0, 10);
 
-  for (const post of pending) {
-    // Warmup throttle
+  console.log("[cron] phase1:", pending.length, "pending to process (total eligible:", allPending.length, ")");
+
+  if (pending.length === 0) {
+    console.log("[cron] nothing to do");
+    return;
+  }
+
+  await prisma.scheduledPost.updateMany({
+    where: { id: { in: pending.map(p => p.id) } },
+    data: { status: "RUNNING" },
+  }).catch(e => console.error("[cron] mark RUNNING:", e));
+
+  await Promise.all(pending.map(async (post) => {
     const warmup = warmupMap.get(post.accountId);
     if (warmup?.lastPostedAt) {
       const msSinceLast = now.getTime() - warmup.lastPostedAt.getTime();
-      if (msSinceLast < warmup.intervalMinutes * 60 * 1000) continue;
+      if (msSinceLast < warmup.intervalMinutes * 60 * 1000) {
+        await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: "PENDING" } }).catch(() => {});
+        return;
+      }
     }
 
-    await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: "RUNNING" } });
-
-    let rehostPath: string | null = null;
     try {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
 
@@ -267,49 +246,32 @@ async function runCron() {
       if (post.rawVideoUrl) {
         const urlHash = createHash("md5").update(post.rawVideoUrl).digest("hex");
         const storagePath = `cloned/${post.userId}/${urlHash}.mp4`;
-        const libVideo = await prisma.libraryVideo.findFirst({ where: { userId: post.userId, storagePath } });
+        const libVideo = await prisma.libraryVideo.findFirst({ where: { userId: post.userId, storagePath } }).catch(() => null);
 
         if (libVideo) {
-          await prisma.scheduledPost.update({ where: { id: post.id }, data: { videoId: libVideo.id, rawVideoUrl: null } });
-          try {
-            const libRes = await fetch(libVideo.publicUrl, { signal: AbortSignal.timeout(90_000) });
-            if (libRes.ok) {
-              const raw = Buffer.from(await libRes.arrayBuffer());
-              const cleanBuf = await cleanVideoBuffer(raw);
-              if (cleanBuf) {
-                const tempPath = `_clean/${randomUUID()}.mp4`;
-                const { error: upErr } = await storageAdmin().storage.from("library-videos").upload(tempPath, cleanBuf, { contentType: "video/mp4", upsert: false });
-                if (!upErr) {
-                  const { data: pub } = storageAdmin().storage.from("library-videos").getPublicUrl(tempPath);
-                  videoUrl = pub.publicUrl;
-                  rehostPath = tempPath;
-                } else {
-                  videoUrl = libVideo.publicUrl;
-                }
-              } else {
-                videoUrl = libVideo.publicUrl;
-              }
-            } else {
-              videoUrl = libVideo.publicUrl;
-            }
-          } catch {
-            videoUrl = libVideo.publicUrl;
-          }
+          await prisma.scheduledPost.update({ where: { id: post.id }, data: { videoId: libVideo.id, rawVideoUrl: null } }).catch(() => {});
+          videoUrl = libVideo.publicUrl;
         } else {
+          // Try to download + strip metadata; fall back to raw URL if download fails
           try {
-            const rehosted = await rehostVideo(post.rawVideoUrl);
-            videoUrl = rehosted.publicUrl;
-            rehostPath = rehosted.storagePath;
-          } catch {
-            if (post.video?.publicUrl) {
-              videoUrl = post.video.publicUrl;
-            } else {
-              await prisma.scheduledPost.update({
-                where: { id: post.id },
-                data: { status: "FAILED", errorMsg: "Vídeo fonte expirado. Re-agende com um vídeo da biblioteca.", retryCount: 3 },
-              });
-              continue;
-            }
+            const hosted = await downloadAndStripVideo(post.rawVideoUrl, post.userId);
+            videoUrl = hosted.publicUrl;
+            await prisma.libraryVideo.create({
+              data: {
+                userId: post.userId,
+                filename: hosted.storagePath.split("/").pop()!,
+                originalName: post.caption?.slice(0, 60) || "Reel clonado",
+                storagePath: hosted.storagePath,
+                publicUrl: hosted.publicUrl,
+                sizeBytes: 0,
+                mimeType: "video/mp4",
+              },
+            }).catch(() => {});
+            await prisma.scheduledPost.update({ where: { id: post.id }, data: { rawVideoUrl: null } }).catch(() => {});
+          } catch (dlErr) {
+            // Download failed (URL expired or unavailable) — pass rawVideoUrl directly to Instagram
+            console.warn("[cron] download failed, using raw URL directly:", dlErr instanceof Error ? dlErr.message : dlErr);
+            videoUrl = post.rawVideoUrl;
           }
         }
       } else if (post.video?.publicUrl) {
@@ -318,6 +280,7 @@ async function runCron() {
         throw new Error("Nenhuma URL de vídeo disponível para este post.");
       }
 
+      console.log("[cron] creating container @", post.account.username);
       const result = await createReelContainer({
         igUserId: post.account.instagramUserId,
         accessToken,
@@ -327,26 +290,24 @@ async function runCron() {
       });
 
       if (!result.ok) {
-        if (rehostPath) await storageAdmin().storage.from("library-videos").remove([rehostPath]).catch(() => null);
+        console.error(`[cron] container error @${post.account.username}: ${result.error}`);
         await failPost(post, result.error, now);
-        continue;
+        return;
       }
 
-      // Save container ID — Phase 2 will pick this up on the next cron run
       await prisma.scheduledPost.update({
         where: { id: post.id },
-        data: {
-          containerCreationId: result.containerId,
-          containerCreatedAt: now,
-          rehostStoragePath: rehostPath,
-        },
+        data: { containerCreationId: result.containerId, containerCreatedAt: now },
       });
+      console.log("[cron] container created @", post.account.username);
     } catch (err) {
-      if (rehostPath) await storageAdmin().storage.from("library-videos").remove([rehostPath]).catch(() => null);
       const msg = err instanceof Error ? err.message : "Erro desconhecido";
+      console.error(`[cron] phase1 error @${post.account.username}: ${msg}`);
       await failPost(post, msg, now);
     }
-  }
+  }));
+
+  console.log("[cron] done");
 }
 
 async function failPost(
@@ -391,6 +352,30 @@ async function failPost(
     await sendPushToUser(post.userId, {
       title: "⚠️ Reconecte a conta",
       body: `@${accountName}: token expirado ou revogado pelo Instagram. Acesse Contas e reconecte.`,
+      url: "/accounts",
+    });
+    return;
+  }
+
+  const isAppDeactivated = msgLower.includes("api access deactivated") || msgLower.includes("app not active");
+
+  if (isAppDeactivated) {
+    // The Meta App tied to this account had its API access revoked by Meta — not fixable by retrying.
+    await prisma.instagramOAuthAccount.update({
+      where: { id: post.accountId },
+      data: { accountStatus: "SUSPENDED", lastError: "App Meta com acesso à API desativado pela Meta." },
+    });
+    await prisma.scheduledPost.update({
+      where: { id: post.id },
+      data: { retryCount: 6, errorMsg: "App Meta desativado pela Meta — reatribua a conta a outro app." },
+    });
+    await prisma.scheduledPost.updateMany({
+      where: { accountId: post.accountId, status: "PENDING" },
+      data: { status: "FAILED", retryCount: 6, errorMsg: "App Meta desativado pela Meta — reatribua a conta a outro app." },
+    });
+    await sendPushToUser(post.userId, {
+      title: "⚠️ App Meta desativado",
+      body: `@${accountName}: o app Meta vinculado teve a API desativada. Reatribua a conta a outro app em Contas.`,
       url: "/accounts",
     });
     return;

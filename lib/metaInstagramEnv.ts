@@ -46,9 +46,13 @@ export function getMetaAppByKey(key: string): MetaAppConfig | null {
   return { key, name, appId, appSecret, redirectUri, publicBaseUrl };
 }
 
+export function getInstagramOAuthBase(_appKey?: string): string {
+  return "https://www.instagram.com/oauth/authorize";
+}
+
 export function listMetaApps(): Array<{ key: string; name: string; appId: string }> {
   const apps: Array<{ key: string; name: string; appId: string }> = [];
-  for (let i = 1; i <= 10; i++) {
+  for (let i = 1; i <= 30; i++) {
     const appId = (process.env[`META_APP_${i}_ID`] || "").trim();
     const name = (process.env[`META_APP_${i}_NAME`] || `App ${i}`).trim();
     if (appId) apps.push({ key: String(i), name, appId });
