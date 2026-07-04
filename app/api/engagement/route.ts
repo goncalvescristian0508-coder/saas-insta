@@ -9,7 +9,6 @@ export const maxDuration = 60;
 
 const GRAPH = "https://graph.instagram.com/v21.0";
 const APIFY_BASE = "https://api.apify.com/v2";
-const MAX_RUN_AGE_MS = 10 * 60 * 1000; // discard runs older than 10 min
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -21,7 +20,7 @@ interface MediaItem {
   play_count?: number;
   timestamp?: string;
   media_type?: string;
-  media_product_type?: string; // "REELS" | "FEED" | "STORY"
+  media_product_type?: string;
 }
 
 export interface AccountInsight {
@@ -48,15 +47,7 @@ interface CachePayload {
   lastUpdated: string;
 }
 
-interface ApifyRunEntry {
-  accountId: string;
-  username: string;
-  runId: string;
-  token: string;
-  startedAt: number;
-}
-
-// ── Main cache ────────────────────────────────────────────────────────────────
+// ── Cache ────────────────────────────────────────────────────────────────────
 
 function cacheKey(userId: string) { return `engagement_v1_${userId}`; }
 
@@ -77,54 +68,14 @@ async function saveCache(userId: string, payload: CachePayload): Promise<void> {
   } catch { /* best effort */ }
 }
 
-// ── Apify async run + view cache ──────────────────────────────────────────────
-
-function apifyRunsCacheKey(userId: string) { return `engagement_apify_runs_v1_${userId}`; }
-function apifyViewsCacheKey(userId: string) { return `engagement_apify_views_v1_${userId}`; }
-
-async function loadPendingApifyRuns(userId: string): Promise<ApifyRunEntry[]> {
-  try {
-    const row = await prisma.appSetting.findUnique({ where: { key: apifyRunsCacheKey(userId) } });
-    return row ? JSON.parse(row.value) as ApifyRunEntry[] : [];
-  } catch { return []; }
-}
-
-async function savePendingApifyRuns(userId: string, runs: ApifyRunEntry[]): Promise<void> {
-  try {
-    await prisma.appSetting.upsert({
-      where: { key: apifyRunsCacheKey(userId) },
-      create: { key: apifyRunsCacheKey(userId), value: JSON.stringify(runs) },
-      update: { value: JSON.stringify(runs) },
-    });
-  } catch { /* best effort */ }
-}
-
-async function loadCachedApifyViews(userId: string): Promise<Map<string, number>> {
-  try {
-    const row = await prisma.appSetting.findUnique({ where: { key: apifyViewsCacheKey(userId) } });
-    if (!row) return new Map();
-    return new Map(Object.entries(JSON.parse(row.value) as Record<string, number>));
-  } catch { return new Map(); }
-}
-
-async function saveCachedApifyViews(userId: string, views: Map<string, number>): Promise<void> {
-  try {
-    await prisma.appSetting.upsert({
-      where: { key: apifyViewsCacheKey(userId) },
-      create: { key: apifyViewsCacheKey(userId), value: JSON.stringify(Object.fromEntries(views)) },
-      update: { value: JSON.stringify(Object.fromEntries(views)) },
-    });
-  } catch { /* best effort */ }
-}
-
 // ── Instagram Graph API ───────────────────────────────────────────────────────
 
 async function fetchGraphEngagement(accessToken: string, igUserId: string) {
   const [profileRes, mediaRes] = await Promise.all([
     fetch(`${GRAPH}/${igUserId}?fields=followers_count,media_count&access_token=${accessToken}`,
-      { signal: AbortSignal.timeout(15_000) }),
+      { signal: AbortSignal.timeout(12_000) }),
     fetch(`${GRAPH}/${igUserId}/media?fields=id,like_count,comments_count,play_count,video_views,timestamp,media_type,media_product_type&limit=50&access_token=${accessToken}`,
-      { signal: AbortSignal.timeout(15_000) }),
+      { signal: AbortSignal.timeout(12_000) }),
   ]);
 
   if (!profileRes.ok) {
@@ -146,10 +97,7 @@ async function fetchGraphEngagement(accessToken: string, igUserId: string) {
     return { followers, mediaCount, totalLikes: 0, totalComments: 0, graphViews: 0, postsAnalyzed: 0, reelsAnalyzed: 0, lastPostAt: null };
   }
 
-  const reels = posts.filter(p =>
-    p.media_type === "VIDEO" || p.media_product_type === "REELS"
-  );
-
+  const reels = posts.filter(p => p.media_type === "VIDEO" || p.media_product_type === "REELS");
   const totalLikes = posts.reduce((s, p) => s + (p.like_count ?? 0), 0);
   const totalComments = posts.reduce((s, p) => s + (p.comments_count ?? 0), 0);
   const graphViews = reels.reduce((s, p) => s + (p.play_count ?? p.video_views ?? 0), 0);
@@ -165,7 +113,7 @@ async function apifyStartReelRun(token: string, username: string, limit: number)
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ username: [username], resultsLimit: limit }),
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.timeout(12_000),
   });
   const json = await res.json() as { data?: { id?: string }; error?: { message?: string } };
   if (!res.ok) throw new Error(json.error?.message ?? `HTTP ${res.status}`);
@@ -175,15 +123,101 @@ async function apifyStartReelRun(token: string, username: string, limit: number)
 }
 
 async function apifyRunStatus(token: string, runId: string): Promise<{ status: string; datasetId: string }> {
-  const res = await fetch(`${APIFY_BASE}/actor-runs/${runId}?token=${token}`, { signal: AbortSignal.timeout(8_000) });
+  const res = await fetch(`${APIFY_BASE}/actor-runs/${runId}?token=${token}`, { signal: AbortSignal.timeout(6_000) });
   const json = await res.json() as { data?: { status?: string; defaultDatasetId?: string } };
   return { status: json.data?.status ?? "UNKNOWN", datasetId: json.data?.defaultDatasetId ?? "" };
 }
 
 async function apifyGetDataset(token: string, datasetId: string): Promise<Record<string, unknown>[]> {
-  const res = await fetch(`${APIFY_BASE}/datasets/${datasetId}/items?token=${token}&format=json`, { signal: AbortSignal.timeout(15_000) });
+  const res = await fetch(`${APIFY_BASE}/datasets/${datasetId}/items?token=${token}&format=json`, { signal: AbortSignal.timeout(12_000) });
   if (!res.ok) return [];
   return res.json() as Promise<Record<string, unknown>[]>;
+}
+
+function viewsFromItem(i: Record<string, unknown>): number {
+  return Number(
+    i.videoPlayCount ?? i.viewsCount ?? i.videoViewCount ??
+    i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
+  );
+}
+
+/**
+ * Starts reel-scraper runs for all accounts in parallel (one per token, round-robin),
+ * then polls every 4 s until all complete or maxWaitMs is reached.
+ * Accounts whose run doesn't finish in time get 0 views.
+ */
+async function fetchViewsApify(
+  accounts: Array<{ accountId: string; username: string }>,
+  maxWaitMs = 32_000,
+): Promise<Map<string, number>> {
+  const allTokens = await getAllApifyTokens();
+  if (allTokens.length === 0) return new Map();
+  const exhausted = await loadExhaustedTokens();
+  const tokens = allTokens.filter(t => !exhausted.has(t));
+  if (tokens.length === 0) return new Map();
+
+  // Start all runs in parallel
+  const startResults = await Promise.all(
+    accounts.map(async ({ accountId, username }, idx) => {
+      const token = tokens[idx % tokens.length];
+      try {
+        const runId = await apifyStartReelRun(token, username, 12);
+        return { accountId, username, runId, token, ok: true } as const;
+      } catch (e) {
+        if (isQuotaOrBillingError(e)) {
+          await persistExhaustedToken(token);
+          console.warn(`[engagement/apify] token quota @${username}`);
+        } else {
+          console.warn(`[engagement/apify] start fail @${username}:`, e instanceof Error ? e.message : e);
+        }
+        return { accountId, username, ok: false } as const;
+      }
+    })
+  );
+
+  type RunEntry = { accountId: string; username: string; runId: string; token: string };
+  const active = startResults.filter((r): r is RunEntry & { ok: true } => r.ok);
+  if (active.length === 0) return new Map();
+  console.log(`[engagement/apify] started ${active.length} runs across ${tokens.length} token(s)`);
+
+  // Poll until all done or deadline
+  const pending = new Map<string, RunEntry>(active.map(r => [r.runId, r]));
+  const datasetMap = new Map<string, { datasetId: string; token: string; accountId: string; username: string }>();
+  const deadline = Date.now() + maxWaitMs;
+
+  while (pending.size > 0 && Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 4_000));
+    const checks = await Promise.all(
+      [...pending.entries()].map(async ([runId, entry]) => {
+        const s = await apifyRunStatus(entry.token, runId).catch(() => ({ status: "UNKNOWN", datasetId: "" }));
+        return { runId, accountId: entry.accountId, username: entry.username, token: entry.token, status: s.status, datasetId: s.datasetId };
+      })
+    );
+    for (const { runId, status, datasetId, token, accountId, username } of checks) {
+      if (status === "SUCCEEDED") {
+        datasetMap.set(runId, { datasetId, token, accountId, username });
+        pending.delete(runId);
+      } else if (["FAILED", "ABORTED", "TIMED-OUT"].includes(status)) {
+        pending.delete(runId);
+      }
+    }
+    if (pending.size > 0) {
+      console.log(`[engagement/apify] pending: ${pending.size} done: ${datasetMap.size}`);
+    }
+  }
+
+  // Fetch datasets and sum views
+  const viewsMap = new Map<string, number>();
+  await Promise.all(
+    [...datasetMap.values()].map(async ({ datasetId, token, accountId, username }) => {
+      const items = await apifyGetDataset(token, datasetId);
+      const total = items.reduce((s, i) => s + viewsFromItem(i), 0);
+      viewsMap.set(accountId, total);
+      console.log(`[engagement/apify] @${username}: ${total} views (${items.length} reels)`);
+    })
+  );
+
+  return viewsMap;
 }
 
 // ── Route ─────────────────────────────────────────────────────────────────────
@@ -226,89 +260,21 @@ export async function GET(request: Request) {
     })
   );
 
-  // ── Step 2: Poll pending Apify runs from the previous refresh ─────────────
-  const [pendingRuns, cachedApifyViews] = await Promise.all([
-    loadPendingApifyRuns(user.id),
-    loadCachedApifyViews(user.id),
-  ]);
+  // ── Step 2: Apify for accounts with graphViews === 0 ─────────────────────
+  // Run for ALL accounts with 0 graph views (regardless of reelsAnalyzed count,
+  // since Graph API may not classify all video posts correctly).
+  const needsApify = graphResults
+    .filter(r => r.status === "ok" && r.data !== null && r.data.graphViews === 0)
+    .map(r => ({ accountId: r.account.id, username: r.account.username }));
 
-  const nowMs = Date.now();
-  const freshRuns = pendingRuns.filter(r => nowMs - r.startedAt < MAX_RUN_AGE_MS);
+  const apifyViewsMap = needsApify.length > 0
+    ? await fetchViewsApify(needsApify).catch((e) => {
+        console.warn("[engagement/apify] fetchViewsApify error:", e instanceof Error ? e.message : e);
+        return new Map<string, number>();
+      })
+    : new Map<string, number>();
 
-  let stillPending: ApifyRunEntry[] = [];
-  if (freshRuns.length > 0) {
-    // Catch errors inline so every entry resolves — keeps the run reference
-    const pollResults = await Promise.all(freshRuns.map(async (run) => {
-      try {
-        const { status, datasetId } = await apifyRunStatus(run.token, run.runId);
-        return { run, status, datasetId };
-      } catch {
-        return { run, status: "UNKNOWN", datasetId: "" };
-      }
-    }));
-
-    const completedRuns: Array<{ run: ApifyRunEntry; datasetId: string }> = [];
-    for (const { run, status, datasetId } of pollResults) {
-      if (status === "SUCCEEDED" && datasetId) {
-        completedRuns.push({ run, datasetId });
-      } else if (!["FAILED", "ABORTED", "TIMED-OUT"].includes(status)) {
-        stillPending.push(run);
-      }
-    }
-
-    if (completedRuns.length > 0) {
-      await Promise.allSettled(completedRuns.map(async ({ run, datasetId }) => {
-        try {
-          const items = await apifyGetDataset(run.token, datasetId);
-          const total = items.reduce((s, i) => s + Number(
-            i.videoPlayCount ?? i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
-          ), 0);
-          cachedApifyViews.set(run.accountId, total);
-          console.log(`[engagement/apify] polled @${run.username}: ${total} views from ${items.length} reels`);
-        } catch { /* keep old cached value */ }
-      }));
-      await saveCachedApifyViews(user.id, cachedApifyViews);
-    }
-
-    await savePendingApifyRuns(user.id, stillPending);
-  } else if (pendingRuns.length > 0) {
-    // Stale runs — clear them
-    await savePendingApifyRuns(user.id, []);
-  }
-
-  // ── Step 3: Start new Apify runs for accounts with no views (fire-and-forget)
-  const pendingAccountIds = new Set(stillPending.map(r => r.accountId));
-  const needsApify = graphResults.filter(r =>
-    r.status === "ok" &&
-    r.data !== null &&
-    r.data.graphViews === 0 &&
-    (r.data.reelsAnalyzed ?? 0) > 0 &&
-    !pendingAccountIds.has(r.account.id)
-  ).map(r => ({ accountId: r.account.id, username: r.account.username }));
-
-  if (needsApify.length > 0) {
-    const allTokens = await getAllApifyTokens();
-    const exhausted = await loadExhaustedTokens();
-    const tokens = allTokens.filter(t => !exhausted.has(t));
-
-    if (tokens.length > 0) {
-      const newRuns: ApifyRunEntry[] = [];
-      await Promise.allSettled(needsApify.map(async ({ accountId, username }, idx) => {
-        const token = tokens[idx % tokens.length];
-        try {
-          const runId = await apifyStartReelRun(token, username, 12);
-          newRuns.push({ accountId, username, runId, token, startedAt: Date.now() });
-          console.log(`[engagement/apify] started run for @${username} (run ${runId})`);
-        } catch (e) {
-          if (isQuotaOrBillingError(e)) await persistExhaustedToken(token);
-          else console.warn(`[engagement/apify] start failed @${username}:`, e instanceof Error ? e.message : e);
-        }
-      }));
-      if (newRuns.length > 0) await savePendingApifyRuns(user.id, newRuns);
-    }
-  }
-
-  // ── Step 4: Build final results ───────────────────────────────────────────
+  // ── Step 3: Build final results ───────────────────────────────────────────
   const results: AccountInsight[] = graphResults.map(r => {
     const { account } = r;
     if (r.status === "error" || !r.data) {
@@ -322,7 +288,7 @@ export async function GET(request: Request) {
     }
 
     const { followers, mediaCount, totalLikes, totalComments, graphViews, postsAnalyzed, reelsAnalyzed, lastPostAt } = r.data;
-    const totalViews = graphViews > 0 ? graphViews : (cachedApifyViews.get(account.id) ?? 0);
+    const totalViews = graphViews > 0 ? graphViews : (apifyViewsMap.get(account.id) ?? 0);
     const nPosts = postsAnalyzed || 1;
     const nReels = (reelsAnalyzed ?? 0) > 0 ? (reelsAnalyzed ?? 1) : 1;
     const engagementRate = followers > 0
