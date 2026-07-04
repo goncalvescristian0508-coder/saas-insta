@@ -49,6 +49,7 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/api/instagram/deletion") ||
     path.startsWith("/api/admin/meta-test") ||
     path.startsWith("/api/admin/seed-system-apify-tokens") ||
+    path.startsWith("/api/admin/diag-engagement") ||
     path.startsWith("/api/cron/") ||
     path.startsWith("/api/webhooks/") ||
     path.startsWith("/connect/") ||
