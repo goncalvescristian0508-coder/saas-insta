@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
-import { getApifyTokensFromEnv } from "@/lib/apifyRotation";
+import { getAllApifyTokens, loadExhaustedTokens, persistExhaustedToken, isQuotaOrBillingError } from "@/lib/apifyRotation";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -140,51 +140,63 @@ async function apifyGetDataset(token: string, datasetId: string): Promise<Record
 }
 
 /**
- * Starts Apify reel-scraper runs for all accounts in parallel,
+ * Starts Apify reel-scraper runs distributed across all available tokens,
  * then polls all runs simultaneously every 3 s until done or timeout.
+ * Accounts are split evenly across non-exhausted tokens to maximise quota usage.
  */
 async function fetchViewsApify(
   accounts: Array<{ accountId: string; username: string }>,
   reelLimit = 15,
   maxWaitMs = 42_000,
 ): Promise<Map<string, number>> {
-  const tokens = getApifyTokensFromEnv();
+  const allTokens = await getAllApifyTokens();
+  if (allTokens.length === 0) return new Map();
+  const exhausted = await loadExhaustedTokens();
+  const tokens = allTokens.filter((t) => !exhausted.has(t));
   if (tokens.length === 0) return new Map();
-  const token = tokens[0];
 
-  // Start all runs simultaneously
+  // Assign each account to a token (round-robin)
+  const tokenForAccount = (idx: number) => tokens[idx % tokens.length];
+
+  // Start all runs simultaneously, each with its assigned token
   const runEntries = await Promise.all(
-    accounts.map(async ({ accountId, username }) => {
+    accounts.map(async ({ accountId, username }, idx) => {
+      const token = tokenForAccount(idx);
       try {
         const runId = await apifyStartReelRun(token, username, reelLimit);
-        return { accountId, username, runId };
+        return { accountId, username, runId, token };
       } catch (e) {
-        console.warn(`[engagement/apify] start failed for @${username}:`, e instanceof Error ? e.message : e);
+        if (isQuotaOrBillingError(e)) {
+          await persistExhaustedToken(token);
+          console.warn(`[engagement/apify] token esgotado ao iniciar @${username}`);
+        } else {
+          console.warn(`[engagement/apify] start failed for @${username}:`, e instanceof Error ? e.message : e);
+        }
         return null;
       }
     })
   );
 
-  const active = runEntries.filter(Boolean) as Array<{ accountId: string; username: string; runId: string }>;
+  const active = runEntries.filter(Boolean) as Array<{ accountId: string; username: string; runId: string; token: string }>;
   if (active.length === 0) return new Map();
 
-  console.log(`[engagement/apify] started ${active.length} runs`);
+  console.log(`[engagement/apify] started ${active.length} runs across ${tokens.length} token(s)`);
 
   // Poll all runs until all terminal or deadline
-  const pending = new Map(active.map(r => [r.runId, r.accountId]));
-  const datasetMap = new Map<string, string>(); // runId → datasetId
+  const pending = new Map(active.map(r => [r.runId, { accountId: r.accountId, token: r.token }]));
+  const datasetMap = new Map<string, { datasetId: string; token: string }>();
   const deadline = Date.now() + maxWaitMs;
 
   while (pending.size > 0 && Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 3_000));
     const statuses = await Promise.all(
-      [...pending.keys()].map(async runId => {
+      [...pending.entries()].map(async ([runId, { token }]) => {
         const s = await apifyRunStatus(token, runId).catch(() => ({ status: "UNKNOWN", datasetId: "" }));
-        return { runId, ...s };
+        return { runId, token, ...s };
       })
     );
-    for (const { runId, status, datasetId } of statuses) {
-      if (status === "SUCCEEDED") { datasetMap.set(runId, datasetId); pending.delete(runId); }
+    for (const { runId, token, status, datasetId } of statuses) {
+      if (status === "SUCCEEDED") { datasetMap.set(runId, { datasetId, token }); pending.delete(runId); }
       else if (["FAILED", "ABORTED", "TIMED-OUT"].includes(status)) { pending.delete(runId); }
     }
     console.log(`[engagement/apify] pending: ${pending.size}, completed: ${datasetMap.size}`);
@@ -193,15 +205,15 @@ async function fetchViewsApify(
   // Fetch datasets and sum views
   const viewsMap = new Map<string, number>();
   await Promise.all(
-    active.map(async ({ accountId, runId }) => {
-      const datasetId = datasetMap.get(runId);
-      if (!datasetId) { viewsMap.set(accountId, 0); return; }
-      const items = await apifyGetDataset(token, datasetId);
+    active.map(async ({ accountId, username, runId }) => {
+      const entry = datasetMap.get(runId);
+      if (!entry) { viewsMap.set(accountId, 0); return; }
+      const items = await apifyGetDataset(entry.token, entry.datasetId);
       const total = items.reduce((s, i) => s + Number(
         i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
       ), 0);
       viewsMap.set(accountId, total);
-      console.log(`[engagement/apify] @${active.find(a => a.runId === runId)?.username}: ${total} views from ${items.length} reels`);
+      console.log(`[engagement/apify] @${username}: ${total} views from ${items.length} reels`);
     })
   );
 
@@ -249,8 +261,14 @@ export async function GET(request: Request) {
     })
   );
 
-  // Views vêm apenas do Graph API (play_count) — Apify removido para evitar custo
-  const apifyViewsMap = new Map<string, number>();
+  // Contas onde o Graph API não retornou views (play_count = 0) — busca via Apify
+  const needsApify = graphResults
+    .filter((r) => r.status === "ok" && r.data && r.data.graphViews === 0)
+    .map((r) => ({ accountId: r.account.id, username: r.account.username }));
+
+  const apifyViewsMap = needsApify.length > 0
+    ? await fetchViewsApify(needsApify).catch(() => new Map<string, number>())
+    : new Map<string, number>();
 
   // ── Step 3: Build final results ──────────────────────────────────────────
   const results: AccountInsight[] = graphResults.map(r => {

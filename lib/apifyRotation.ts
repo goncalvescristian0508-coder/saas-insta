@@ -75,6 +75,37 @@ export function getApifyTokensFromEnv(): string[] {
   return raw.split(",").map((t) => t.trim()).filter(Boolean);
 }
 
+/** Carrega tokens de sistema do banco (userId = 'system'), sem lançar exceção. */
+async function getSystemDbTokens(): Promise<string[]> {
+  try {
+    const rows = await withTimeout(
+      prisma.userApifyToken.findMany({
+        where: { userId: "system", isActive: true },
+        select: { token: true },
+        orderBy: { createdAt: "asc" },
+      }),
+      3000,
+    );
+    return rows.map((r) => r.token).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Retorna todos os tokens disponíveis: env vars + tokens de sistema do banco (deduplicados). */
+export async function getAllApifyTokens(): Promise<string[]> {
+  const [envTokens, dbTokens] = await Promise.all([
+    Promise.resolve(getApifyTokensFromEnv()),
+    getSystemDbTokens(),
+  ]);
+  const seen = new Set<string>();
+  const all: string[] = [];
+  for (const t of [...envTokens, ...dbTokens]) {
+    if (t && !seen.has(t)) { seen.add(t); all.push(t); }
+  }
+  return all;
+}
+
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
@@ -126,9 +157,12 @@ export async function apifyStartScrapeRuns(
   username: string,
   limit: number,
 ): Promise<{ profileRunId: string; reelRunId: string }> {
-  const tokens = getApifyTokensFromEnv();
-  if (tokens.length === 0) throw new ApifyTokensNotConfiguredError();
-  const token = tokens[0];
+  const configured = await getAllApifyTokens();
+  if (configured.length === 0) throw new ApifyTokensNotConfiguredError();
+  const exhausted = await loadExhaustedTokens();
+  const available = configured.filter((t) => !exhausted.has(t));
+  if (available.length === 0) throw new ApifyAllTokensExhaustedError();
+  const token = available[0];
 
   const [profileRunId, reelRunId] = await Promise.all([
     apifyStartRun(token, "apify~instagram-profile-scraper", { usernames: [username] }),
@@ -151,9 +185,12 @@ export async function apifyPollScrapeRuns(
   | { done: true; profile: ApifyScraperProfile; reels: ApifyScraperReel[] }
   | { done: false; runStatus: string }
 > {
-  const tokens = getApifyTokensFromEnv();
-  if (tokens.length === 0) throw new ApifyTokensNotConfiguredError();
-  const token = tokens[0];
+  const configured = await getAllApifyTokens();
+  if (configured.length === 0) throw new ApifyTokensNotConfiguredError();
+  const exhausted = await loadExhaustedTokens();
+  const available = configured.filter((t) => !exhausted.has(t));
+  if (available.length === 0) throw new ApifyAllTokensExhaustedError();
+  const token = available[0];
 
   const [prof, reel] = await Promise.all([
     apifyGetRunStatus(token, profileRunId),
@@ -293,7 +330,7 @@ export async function apifyScrapeProfileAndReels(
   username: string,
   limit = 9999,
 ): Promise<{ profile: ApifyScraperProfile; reels: ApifyScraperReel[] }> {
-  const configured = getApifyTokensFromEnv();
+  const configured = await getAllApifyTokens();
   if (configured.length === 0) throw new ApifyTokensNotConfiguredError();
 
   const exhausted = await loadExhaustedTokens();
