@@ -1,15 +1,31 @@
 import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
 
 const SYSTEM_USER_ID = "system";
 
-export async function POST(request: Request) {
-  const secret = request.headers.get("x-cron-secret");
-  if (!secret || secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+function isAdmin(email: string | undefined) {
+  return email === (process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com");
+}
+
+async function authCheck(request: Request): Promise<{ ok: boolean; error?: string }> {
+  // Accept CRON_SECRET header (for CLI/script usage)
+  const cronSecret = request.headers.get("x-cron-secret");
+  if (cronSecret && process.env.CRON_SECRET && cronSecret === process.env.CRON_SECRET) {
+    return { ok: true };
   }
+  // Accept Supabase admin session (for browser usage)
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (user && isAdmin(user.email)) return { ok: true };
+  return { ok: false, error: "Acesso negado" };
+}
+
+export async function POST(request: Request) {
+  const auth = await authCheck(request);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 403 });
 
   const body = await request.json() as { tokens?: string[] };
   const tokens = (body?.tokens ?? []).filter(
@@ -26,18 +42,12 @@ export async function POST(request: Request) {
     skipDuplicates: true,
   });
 
-  return NextResponse.json({
-    ok: true,
-    deleted: deleted.count,
-    inserted: created.count,
-  });
+  return NextResponse.json({ ok: true, deleted: deleted.count, inserted: created.count });
 }
 
 export async function GET(request: Request) {
-  const secret = request.headers.get("x-cron-secret");
-  if (!secret || secret !== process.env.CRON_SECRET) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
+  const auth = await authCheck(request);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: 403 });
 
   const count = await prisma.userApifyToken.count({ where: { userId: SYSTEM_USER_ID, isActive: true } });
   return NextResponse.json({ systemTokens: count });
