@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
-import { getAllApifyTokens, loadExhaustedTokens, persistExhaustedToken, isQuotaOrBillingError } from "@/lib/apifyRotation";
+import { getAllApifyTokens, loadExhaustedTokens, persistExhaustedToken, isQuotaOrBillingError, clearExhaustedApifyTokens } from "@/lib/apifyRotation";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -235,6 +235,9 @@ export async function GET(request: Request) {
     if (cached) return NextResponse.json(cached);
     return NextResponse.json({ accounts: [], lastUpdated: null });
   }
+
+  // Reset exhausted tokens so fresh tokens from APIFY_TOKENS are always tried
+  await clearExhaustedApifyTokens().catch(() => {});
 
   // ── Step 1: Graph API for all accounts in parallel ────────────────────────
   const dbAccounts = await prisma.instagramOAuthAccount.findMany({
