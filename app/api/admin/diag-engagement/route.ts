@@ -166,7 +166,7 @@ export async function GET(request: Request) {
         const fields = Object.keys(first);
         push(`  Campos: ${fields.join(", ")}`);
 
-        const viewFields = ["viewsCount", "videoViewCount", "view_count", "video_view_count", "ig_play_count", "play_count", "plays", "playCount", "videoViews", "video_views"];
+        const viewFields = ["videoPlayCount", "viewsCount", "videoViewCount", "view_count", "video_view_count", "ig_play_count", "play_count", "plays", "playCount", "videoViews", "video_views"];
         const viewData: Record<string, unknown> = {};
         for (const f of viewFields) {
           if (f in first) viewData[f] = first[f];
@@ -174,7 +174,7 @@ export async function GET(request: Request) {
         push(`  Campos de views: ${JSON.stringify(viewData)}`);
 
         const totalViews = items.reduce((s, i) => s + Number(
-          i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
+          i.videoPlayCount ?? i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
         ), 0);
         push(`  Total views calculado: ${totalViews}`);
 

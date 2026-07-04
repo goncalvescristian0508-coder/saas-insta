@@ -261,7 +261,7 @@ export async function GET(request: Request) {
         try {
           const items = await apifyGetDataset(run.token, datasetId);
           const total = items.reduce((s, i) => s + Number(
-            i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
+            i.videoPlayCount ?? i.viewsCount ?? i.videoViewCount ?? i.view_count ?? i.video_view_count ?? i.ig_play_count ?? i.play_count ?? 0
           ), 0);
           cachedApifyViews.set(run.accountId, total);
           console.log(`[engagement/apify] polled @${run.username}: ${total} views from ${items.length} reels`);
