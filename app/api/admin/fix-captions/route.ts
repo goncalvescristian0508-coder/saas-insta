@@ -33,15 +33,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "cloneJobId é obrigatório" }, { status: 400 });
   }
 
-  // Get all PENDING posts for this clone job
+  // Get all PENDING and FAILED posts for this clone job
   const pending = await prisma.scheduledPost.findMany({
-    where: { cloneJobId, status: "PENDING" },
+    where: { cloneJobId, status: { in: ["PENDING", "FAILED"] } },
     select: { id: true },
     orderBy: { scheduledAt: "asc" },
   });
 
   if (pending.length === 0) {
-    return NextResponse.json({ ok: true, updated: 0, message: "Nenhum post PENDING encontrado" });
+    return NextResponse.json({ ok: true, updated: 0, message: "Nenhum post PENDING/FAILED encontrado" });
   }
 
   const pool = shufflePool(theme, Math.abs(cloneJobId.split("").reduce((s, c) => s + c.charCodeAt(0), 0)));
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
 
   const results = await Promise.allSettled([...groups.entries()].map(([poolIdx, ids]) =>
     prisma.scheduledPost.updateMany({
-      where: { id: { in: ids }, status: "PENDING" },
+      where: { id: { in: ids }, status: { in: ["PENDING", "FAILED"] } },
       data: { caption: pool[poolIdx] },
     })
   ));
