@@ -9,10 +9,22 @@ function isAdmin(email: string | undefined) {
   return email === (process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com");
 }
 
-export async function GET() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const secretParam = searchParams.get("secret");
+  const cronSecret = process.env.CRON_SECRET;
+
+  let authorized = !!(cronSecret && secretParam === cronSecret);
+
+  if (!authorized) {
+    try {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      authorized = isAdmin(user?.email);
+    } catch { /* ignore */ }
+  }
+
+  if (!authorized) {
     return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
   }
 

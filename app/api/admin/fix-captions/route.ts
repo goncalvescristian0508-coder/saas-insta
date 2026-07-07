@@ -11,13 +11,22 @@ function isAdmin(email: string | undefined) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
-  }
+  const { searchParams } = new URL(request.url);
+  const secretParam = searchParams.get("secret");
+  const cronSecret = process.env.CRON_SECRET;
 
-  const { cloneJobId, theme = "mundo" } = await request.json() as { cloneJobId?: string; theme?: CaptionTheme };
+  let authorized = !!(cronSecret && secretParam === cronSecret);
+  if (!authorized) {
+    try {
+      const supabase = await createClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      authorized = isAdmin(user?.email);
+    } catch { /* ignore */ }
+  }
+  if (!authorized) return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+
+  const body = await request.json() as { cloneJobId?: string; theme?: CaptionTheme; secret?: string };
+  const { cloneJobId, theme = "mundo" } = body;
 
   if (!cloneJobId) {
     return NextResponse.json({ error: "cloneJobId é obrigatório" }, { status: 400 });
@@ -25,7 +34,7 @@ export async function POST(request: Request) {
 
   // Get all PENDING posts for this clone job
   const pending = await prisma.scheduledPost.findMany({
-    where: { cloneJobId, status: "PENDING", userId: user.id },
+    where: { cloneJobId, status: "PENDING" },
     select: { id: true },
     orderBy: { scheduledAt: "asc" },
   });
