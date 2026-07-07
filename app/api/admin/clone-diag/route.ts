@@ -74,7 +74,7 @@ export async function GET() {
 
   // Global cron health
   const lastPublished = await prisma.scheduledPost.findFirst({
-    where: { status: "PUBLISHED" },
+    where: { status: "DONE" },
     orderBy: { updatedAt: "desc" },
     select: { id: true, updatedAt: true, accountId: true },
   });
