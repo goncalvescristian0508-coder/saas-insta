@@ -5,6 +5,11 @@ import { join } from "path";
 import { randomUUID } from "crypto";
 import { readFile } from "fs/promises";
 
+// Returns a float in [min, max] with `dec` decimal places
+function randFloat(min: number, max: number, dec = 3): number {
+  return parseFloat((Math.random() * (max - min) + min).toFixed(dec));
+}
+
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
 const TMP_DIR = join(process.cwd(), "tmp", "video-clean");
@@ -36,11 +41,12 @@ export async function cleanVideo(inputBuffer: Buffer): Promise<Buffer> {
         // ── video: re-encode H.264, crop 1px each side (new hash) ──
         .outputOptions("-c:v", "libx264")
         .outputOptions("-crf", "22")
-        .outputOptions("-preset", "fast")
+        .outputOptions("-preset", "ultrafast")
         .outputOptions("-profile:v", "high")
         .outputOptions("-level", "4.0")
-        // crop 2px total (1px each side) — invisible but changes perceptual hash
-        .outputOptions("-vf", "crop=iw-2:ih-2:1:1")
+        // crop 2px + subtle brightness/saturation variation per video
+        // so each processed copy has a unique visual signature
+        .outputOptions("-vf", `crop=iw-2:ih-2:1:1,eq=brightness=${randFloat(0.03, 0.07)}:saturation=${randFloat(1.1, 1.25)}`)
 
         // ── audio: re-encode AAC, standardize sample rate ──────────
         .outputOptions("-c:a", "aac")

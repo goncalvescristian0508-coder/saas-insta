@@ -842,9 +842,25 @@ export default function ClonarPage() {
                         );
                       })}
                       {freeAccounts.length > 0 && (
-                        <p style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.4rem", marginBottom: "0.15rem" }}>
-                          Livres ({freeAccounts.length})
-                        </p>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.4rem", marginBottom: "0.15rem" }}>
+                          <p style={{ fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.08em", margin: 0 }}>
+                            Livres ({freeAccounts.length})
+                          </p>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const allSelected = freeAccounts.every((a) => selectedAccounts[a.id]);
+                              setSelectedAccounts((s) => {
+                                const next = { ...s };
+                                freeAccounts.forEach((a) => { next[a.id] = !allSelected; });
+                                return next;
+                              });
+                            }}
+                            style={{ fontSize: "0.65rem", fontWeight: 700, color: "var(--accent-gold)", background: "rgba(201,162,39,0.1)", border: "1px solid rgba(201,162,39,0.25)", borderRadius: "4px", padding: "2px 8px", cursor: "pointer" }}
+                          >
+                            {freeAccounts.every((a) => selectedAccounts[a.id]) ? "Desmarcar todas" : "Selecionar todas"}
+                          </button>
+                        </div>
                       )}
                     </>
                   )}

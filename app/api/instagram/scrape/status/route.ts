@@ -22,8 +22,9 @@ export async function GET(request: Request) {
       return NextResponse.json({ pending: true, runStatus: result.runStatus });
     }
 
-    // Salva todos os reels no cache para reusar em clones futuros
-    void saveScraperCache(username, result.profile, result.reels);
+    // Salva todos os reels no cache ANTES de retornar — evita race condition
+    // onde o usuário clica Clone e o processCloneJob faz cache miss
+    await saveScraperCache(username, result.profile, result.reels);
 
     const videos = result.reels.map((r, i) => ({
       id: i + 1,

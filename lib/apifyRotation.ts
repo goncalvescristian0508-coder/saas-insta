@@ -70,9 +70,9 @@ export class ApifyTokensNotConfiguredError extends Error {
 export function getApifyTokensFromEnv(): string[] {
   // Se APIFY_TOKEN_EXTRA estiver definido, usa APENAS ele (ignora tokens antigos esgotados)
   const extra = process.env.APIFY_TOKEN_EXTRA ?? "";
-  if (extra.trim()) return extra.split(",").map((t) => t.trim()).filter(Boolean);
-  const raw = process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "";
-  return raw.split(",").map((t) => t.trim()).filter(Boolean);
+  const src = extra.trim() ? extra : (process.env.APIFY_TOKENS ?? process.env.APIFY_TOKEN ?? "");
+  // Extrai apenas a parte válida do token (strips newlines/extra chars that may appear from env injection)
+  return src.split(",").map((t) => t.split(/\s/)[0].trim()).filter(t => t.startsWith("apify_"));
 }
 
 /** Carrega tokens de sistema do banco (userId = 'system'), sem lançar exceção. */
@@ -270,7 +270,7 @@ async function apifyStartRun(
 async function apifyWaitRun(
   token: string,
   runId: string,
-  maxMs = 270_000, // 4.5 min — deixa 30s para o catch() rodar antes do Vercel cortar (limite 300s)
+  maxMs = 480_000, // 8 min — reel scraper de perfis grandes pode levar 6+ min
 ): Promise<string> {
   const deadline = maxMs > 0 ? Date.now() + maxMs : Infinity;
   while (Date.now() < deadline) {

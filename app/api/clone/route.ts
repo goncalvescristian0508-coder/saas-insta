@@ -5,9 +5,9 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { createHash } from "crypto";
-import { scrapeProfileAndReels } from "@/lib/scraper";
+import { getCached } from "@/lib/scraper";
 import { type CaptionTheme, shufflePool } from "@/lib/autoCaptions";
-import { stripMp4Metadata } from "@/lib/videoUtils";
+import { cleanVideo } from "@/lib/videoClean";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -72,7 +72,7 @@ async function downloadReelToLibrary(
     const res = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) return null;
     const rawBuffer = Buffer.from(await res.arrayBuffer());
-    const buffer = stripMp4Metadata(rawBuffer);
+    const buffer = await cleanVideo(rawBuffer);
 
     const admin = storageAdmin();
     const { error } = await admin.storage
@@ -167,10 +167,21 @@ interface ProcessParams {
 
 async function processCloneJob(p: ProcessParams) {
   try {
-    const { profile: rProfile, reels: rReels } = await scrapeProfileAndReels(
-      p.cleanUsername,
-      p.postLimit ?? 150, // cap em 150 quando "Todos" — evita runs caros de 300+ reels
-    );
+    // Usa APENAS o cache — nunca chama o Apify diretamente daqui.
+    // O cache é preenchido pela busca (/api/instagram/scrape/status) antes do clone.
+    // Se o cache estiver vazio, falha rápido com mensagem clara.
+    const cachedData = await getCached(p.cleanUsername);
+    if (!cachedData) {
+      await prisma.cloneJob.update({
+        where: { id: p.cloneJobId },
+        data: { totalReels: -1, errorMsg: `Cache expirado para @${p.cleanUsername}. Pesquise o perfil novamente na aba de busca e tente clonar em seguida.` },
+      }).catch(() => null);
+      return;
+    }
+
+    const limit = p.postLimit ?? 9999;
+    const rProfile = cachedData.profile;
+    const rReels = cachedData.reels.slice(0, limit);
 
     const reelsItems: Record<string, unknown>[] = rReels.map((r) => ({
       videoUrl: r.videoUrl, caption: r.caption, shortCode: r.shortCode,
@@ -280,8 +291,10 @@ async function processCloneJob(p: ProcessParams) {
         const effectiveReel = p.alternateSequence ? reelsRaw[effectiveI] : reel;
 
         if (acctSeenUrls.get(account.id)!.has(effectiveReel.videoUrl)) return [];
+
         const libId = pathToLibId.get(storagePaths[effectiveI]);
         if (libId && acctSeenVideoIds.get(account.id)!.has(libId)) return [];
+
         const originalCaption = effectiveReel.caption.trim();
         if (!autoCaptionPool && originalCaption.length > 10 && acctSeenCaptions.get(account.id)!.has(originalCaption)) return [];
 
@@ -300,8 +313,35 @@ async function processCloneJob(p: ProcessParams) {
         }];
       })
     );
+
     if (postsToCreate.length > 0) {
       await prisma.scheduledPost.createMany({ data: postsToCreate });
+    }
+
+    // When auto-captions is enabled, update ALL PENDING posts for these accounts.
+    // This ensures old posts (from previous clones without auto-captions, or whose
+    // CDN URL changed between scrapes) also get auto-captions, not just newly created ones.
+    if (autoCaptionPool && p.accounts.length > 0) {
+      const allPending = await prisma.scheduledPost.findMany({
+        where: { accountId: { in: p.accounts.map(a => a.id) }, status: "PENDING" },
+        select: { id: true },
+        orderBy: { scheduledAt: "asc" },
+      });
+      if (allPending.length > 0) {
+        // Group IDs by caption pool index — at most autoCaptionPool.length updateMany calls
+        const groups = new Map<number, string[]>();
+        allPending.forEach(({ id }, i) => {
+          const poolIdx = i % autoCaptionPool.length;
+          if (!groups.has(poolIdx)) groups.set(poolIdx, []);
+          groups.get(poolIdx)!.push(id);
+        });
+        await Promise.allSettled([...groups.entries()].map(([poolIdx, ids]) =>
+          prisma.scheduledPost.updateMany({
+            where: { id: { in: ids }, status: "PENDING" },
+            data: { caption: autoCaptionPool[poolIdx] },
+          })
+        ));
+      }
     }
 
     // Update job with final data — totalReels > 0 signals "done" to frontend
