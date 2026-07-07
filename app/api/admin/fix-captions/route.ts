@@ -7,7 +7,8 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 function isAdmin(email: string | undefined) {
-  return email === (process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com");
+  const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
+  return email === adminEmail || email === "sistemaauto@gmail.com";
 }
 
 export async function POST(request: Request) {
