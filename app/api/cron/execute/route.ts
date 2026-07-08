@@ -361,6 +361,30 @@ async function failPost(
     return;
   }
 
+  // Account doesn't support posting via Graph API (personal account or missing publish permission)
+  const isUnsupportedPost =
+    msgLower.includes("unsupported request - method type: post") ||
+    msgLower.includes("unsupported request") ||
+    msgLower.includes("method type: post");
+
+  if (isUnsupportedPost) {
+    await prisma.instagramOAuthAccount.update({
+      where: { id: post.accountId },
+      data: { accountStatus: "SUSPENDED", lastError: "Conta não suporta publicação via API (conta pessoal ou sem permissão). Reconecte como conta Business/Creator." },
+    });
+    await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: 6, errorMsg: "Conta não suporta publicação via API." } });
+    await prisma.scheduledPost.updateMany({
+      where: { accountId: post.accountId, status: "PENDING" },
+      data: { status: "FAILED", retryCount: 6, errorMsg: "Conta não suporta publicação via API." },
+    });
+    await sendPushToUser(post.userId, {
+      title: "⚠️ Conta sem permissão de postagem",
+      body: `@${accountName}: não é possível publicar (conta pessoal ou sem permissão). Reconecte como Business/Creator.`,
+      url: "/accounts",
+    }).catch(() => {});
+    return;
+  }
+
   const isAppDeactivated = msgLower.includes("api access deactivated") || msgLower.includes("app not active");
 
   if (isAppDeactivated) {
