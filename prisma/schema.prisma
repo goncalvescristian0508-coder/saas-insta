@@ -33,6 +33,7 @@ model InstagramOAuthAccount {
   tokenExpiresAt    DateTime?
   appKey            String         @default("1")
   lastError         String?
+  proxyUrl          String?
   accountStatus     String         @default("ACTIVE") // ACTIVE | SUSPENDED | QUARANTINE
   quarantinedUntil  DateTime?
   createdAt         DateTime       @default(now())

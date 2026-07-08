@@ -2,8 +2,24 @@ import { mkdir, unlink, writeFile } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { getMetaOAuthConfig } from "@/lib/metaInstagramEnv";
+import { ProxyAgent } from "undici";
 
 const GRAPH = "https://graph.instagram.com/v21.0";
+
+/**
+ * fetch() wrapper that routes through a proxy when proxyUrl is provided.
+ * Uses undici's ProxyAgent so it works with HTTP, HTTPS, and SOCKS proxies.
+ */
+function gFetch(
+  url: string,
+  init: RequestInit,
+  proxyUrl?: string | null,
+): Promise<Response> {
+  if (!proxyUrl) return fetch(url, init);
+  const dispatcher = new ProxyAgent(proxyUrl);
+  // undici's fetch accepts dispatcher; cast to bypass TS type gap
+  return fetch(url, { ...init, dispatcher } as RequestInit);
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -194,8 +210,9 @@ export async function createReelContainer(params: {
   videoUrl: string;
   caption: string;
   coverUrl?: string | null;
+  proxyUrl?: string | null;
 }): Promise<{ ok: true; containerId: string } | { ok: false; error: string }> {
-  const { igUserId, accessToken, videoUrl, caption, coverUrl } = params;
+  const { igUserId, accessToken, videoUrl, caption, coverUrl, proxyUrl } = params;
   const url = new URL(`${GRAPH}/${igUserId}/media`);
   url.searchParams.set("media_type", "REELS");
   url.searchParams.set("video_url", videoUrl);
@@ -203,7 +220,7 @@ export async function createReelContainer(params: {
   if (coverUrl) url.searchParams.set("cover_url", coverUrl);
   url.searchParams.set("access_token", accessToken);
 
-  const res = await fetch(url.toString(), { method: "POST", signal: AbortSignal.timeout(15_000) });
+  const res = await gFetch(url.toString(), { method: "POST", signal: AbortSignal.timeout(15_000) }, proxyUrl);
   const data = (await res.json()) as { id?: string; error?: { message?: string } };
 
   if (!res.ok || !data.id) {
@@ -216,12 +233,13 @@ export async function createReelContainer(params: {
 export async function checkContainerStatus(
   containerId: string,
   accessToken: string,
+  proxyUrl?: string | null,
 ): Promise<string> {
   const u = new URL(`${GRAPH}/${containerId}`);
   u.searchParams.set("fields", "status_code,status");
   u.searchParams.set("access_token", accessToken);
 
-  const res = await fetch(u.toString(), { signal: AbortSignal.timeout(12_000) });
+  const res = await gFetch(u.toString(), { signal: AbortSignal.timeout(12_000) }, proxyUrl);
   const data = (await res.json()) as { status_code?: string; error?: { message?: string } };
 
   if (!res.ok) throw new Error(data.error?.message || JSON.stringify(data));
@@ -233,12 +251,13 @@ export async function publishMediaContainer(
   igUserId: string,
   accessToken: string,
   containerId: string,
+  proxyUrl?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   const url = new URL(`${GRAPH}/${igUserId}/media_publish`);
   url.searchParams.set("creation_id", containerId);
   url.searchParams.set("access_token", accessToken);
 
-  const res = await fetch(url.toString(), { method: "POST", signal: AbortSignal.timeout(15_000) });
+  const res = await gFetch(url.toString(), { method: "POST", signal: AbortSignal.timeout(15_000) }, proxyUrl);
   const data = (await res.json()) as { id?: string; error?: { message?: string } };
 
   if (!res.ok) return { ok: false, error: data.error?.message || JSON.stringify(data) };

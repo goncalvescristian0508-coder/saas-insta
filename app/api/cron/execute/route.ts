@@ -112,6 +112,7 @@ async function ensureSchema() {
   const stmts = [
     `ALTER TABLE "InstagramOAuthAccount" ADD COLUMN IF NOT EXISTS "appKey" TEXT NOT NULL DEFAULT '1'`,
     `ALTER TABLE "InstagramOAuthAccount" ADD COLUMN IF NOT EXISTS "lastError" TEXT`,
+    `ALTER TABLE "InstagramOAuthAccount" ADD COLUMN IF NOT EXISTS "proxyUrl" TEXT`,
     `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "containerCreationId" TEXT`,
     `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "containerCreatedAt" TIMESTAMP(3)`,
     `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "rehostStoragePath" TEXT`,
@@ -220,10 +221,11 @@ async function runCron() {
   await Promise.all(runningWithContainer.map(async (post) => {
     try {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
-      const containerStatus = await checkContainerStatus(post.containerCreationId!, accessToken);
+      const proxyUrl = post.account.proxyUrl ?? null;
+      const containerStatus = await checkContainerStatus(post.containerCreationId!, accessToken, proxyUrl);
 
       if (containerStatus === "FINISHED") {
-        const pubResult = await publishMediaContainer(post.account.instagramUserId, accessToken, post.containerCreationId!);
+        const pubResult = await publishMediaContainer(post.account.instagramUserId, accessToken, post.containerCreationId!, proxyUrl);
 
         if (pubResult.ok) {
           await prisma.scheduledPost.update({
@@ -397,6 +399,7 @@ async function runCron() {
         videoUrl,
         caption: post.caption,
         coverUrl: post.video?.coverUrl ?? null,
+        proxyUrl: post.account.proxyUrl ?? null,
       });
 
       if (!result.ok) {
