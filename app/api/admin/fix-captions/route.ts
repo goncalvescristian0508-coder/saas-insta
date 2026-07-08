@@ -54,14 +54,15 @@ export async function POST(request: Request) {
     groups.get(poolIdx)!.push(id);
   });
 
-  const results = await Promise.allSettled([...groups.entries()].map(([poolIdx, ids]) =>
-    prisma.scheduledPost.updateMany({
+  // Sequencial para não esgotar o connection pool
+  let updated = 0;
+  for (const [poolIdx, ids] of groups.entries()) {
+    const r = await prisma.scheduledPost.updateMany({
       where: { id: { in: ids }, status: { in: ["PENDING", "FAILED"] } },
       data: { caption: pool[poolIdx] },
-    })
-  ));
-
-  const updated = results.reduce((sum, r) => sum + (r.status === "fulfilled" ? r.value.count : 0), 0);
+    }).catch(() => ({ count: 0 }));
+    updated += r.count;
+  }
 
   return NextResponse.json({ ok: true, updated, total: pending.length, theme });
 }
