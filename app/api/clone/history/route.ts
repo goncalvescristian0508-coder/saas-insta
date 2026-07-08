@@ -53,6 +53,7 @@ export async function GET() {
 
   const countMap = new Map<string, { total: number; done: number; failed: number; pending: number }>();
   for (const { cloneJobId, status, _count } of statusCounts) {
+    if (!cloneJobId) continue;
     if (!countMap.has(cloneJobId)) countMap.set(cloneJobId, { total: 0, done: 0, failed: 0, pending: 0 });
     const entry = countMap.get(cloneJobId)!;
     entry.total += _count.status;
