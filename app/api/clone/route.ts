@@ -275,10 +275,13 @@ async function processCloneJob(p: ProcessParams) {
       if (r.caption) acctSeenCaptions.get(r.accountId)?.add(r.caption.trim());
     }
 
-    // Build caption pool if auto-captions enabled (shuffled per job for variety)
-    const autoCaptionPool = p.autoCaptions && p.captionTheme
-      ? shufflePool(p.captionTheme, Math.abs(p.cloneJobId.split("").reduce((s, c) => s + c.charCodeAt(0), 0)))
+    // Build caption pool — always have a fallback pool so no post is ever published without caption
+    const seed = Math.abs(p.cloneJobId.split("").reduce((s, c) => s + c.charCodeAt(0), 0));
+    const autoCaptionPool = (p.autoCaptions && p.captionTheme)
+      ? shufflePool(p.captionTheme, seed)
       : null;
+    // Fallback: used when source caption is empty and autoCaptions is off
+    const fallbackPool = autoCaptionPool ?? shufflePool("mundo", seed);
 
     // Create all posts immediately with rawVideoUrl (skipping duplicates per account)
     let autoCaptionIdx = 0;
@@ -298,9 +301,11 @@ async function processCloneJob(p: ProcessParams) {
         const originalCaption = effectiveReel.caption.trim();
         if (!autoCaptionPool && originalCaption.length > 10 && acctSeenCaptions.get(account.id)!.has(originalCaption)) return [];
 
+        const sourceCaption = effectiveReel.caption?.trim() ?? "";
+        // If autoCaptions is on, use pool. If source caption is empty, use fallback pool. Otherwise use source.
         const caption = autoCaptionPool
           ? autoCaptionPool[autoCaptionIdx++ % autoCaptionPool.length]
-          : effectiveReel.caption;
+          : sourceCaption || fallbackPool[autoCaptionIdx++ % fallbackPool.length];
 
         return [{
           userId: p.userId,
@@ -316,6 +321,23 @@ async function processCloneJob(p: ProcessParams) {
 
     if (postsToCreate.length > 0) {
       await prisma.scheduledPost.createMany({ data: postsToCreate });
+    }
+
+    // Safety net: any post that ended up with empty caption gets auto-caption applied
+    const emptyCaptioned = await prisma.scheduledPost.findMany({
+      where: { cloneJobId: p.cloneJobId, status: "PENDING", caption: "" },
+      select: { id: true },
+    }).catch(() => []);
+    if (emptyCaptioned.length > 0) {
+      const safetyGroups = new Map<number, string[]>();
+      emptyCaptioned.forEach(({ id }, i) => {
+        const idx = i % fallbackPool.length;
+        if (!safetyGroups.has(idx)) safetyGroups.set(idx, []);
+        safetyGroups.get(idx)!.push(id);
+      });
+      await Promise.allSettled([...safetyGroups.entries()].map(([idx, ids]) =>
+        prisma.scheduledPost.updateMany({ where: { id: { in: ids } }, data: { caption: fallbackPool[idx] } })
+      ));
     }
 
     // When auto-captions is enabled, update ALL PENDING posts for these accounts.
@@ -395,7 +417,7 @@ export async function POST(request: Request) {
       captionTheme?: CaptionTheme;
     };
 
-    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, startAt, alternateSequence = false, groupSize = 5, globalCoverUrl = null, autoCaptions = false, captionTheme = "mundo" } = body;
+    const { username, accountIds, intervalMinutes = 10, postLimit, cloneBio = false, startAt, alternateSequence = false, groupSize = 5, globalCoverUrl = null, autoCaptions = true, captionTheme = "mundo" } = body;
     if (!username || !accountIds?.length || !startAt) {
       return NextResponse.json({ error: "Campos obrigatórios: username, accountIds, startAt" }, { status: 400 });
     }

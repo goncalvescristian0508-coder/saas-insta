@@ -12,6 +12,7 @@ import { createClient } from "@supabase/supabase-js";
 import { randomUUID, createHash } from "crypto";
 import { sendPushToUser } from "@/lib/sendPush";
 import { stripMp4Metadata } from "@/lib/videoUtils";
+import { shufflePool } from "@/lib/autoCaptions";
 
 function storageAdmin() {
   return createClient(
@@ -379,6 +380,25 @@ async function redistributeFailedToClone(failedAccountId: string, now: Date): Pr
 
     const n = results.reduce((s, r) => s + r.count, 0);
     console.log(`[cron] redistribuiu ${n}/${postIds.length} posts para ${active.length} contas no clone ${cloneJobId}`);
+
+    // Apply auto-captions to redistributed posts that have no caption
+    const noCaption = await prisma.scheduledPost.findMany({
+      where: { id: { in: postIds }, status: "PENDING", caption: "" },
+      select: { id: true },
+    }).catch(() => []);
+    if (noCaption.length > 0) {
+      const pool = shufflePool("mundo", Math.abs(cloneJobId.split("").reduce((s, c) => s + c.charCodeAt(0), 0)));
+      const captionGroups = new Map<number, string[]>();
+      noCaption.forEach(({ id }, i) => {
+        const idx = i % pool.length;
+        if (!captionGroups.has(idx)) captionGroups.set(idx, []);
+        captionGroups.get(idx)!.push(id);
+      });
+      await Promise.allSettled([...captionGroups.entries()].map(([idx, ids]) =>
+        prisma.scheduledPost.updateMany({ where: { id: { in: ids } }, data: { caption: pool[idx] } })
+      ));
+      console.log(`[cron] aplicou legendas em ${noCaption.length} posts redistribuídos sem caption`);
+    }
   }
 }
 
