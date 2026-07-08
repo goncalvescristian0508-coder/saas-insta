@@ -83,6 +83,16 @@ async function ensureSchema() {
 
 async function runCron() {
   const now = new Date();
+
+  // Guard: skip if another phase-1 invocation is actively running (started < 50s ago)
+  const activePhase1 = await prisma.scheduledPost.count({
+    where: { status: "RUNNING", containerCreationId: null, updatedAt: { gte: new Date(now.getTime() - 50_000) } },
+  }).catch(() => 0);
+  if (activePhase1 > 0) {
+    console.log("[cron] skip — concurrent invocation active (phase1:", activePhase1, ")");
+    return;
+  }
+
   console.log("[cron] start", now.toISOString());
 
   // ── Pre-flight DB resets (all guarded) ──────────────────────────────────────
