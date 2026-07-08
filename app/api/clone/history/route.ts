@@ -28,19 +28,41 @@ export async function GET() {
   const jobs = await prisma.cloneJob.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
-    include: {
-      posts: {
-        select: { status: true },
-      },
+    select: {
+      id: true,
+      sourceUsername: true,
+      profilePicUrl: true,
+      accountUsernames: true,
+      totalReels: true,
+      clonedBio: true,
+      clonedPhoto: true,
+      errorMsg: true,
+      createdAt: true,
     },
   });
 
-  const result = jobs.map((job) => {
-    const total = job.posts.length;
-    const done = job.posts.filter((p) => p.status === "DONE").length;
-    const failed = job.posts.filter((p) => p.status === "FAILED").length;
-    const pending = job.posts.filter((p) => p.status === "PENDING" || p.status === "RUNNING").length;
+  if (jobs.length === 0) return NextResponse.json({ jobs: [] });
 
+  // Use groupBy instead of fetching all posts — avoids loading 10k+ rows
+  const jobIds = jobs.map((j) => j.id);
+  const statusCounts = await prisma.scheduledPost.groupBy({
+    by: ["cloneJobId", "status"],
+    where: { cloneJobId: { in: jobIds } },
+    _count: { status: true },
+  });
+
+  const countMap = new Map<string, { total: number; done: number; failed: number; pending: number }>();
+  for (const { cloneJobId, status, _count } of statusCounts) {
+    if (!countMap.has(cloneJobId)) countMap.set(cloneJobId, { total: 0, done: 0, failed: 0, pending: 0 });
+    const entry = countMap.get(cloneJobId)!;
+    entry.total += _count.status;
+    if (status === "DONE") entry.done += _count.status;
+    else if (status === "FAILED") entry.failed += _count.status;
+    else entry.pending += _count.status;
+  }
+
+  const result = jobs.map((job) => {
+    const counts = countMap.get(job.id) ?? { total: 0, done: 0, failed: 0, pending: 0 };
     return {
       id: job.id,
       sourceUsername: job.sourceUsername,
@@ -51,7 +73,7 @@ export async function GET() {
       clonedPhoto: job.clonedPhoto,
       errorMsg: job.errorMsg ?? null,
       createdAt: job.createdAt,
-      posts: { total, done, failed, pending },
+      posts: counts,
     };
   });
 
