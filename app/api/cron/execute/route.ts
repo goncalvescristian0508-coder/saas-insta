@@ -82,12 +82,6 @@ async function ensureSchema() {
 }
 
 async function runCron() {
-  try {
-    await ensureSchema();
-  } catch (e) {
-    console.error("[cron] ensureSchema error:", e);
-  }
-
   const now = new Date();
   console.log("[cron] start", now.toISOString());
 
