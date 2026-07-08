@@ -234,7 +234,7 @@ async function runCron() {
     include: { account: true, video: true },
   }).catch(() => []);
 
-  console.log("[cron] phase1:", pending.length, "pending to process (total eligible:", allPending.length, ")");
+  console.log("[cron] phase1:", pending.length, "pending to process (total eligible:", deduped.length, ")");
 
   if (pending.length === 0) {
     console.log("[cron] nothing to do");
@@ -327,6 +327,61 @@ async function runCron() {
   console.log("[cron] done");
 }
 
+// Redistributes all FAILED posts from a suspended account to other active accounts in the same clone(s).
+async function redistributeFailedToClone(failedAccountId: string, now: Date): Promise<void> {
+  const failed = await prisma.scheduledPost.findMany({
+    where: { accountId: failedAccountId, status: "FAILED", cloneJobId: { not: null } },
+    select: { id: true, cloneJobId: true },
+  }).catch(() => [] as { id: string; cloneJobId: string | null }[]);
+
+  if (failed.length === 0) return;
+
+  // Group by clone
+  const byClone = new Map<string, string[]>();
+  for (const p of failed) {
+    if (!p.cloneJobId) continue;
+    if (!byClone.has(p.cloneJobId)) byClone.set(p.cloneJobId, []);
+    byClone.get(p.cloneJobId)!.push(p.id);
+  }
+
+  for (const [cloneJobId, postIds] of byClone) {
+    const eligibleIds = (await prisma.scheduledPost.findMany({
+      where: { cloneJobId, accountId: { not: failedAccountId } },
+      select: { accountId: true },
+      distinct: ["accountId"],
+    }).catch(() => [])).map(a => a.accountId);
+
+    if (eligibleIds.length === 0) continue;
+
+    const active = await prisma.instagramOAuthAccount.findMany({
+      where: { id: { in: eligibleIds }, accountStatus: "ACTIVE" },
+      select: { id: true },
+    }).catch(() => []);
+
+    if (active.length === 0) continue;
+
+    // Round-robin: group post IDs by target account
+    const groups = new Map<string, string[]>();
+    postIds.forEach((id, i) => {
+      const tid = active[i % active.length].id;
+      if (!groups.has(tid)) groups.set(tid, []);
+      groups.get(tid)!.push(id);
+    });
+
+    const results = await Promise.all(
+      Array.from(groups.entries()).map(([targetId, ids]) =>
+        prisma.scheduledPost.updateMany({
+          where: { id: { in: ids } },
+          data: { accountId: targetId, status: "PENDING", retryCount: 0, errorMsg: null, scheduledAt: now, containerCreationId: null, containerCreatedAt: null },
+        }).catch(() => ({ count: 0 }))
+      )
+    );
+
+    const n = results.reduce((s, r) => s + r.count, 0);
+    console.log(`[cron] redistribuiu ${n}/${postIds.length} posts para ${active.length} contas no clone ${cloneJobId}`);
+  }
+}
+
 async function failPost(
   post: { id: string; accountId: string; userId: string; retryCount: number; account: { username: string; instagramUserId: string } },
   msg: string,
@@ -366,11 +421,12 @@ async function failPost(
       where: { accountId: post.accountId, status: "PENDING" },
       data: { status: "FAILED", retryCount: 6, errorMsg: "Token inválido — reconecte a conta." },
     });
+    await redistributeFailedToClone(post.accountId, now).catch(() => {});
     await sendPushToUser(post.userId, {
       title: "⚠️ Reconecte a conta",
-      body: `@${accountName}: token expirado ou revogado pelo Instagram. Acesse Contas e reconecte.`,
+      body: `@${accountName}: token expirado — posts redistribuídos automaticamente para as outras contas. Reconecte em Contas.`,
       url: "/accounts",
-    });
+    }).catch(() => {});
     return;
   }
 
@@ -390,9 +446,10 @@ async function failPost(
       where: { accountId: post.accountId, status: "PENDING" },
       data: { status: "FAILED", retryCount: 6, errorMsg: "Conta não suporta publicação via API." },
     });
+    await redistributeFailedToClone(post.accountId, now).catch(() => {});
     await sendPushToUser(post.userId, {
       title: "⚠️ Conta sem permissão de postagem",
-      body: `@${accountName}: não é possível publicar (conta pessoal ou sem permissão). Reconecte como Business/Creator.`,
+      body: `@${accountName}: conta pessoal sem permissão — posts redistribuídos. Reconecte como Business/Creator.`,
       url: "/accounts",
     }).catch(() => {});
     return;
@@ -443,16 +500,17 @@ async function failPost(
 
   if (isSuspended) {
     await prisma.instagramOAuthAccount.update({ where: { id: post.accountId }, data: { accountStatus: "SUSPENDED", lastError: msg } });
-    await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: 6 } });
+    await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: 6, errorMsg: "Conta suspensa pelo Instagram." } });
     await prisma.scheduledPost.updateMany({
       where: { accountId: post.accountId, status: "PENDING" },
       data: { status: "FAILED", retryCount: 6, errorMsg: "Conta suspensa pelo Instagram." },
     });
+    await redistributeFailedToClone(post.accountId, now).catch(() => {});
     await sendPushToUser(post.userId, {
       title: "⚠️ Conta suspensa",
-      body: `@${accountName} foi suspensa pelo Instagram e movida para Contas OFF.`,
+      body: `@${accountName} foi suspensa pelo Instagram — posts redistribuídos automaticamente.`,
       url: "/contas-off",
-    });
+    }).catch(() => {});
     return;
   }
 
