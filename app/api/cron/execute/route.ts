@@ -13,6 +13,7 @@ import { randomUUID, createHash } from "crypto";
 import { sendPushToUser } from "@/lib/sendPush";
 import { stripMp4Metadata } from "@/lib/videoUtils";
 import { shufflePool } from "@/lib/autoCaptions";
+import { transformVideoForAccount } from "@/lib/videoTransform";
 
 function storageAdmin() {
   return createClient(
@@ -37,6 +38,71 @@ async function downloadAndStripVideo(rawUrl: string, userId: string): Promise<{ 
   if (error) throw new Error(`Falha ao salvar vídeo: ${error.message}`);
   const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
   return { publicUrl: pub.publicUrl, storagePath };
+}
+
+/**
+ * Download the base video (from Apify or Supabase cache), apply per-account
+ * FFmpeg transformation, and upload the result as a unique per-post file.
+ * Returns the public URL for the unique video + the storage path for later cleanup.
+ */
+async function downloadTransformAndHostVideo(
+  rawUrl: string,
+  userId: string,
+  accountId: string,
+  postId: string,
+): Promise<{ publicUrl: string; uniqueStoragePath: string }> {
+  const urlHash = createHash("md5").update(rawUrl).digest("hex");
+  const baseStoragePath = `cloned/${userId}/${urlHash}.mp4`;
+  const admin = storageAdmin();
+
+  // Try to reuse the stripped base from LibraryVideo (avoids re-downloading from Apify)
+  let rawBuffer: Buffer | null = null;
+  const baseLibVideo = await prisma.libraryVideo
+    .findFirst({ where: { userId, storagePath: baseStoragePath } })
+    .catch(() => null);
+
+  if (baseLibVideo) {
+    const baseRes = await fetch(baseLibVideo.publicUrl, { signal: AbortSignal.timeout(25_000) });
+    if (baseRes.ok) rawBuffer = Buffer.from(await baseRes.arrayBuffer());
+  }
+
+  if (!rawBuffer) {
+    // First account for this video: download from source + save stripped base
+    const sourceRes = await fetch(rawUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!sourceRes.ok) throw new Error(`Falha ao baixar vídeo: HTTP ${sourceRes.status}`);
+    rawBuffer = stripMp4Metadata(Buffer.from(await sourceRes.arrayBuffer()));
+
+    const { error: baseUpErr } = await admin.storage
+      .from("library-videos")
+      .upload(baseStoragePath, rawBuffer, { contentType: "video/mp4", upsert: true });
+    if (!baseUpErr) {
+      const { data: basePub } = admin.storage.from("library-videos").getPublicUrl(baseStoragePath);
+      await prisma.libraryVideo.create({
+        data: {
+          userId,
+          filename: urlHash + ".mp4",
+          originalName: "Base reel",
+          storagePath: baseStoragePath,
+          publicUrl: basePub.publicUrl,
+          sizeBytes: 0,
+          mimeType: "video/mp4",
+        },
+      }).catch(() => {});
+    }
+  }
+
+  // Apply per-account FFmpeg transformation (unique trim + CRF + audio)
+  const transformed = await transformVideoForAccount(rawBuffer, accountId);
+
+  // Upload per-post unique file
+  const uniquePath = `cloned-unique/${postId}.mp4`;
+  const { error: upErr } = await admin.storage
+    .from("library-videos")
+    .upload(uniquePath, transformed, { contentType: "video/mp4", upsert: true });
+  if (upErr) throw new Error(`Falha ao salvar vídeo único: ${upErr.message}`);
+
+  const { data: pub } = admin.storage.from("library-videos").getPublicUrl(uniquePath);
+  return { publicUrl: pub.publicUrl, uniqueStoragePath: uniquePath };
 }
 
 export const runtime = "nodejs";
@@ -162,8 +228,13 @@ async function runCron() {
         if (pubResult.ok) {
           await prisma.scheduledPost.update({
             where: { id: post.id },
-            data: { status: "DONE", postedAt: now, errorMsg: null, containerCreationId: null, containerCreatedAt: null },
+            data: { status: "DONE", postedAt: now, errorMsg: null, containerCreationId: null, containerCreatedAt: null, rehostStoragePath: null },
           });
+
+          // Delete the per-post unique video from Supabase now that Instagram has it
+          if (post.rehostStoragePath) {
+            storageAdmin().storage.from("library-videos").remove([post.rehostStoragePath]).catch(() => {});
+          }
 
           const warmup = warmupMap.get(post.accountId);
           if (warmup) {
@@ -247,13 +318,14 @@ async function runCron() {
     data: { status: "RUNNING" },
   }).catch(e => console.error("[cron] mark RUNNING:", e));
 
-  await Promise.all(pending.map(async (post) => {
+  // Phase1 runs sequentially so FFmpeg transforms don't compete for /tmp space.
+  for (const post of pending) {
     const warmup = warmupMap.get(post.accountId);
     if (warmup?.lastPostedAt) {
       const msSinceLast = now.getTime() - warmup.lastPostedAt.getTime();
       if (msSinceLast < warmup.intervalMinutes * 60 * 1000) {
         await prisma.scheduledPost.update({ where: { id: post.id }, data: { status: "PENDING" } }).catch(() => {});
-        return;
+        continue;
       }
     }
 
@@ -262,34 +334,54 @@ async function runCron() {
 
       let videoUrl: string;
       if (post.rawVideoUrl) {
-        const urlHash = createHash("md5").update(post.rawVideoUrl).digest("hex");
-        const storagePath = `cloned/${post.userId}/${urlHash}.mp4`;
-        const libVideo = await prisma.libraryVideo.findFirst({ where: { userId: post.userId, storagePath } }).catch(() => null);
-
-        if (libVideo) {
-          await prisma.scheduledPost.update({ where: { id: post.id }, data: { videoId: libVideo.id, rawVideoUrl: null } }).catch(() => {});
-          videoUrl = libVideo.publicUrl;
-        } else {
-          // Try to download + strip metadata; fall back to raw URL if download fails
+        if (post.cloneJobId) {
+          // Cloned post: apply per-account FFmpeg transformation to defeat Instagram fingerprinting.
+          // Each account gets a unique trim + CRF + audio volume → distinct binary fingerprint.
           try {
-            const hosted = await downloadAndStripVideo(post.rawVideoUrl, post.userId);
-            videoUrl = hosted.publicUrl;
-            await prisma.libraryVideo.create({
-              data: {
-                userId: post.userId,
-                filename: hosted.storagePath.split("/").pop()!,
-                originalName: post.caption?.slice(0, 60) || "Reel clonado",
-                storagePath: hosted.storagePath,
-                publicUrl: hosted.publicUrl,
-                sizeBytes: 0,
-                mimeType: "video/mp4",
-              },
+            const { publicUrl, uniqueStoragePath } = await downloadTransformAndHostVideo(
+              post.rawVideoUrl,
+              post.userId,
+              post.accountId,
+              post.id,
+            );
+            videoUrl = publicUrl;
+            await prisma.scheduledPost.update({
+              where: { id: post.id },
+              data: { rehostStoragePath: uniqueStoragePath },
             }).catch(() => {});
-            await prisma.scheduledPost.update({ where: { id: post.id }, data: { rawVideoUrl: null } }).catch(() => {});
-          } catch (dlErr) {
-            // Download failed (URL expired or unavailable) — pass rawVideoUrl directly to Instagram
-            console.warn("[cron] download failed, using raw URL directly:", dlErr instanceof Error ? dlErr.message : dlErr);
+          } catch (transformErr) {
+            console.warn("[cron] transform failed, using raw URL directly:", transformErr instanceof Error ? transformErr.message : transformErr);
             videoUrl = post.rawVideoUrl;
+          }
+        } else {
+          // Non-cloned rawVideoUrl: existing behavior (download + strip + LibraryVideo cache)
+          const urlHash = createHash("md5").update(post.rawVideoUrl).digest("hex");
+          const storagePath = `cloned/${post.userId}/${urlHash}.mp4`;
+          const libVideo = await prisma.libraryVideo.findFirst({ where: { userId: post.userId, storagePath } }).catch(() => null);
+
+          if (libVideo) {
+            await prisma.scheduledPost.update({ where: { id: post.id }, data: { videoId: libVideo.id, rawVideoUrl: null } }).catch(() => {});
+            videoUrl = libVideo.publicUrl;
+          } else {
+            try {
+              const hosted = await downloadAndStripVideo(post.rawVideoUrl, post.userId);
+              videoUrl = hosted.publicUrl;
+              await prisma.libraryVideo.create({
+                data: {
+                  userId: post.userId,
+                  filename: hosted.storagePath.split("/").pop()!,
+                  originalName: post.caption?.slice(0, 60) || "Reel clonado",
+                  storagePath: hosted.storagePath,
+                  publicUrl: hosted.publicUrl,
+                  sizeBytes: 0,
+                  mimeType: "video/mp4",
+                },
+              }).catch(() => {});
+              await prisma.scheduledPost.update({ where: { id: post.id }, data: { rawVideoUrl: null } }).catch(() => {});
+            } catch (dlErr) {
+              console.warn("[cron] download failed, using raw URL directly:", dlErr instanceof Error ? dlErr.message : dlErr);
+              videoUrl = post.rawVideoUrl;
+            }
           }
         }
       } else if (post.video?.publicUrl) {
@@ -310,7 +402,7 @@ async function runCron() {
       if (!result.ok) {
         console.error(`[cron] container error @${post.account.username}: ${result.error}`);
         await failPost(post, result.error, now);
-        return;
+        continue;
       }
 
       await prisma.scheduledPost.update({
@@ -323,7 +415,7 @@ async function runCron() {
       console.error(`[cron] phase1 error @${post.account.username}: ${msg}`);
       await failPost(post, msg, now);
     }
-  }));
+  }
 
   console.log("[cron] done");
 }
