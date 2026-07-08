@@ -202,24 +202,37 @@ async function runCron() {
   }));
 
   // ── PHASE 1: Create containers for pending posts (parallel) ──────────────────
-  const allPending = await prisma.scheduledPost.findMany({
+  // Two-phase: load minimal data for up to 2000 eligible posts, dedup by account,
+  // then random-sample 10 so all clones/accounts get fair processing (not just oldest backlog).
+  const eligibleMinimal = await prisma.scheduledPost.findMany({
     where: {
       status: "PENDING",
       scheduledAt: { lte: now },
       accountId: { notIn: [...busyPhase1] },
       account: { accountStatus: "ACTIVE" },
     },
-    include: { account: true, video: true },
+    select: { id: true, accountId: true },
     orderBy: { scheduledAt: "asc" },
-    take: 150,
-  }).catch(() => []);
+    take: 2000,
+  }).catch(() => [] as { id: string; accountId: string }[]);
 
   const seenAccounts = new Set<string>();
-  const pending = allPending.filter((post) => {
-    if (seenAccounts.has(post.accountId)) return false;
-    seenAccounts.add(post.accountId);
+  const deduped = eligibleMinimal.filter((p) => {
+    if (seenAccounts.has(p.accountId)) return false;
+    seenAccounts.add(p.accountId);
     return true;
-  }).slice(0, 10);
+  });
+
+  // Random selection so all clones (old and new) get a fair share of slots
+  const selectedIds = deduped
+    .sort(() => Math.random() - 0.5)
+    .slice(0, 10)
+    .map(p => p.id);
+
+  const pending = selectedIds.length === 0 ? [] : await prisma.scheduledPost.findMany({
+    where: { id: { in: selectedIds } },
+    include: { account: true, video: true },
+  }).catch(() => []);
 
   console.log("[cron] phase1:", pending.length, "pending to process (total eligible:", allPending.length, ")");
 
