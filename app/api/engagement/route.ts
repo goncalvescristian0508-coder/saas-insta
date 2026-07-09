@@ -108,26 +108,6 @@ async function fetchGraphEngagement(accessToken: string, igUserId: string) {
 
 // ── Apify helpers ─────────────────────────────────────────────────────────────
 
-async function apifyStartReelRun(token: string, username: string, limit: number): Promise<string> {
-  const res = await fetch(`${APIFY_BASE}/acts/apify~instagram-reel-scraper/runs?token=${token}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: [username], resultsLimit: limit }),
-    signal: AbortSignal.timeout(12_000),
-  });
-  const json = await res.json() as { data?: { id?: string }; error?: { message?: string } };
-  if (!res.ok) throw new Error(json.error?.message ?? `HTTP ${res.status}`);
-  const runId = json.data?.id;
-  if (!runId) throw new Error("Apify: run ID ausente");
-  return runId;
-}
-
-async function apifyRunStatus(token: string, runId: string): Promise<{ status: string; datasetId: string }> {
-  const res = await fetch(`${APIFY_BASE}/actor-runs/${runId}?token=${token}`, { signal: AbortSignal.timeout(6_000) });
-  const json = await res.json() as { data?: { status?: string; defaultDatasetId?: string } };
-  return { status: json.data?.status ?? "UNKNOWN", datasetId: json.data?.defaultDatasetId ?? "" };
-}
-
 async function apifyGetDataset(token: string, datasetId: string): Promise<Record<string, unknown>[]> {
   const res = await fetch(`${APIFY_BASE}/datasets/${datasetId}/items?token=${token}&format=json`, { signal: AbortSignal.timeout(12_000) });
   if (!res.ok) return [];
@@ -141,10 +121,12 @@ function viewsFromItem(i: Record<string, unknown>): number {
   );
 }
 
+function sleep(ms: number) { return new Promise<void>(r => setTimeout(r, ms)); }
+
 /**
- * Starts reel-scraper runs for all accounts in parallel (one per token, round-robin),
- * then polls every 4 s until all complete or maxWaitMs is reached.
- * Accounts whose run doesn't finish in time get 0 views.
+ * Starts all runs in parallel, retrying immediately with the next token on 401.
+ * Then polls until all complete or maxWaitMs elapses.
+ * Returns partial results — accounts whose runs didn't finish within the window get 0 views.
  */
 async function fetchViewsApify(
   accounts: Array<{ accountId: string; username: string }>,
@@ -156,67 +138,99 @@ async function fetchViewsApify(
   const tokens = allTokens.filter(t => !exhausted.has(t));
   if (tokens.length === 0) return new Map();
 
-  // Start all runs in parallel
-  const startResults = await Promise.all(
+  console.log(`[engagement/apify] starting ${accounts.length} runs (${tokens.length} tokens)`);
+
+  // Tracks tokens that returned 401 during this request — shared across parallel tasks
+  const invalidTokens = new Set<string>();
+  const viewsMap = new Map<string, number>();
+
+  // ── Phase 1: start all runs, retry on 401 ────────────────────────────────
+  const runEntries: Array<{ accountId: string; username: string; runId: string; token: string }> = [];
+
+  await Promise.allSettled(
     accounts.map(async ({ accountId, username }, idx) => {
-      const token = tokens[idx % tokens.length];
-      try {
-        const runId = await apifyStartReelRun(token, username, 12);
-        return { accountId, username, runId, token, ok: true } as const;
-      } catch (e) {
-        if (isQuotaOrBillingError(e)) {
-          await persistExhaustedToken(token);
-          console.warn(`[engagement/apify] token quota @${username}`);
-        } else {
-          console.warn(`[engagement/apify] start fail @${username}:`, e instanceof Error ? e.message : e);
+      for (let attempt = 0; attempt < tokens.length; attempt++) {
+        const token = tokens[(idx + attempt) % tokens.length];
+        if (invalidTokens.has(token)) continue;
+
+        let res: Response;
+        try {
+          res = await fetch(
+            `${APIFY_BASE}/acts/apify~instagram-reel-scraper/runs?token=${token}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ username: [username], resultsLimit: 12 }),
+              signal: AbortSignal.timeout(8_000),
+            }
+          );
+        } catch { continue; }
+
+        if (res.status === 401) { invalidTokens.add(token); continue; }
+
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({})) as { error?: { message?: string } };
+          const msg = j.error?.message ?? `HTTP ${res.status}`;
+          if (isQuotaOrBillingError({ message: msg })) await persistExhaustedToken(token);
+          console.warn(`[engagement/apify] @${username}: ${msg}`);
+          return;
         }
-        return { accountId, username, ok: false } as const;
+
+        const j = await res.json() as { data?: { id?: string } };
+        const runId = j.data?.id;
+        if (runId) {
+          runEntries.push({ accountId, username, runId, token });
+        }
+        return;
       }
+      console.warn(`[engagement/apify] @${username}: no valid token available`);
     })
   );
 
-  type RunEntry = { accountId: string; username: string; runId: string; token: string };
-  const active = startResults.filter((r): r is RunEntry & { ok: true } => r.ok);
-  if (active.length === 0) return new Map();
-  console.log(`[engagement/apify] started ${active.length} runs across ${tokens.length} token(s)`);
+  if (runEntries.length === 0) {
+    console.warn("[engagement/apify] no runs started");
+    return new Map();
+  }
+  console.log(`[engagement/apify] ${runEntries.length}/${accounts.length} runs started, polling up to ${maxWaitMs}ms`);
 
-  // Poll until all done or deadline
-  const pending = new Map<string, RunEntry>(active.map(r => [r.runId, r]));
-  const datasetMap = new Map<string, { datasetId: string; token: string; accountId: string; username: string }>();
+  // ── Phase 2: poll until all done or timeout ───────────────────────────────
   const deadline = Date.now() + maxWaitMs;
+  const pending = new Map(runEntries.map(e => [e.runId, e]));
 
   while (pending.size > 0 && Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 4_000));
-    const checks = await Promise.all(
-      [...pending.entries()].map(async ([runId, entry]) => {
-        const s = await apifyRunStatus(entry.token, runId).catch(() => ({ status: "UNKNOWN", datasetId: "" }));
-        return { runId, accountId: entry.accountId, username: entry.username, token: entry.token, status: s.status, datasetId: s.datasetId };
+    await sleep(4_000);
+    await Promise.allSettled(
+      [...pending.entries()].map(async ([runId, { accountId, username, token }]) => {
+        const r = await fetch(
+          `${APIFY_BASE}/actor-runs/${runId}?token=${token}`,
+          { signal: AbortSignal.timeout(5_000) }
+        ).catch(() => null);
+        if (!r?.ok) return;
+
+        const sj = await r.json() as { data?: { status?: string; defaultDatasetId?: string } };
+        const status = sj.data?.status;
+
+        if (status === "SUCCEEDED") {
+          const datasetId = sj.data?.defaultDatasetId;
+          if (datasetId) {
+            const items = await apifyGetDataset(token, datasetId);
+            const total = items.reduce((s, i) => s + viewsFromItem(i), 0);
+            viewsMap.set(accountId, total);
+            console.log(`[engagement/apify] @${username}: ${total} views (${items.length} reels)`);
+          }
+          pending.delete(runId);
+        } else if (status && ["FAILED", "ABORTED", "TIMED-OUT"].includes(status)) {
+          console.warn(`[engagement/apify] @${username}: run ${status}`);
+          pending.delete(runId);
+        }
       })
     );
-    for (const { runId, status, datasetId, token, accountId, username } of checks) {
-      if (status === "SUCCEEDED") {
-        datasetMap.set(runId, { datasetId, token, accountId, username });
-        pending.delete(runId);
-      } else if (["FAILED", "ABORTED", "TIMED-OUT"].includes(status)) {
-        pending.delete(runId);
-      }
-    }
-    if (pending.size > 0) {
-      console.log(`[engagement/apify] pending: ${pending.size} done: ${datasetMap.size}`);
-    }
   }
 
-  // Fetch datasets and sum views
-  const viewsMap = new Map<string, number>();
-  await Promise.all(
-    [...datasetMap.values()].map(async ({ datasetId, token, accountId, username }) => {
-      const items = await apifyGetDataset(token, datasetId);
-      const total = items.reduce((s, i) => s + viewsFromItem(i), 0);
-      viewsMap.set(accountId, total);
-      console.log(`[engagement/apify] @${username}: ${total} views (${items.length} reels)`);
-    })
-  );
-
+  if (pending.size > 0) {
+    console.warn(`[engagement/apify] ${pending.size} runs still pending after timeout (partial results)`);
+  }
+  console.log(`[engagement/apify] done: ${viewsMap.size}/${accounts.length} accounts got views`);
   return viewsMap;
 }
 

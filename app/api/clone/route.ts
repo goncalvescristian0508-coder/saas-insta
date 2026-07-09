@@ -5,7 +5,7 @@ import { createClient as createSupabaseAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { decryptAccountPassword } from "@/lib/accountCrypto";
 import { createHash } from "crypto";
-import { getCached } from "@/lib/scraper";
+import { getCached, scrapeProfileAndReels } from "@/lib/scraper";
 import { type CaptionTheme, shufflePool } from "@/lib/autoCaptions";
 import { cleanVideo } from "@/lib/videoClean";
 
@@ -34,6 +34,7 @@ async function updateBio(accessToken: string, igUserId: string, biography: strin
 async function downloadReelToLibrary(
   videoUrl: string,
   userId: string,
+  sourceUsername: string,
   caption: string,
   index: number,
   thumbnailUrl?: string | null,
@@ -41,16 +42,17 @@ async function downloadReelToLibrary(
 ): Promise<{ id: string; publicUrl: string } | null> {
   try {
     const urlHash = createHash("md5").update(videoUrl).digest("hex");
-    const storagePath = `cloned/${userId}/${urlHash}.mp4`;
+    const folder = `cloned/${userId}/${sourceUsername}`;
+    const storagePath = `${folder}/${urlHash}.mp4`;
     const shortCaption = caption.slice(0, 60) || `Reel ${index + 1}`;
 
     // Primary check: exact URL hash match
     let existing = await prisma.libraryVideo.findFirst({ where: { userId, storagePath } });
 
-    // Secondary check: same caption (handles CDN URL rotations for same video)
+    // Secondary check: same caption within same profile folder
     if (!existing && shortCaption.length > 20) {
       existing = await prisma.libraryVideo.findFirst({
-        where: { userId, originalName: shortCaption, storagePath: { startsWith: `cloned/${userId}/` } },
+        where: { userId, originalName: shortCaption, storagePath: { startsWith: `${folder}/` } },
       });
     }
 
@@ -60,7 +62,7 @@ async function downloadReelToLibrary(
       if (desiredCover && existing.coverUrl !== desiredCover) {
         await prisma.libraryVideo.update({ where: { id: existing.id }, data: { coverUrl: desiredCover } }).catch(() => {});
       } else if (!existing.coverUrl && thumbnailUrl) {
-        const coverStoragePath = await uploadThumbnail(thumbnailUrl, userId, urlHash);
+        const coverStoragePath = await uploadThumbnail(thumbnailUrl, userId, sourceUsername, urlHash);
         if (coverStoragePath) {
           const { data: pub } = storageAdmin().storage.from("library-videos").getPublicUrl(coverStoragePath);
           await prisma.libraryVideo.update({ where: { id: existing.id }, data: { coverUrl: pub.publicUrl } }).catch(() => {});
@@ -85,7 +87,7 @@ async function downloadReelToLibrary(
     // Use global cover if available, otherwise upload the Apify thumbnail
     let coverUrl: string | null = globalCoverUrl ?? null;
     if (!coverUrl && thumbnailUrl) {
-      const coverPath = await uploadThumbnail(thumbnailUrl, userId, urlHash);
+      const coverPath = await uploadThumbnail(thumbnailUrl, userId, sourceUsername, urlHash);
       if (coverPath) {
         const { data: coverPub } = admin.storage.from("library-videos").getPublicUrl(coverPath);
         coverUrl = coverPub.publicUrl;
@@ -110,12 +112,12 @@ async function downloadReelToLibrary(
   }
 }
 
-async function uploadThumbnail(thumbnailUrl: string, userId: string, hash: string): Promise<string | null> {
+async function uploadThumbnail(thumbnailUrl: string, userId: string, sourceUsername: string, hash: string): Promise<string | null> {
   try {
     const res = await fetch(thumbnailUrl, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return null;
     const buf = Buffer.from(await res.arrayBuffer());
-    const coverPath = `cloned/${userId}/covers/${hash}.jpg`;
+    const coverPath = `cloned/${userId}/${sourceUsername}/covers/${hash}.jpg`;
     const { error } = await storageAdmin().storage
       .from("library-videos")
       .upload(coverPath, buf, { contentType: "image/jpeg", upsert: true });
@@ -129,6 +131,7 @@ async function uploadThumbnail(thumbnailUrl: string, userId: string, hash: strin
 async function downloadVideosBackground(
   reels: Array<{ videoUrl: string; caption: string; thumbnailUrl?: string | null }>,
   userId: string,
+  sourceUsername: string,
   cloneJobId: string,
   globalCoverUrl?: string | null,
 ) {
@@ -137,7 +140,7 @@ async function downloadVideosBackground(
     const batch = reels.slice(i, i + BATCH);
     await Promise.all(
       batch.map(async (reel, j) => {
-        const lib = await downloadReelToLibrary(reel.videoUrl, userId, reel.caption, i + j, reel.thumbnailUrl, globalCoverUrl);
+        const lib = await downloadReelToLibrary(reel.videoUrl, userId, sourceUsername, reel.caption, i + j, reel.thumbnailUrl, globalCoverUrl);
         if (lib) {
           await prisma.scheduledPost.updateMany({
             where: { cloneJobId, rawVideoUrl: reel.videoUrl, status: "PENDING" },
@@ -167,16 +170,50 @@ interface ProcessParams {
 
 async function processCloneJob(p: ProcessParams) {
   try {
-    // Usa APENAS o cache — nunca chama o Apify diretamente daqui.
-    // O cache é preenchido pela busca (/api/instagram/scrape/status) antes do clone.
-    // Se o cache estiver vazio, falha rápido com mensagem clara.
-    const cachedData = await getCached(p.cleanUsername);
+    // Ordem de prioridade: cache → biblioteca local → Apify (último recurso).
+    let cachedData = await getCached(p.cleanUsername);
     if (!cachedData) {
-      await prisma.cloneJob.update({
-        where: { id: p.cloneJobId },
-        data: { totalReels: -1, errorMsg: `Cache expirado para @${p.cleanUsername}. Pesquise o perfil novamente na aba de busca e tente clonar em seguida.` },
-      }).catch(() => null);
-      return;
+      // Tenta biblioteca local do perfil específico antes de chamar Apify.
+      // Primeiro tenta com userId, depois sem (fallback para mismatch de userId entre import e clone).
+      let libVideos = await prisma.libraryVideo.findMany({
+        where: { userId: p.userId, storagePath: { contains: `/${p.cleanUsername}/`, not: { contains: "/covers/" } } },
+        orderBy: { createdAt: "asc" },
+      });
+      if (libVideos.length === 0) {
+        libVideos = await prisma.libraryVideo.findMany({
+          where: { storagePath: { contains: `/${p.cleanUsername}/`, not: { contains: "/covers/" } } },
+          orderBy: { createdAt: "asc" },
+          take: 500,
+        });
+      }
+      if (libVideos.length > 0) {
+        console.log(`[clone] usando ${libVideos.length} vídeos da biblioteca (sem chamar Apify)`);
+        cachedData = {
+          profile: { id: "", username: p.cleanUsername, fullName: p.cleanUsername, biography: "", profilePicUrl: "", followersCount: 0 },
+          reels: libVideos.map((v) => ({
+            videoUrl: v.publicUrl,
+            caption: v.originalName || "",
+            thumbnailUrl: v.coverUrl || "",
+            shortCode: "",
+            likes: 0,
+            comments: 0,
+            views: 0,
+            timestamp: v.createdAt.toISOString(),
+          })),
+        };
+      } else {
+        // Biblioteca vazia → tenta Apify
+        console.log(`[clone] biblioteca vazia, buscando via Apify`);
+        try {
+          cachedData = await scrapeProfileAndReels(p.cleanUsername);
+        } catch (e) {
+          await prisma.cloneJob.update({
+            where: { id: p.cloneJobId },
+            data: { totalReels: -1, errorMsg: `Falha ao buscar perfil @${p.cleanUsername}: ${e instanceof Error ? e.message : String(e)}` },
+          }).catch(() => null);
+          return;
+        }
+      }
     }
 
     const limit = p.postLimit ?? 9999;
@@ -385,7 +422,7 @@ async function processCloneJob(p: ProcessParams) {
     }
 
     // Download videos to library in background (non-blocking for post scheduling)
-    await downloadVideosBackground(reelsRaw, p.userId, p.cloneJobId, p.globalCoverUrl);
+    await downloadVideosBackground(reelsRaw, p.userId, p.cleanUsername, p.cloneJobId, p.globalCoverUrl);
 
   } catch (err) {
     const errorMsg = (err instanceof Error ? err.message : String(err)).slice(0, 500);

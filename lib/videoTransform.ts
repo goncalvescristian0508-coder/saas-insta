@@ -1,11 +1,9 @@
-import ffmpegPath from "ffmpeg-static";
-import Ffmpeg from "fluent-ffmpeg";
+import ffmpegStaticPath from "ffmpeg-static";
+import { spawn } from "child_process";
 import { promises as fs } from "fs";
 import * as nodePath from "path";
 import * as os from "os";
 import { createHash } from "crypto";
-
-if (ffmpegPath) Ffmpeg.setFfmpegPath(ffmpegPath);
 
 /**
  * Deterministic per-account FFmpeg params derived from accountId.
@@ -22,6 +20,77 @@ export function accountTransformParams(accountId: string): {
     crf:       22 + (h % 5),           // 22 | 23 | 24 | 25 | 26
     volumeDb: ((h % 5) - 2) * 0.5,    // −1.0 | −0.5 | 0.0 | +0.5 | +1.0 dB
   };
+}
+
+// Resolves the ffmpeg binary path, copying it to /tmp so it's executable in Lambda.
+let cachedBin: string | null = null;
+
+async function resolveBin(): Promise<string> {
+  if (cachedBin) return cachedBin;
+
+  const src = ffmpegStaticPath as string | null;
+  console.log("[ffmpeg] ffmpegStaticPath:", src);
+
+  if (!src) throw new Error("ffmpeg-static não encontrou o binário");
+
+  // Check if original path is directly executable
+  const canExecOriginal = await fs
+    .access(src, fs.constants?.X_OK ?? 1)
+    .then(() => true)
+    .catch(() => false);
+
+  if (canExecOriginal) {
+    console.log("[ffmpeg] original binary is executable:", src);
+    cachedBin = src;
+    return src;
+  }
+
+  // Copy to /tmp and chmod (Lambda has read-only /var/task but writable /tmp)
+  const dst = nodePath.join(os.tmpdir(), "ffmpeg-bin");
+  console.log("[ffmpeg] copying binary to /tmp:", dst);
+  await fs.copyFile(src, dst);
+  await fs.chmod(dst, 0o755);
+  cachedBin = dst;
+  console.log("[ffmpeg] binary ready at:", dst);
+  return dst;
+}
+
+/**
+ * Run ffmpeg with given args. Logs stderr on failure.
+ */
+async function runFfmpeg(args: string[]): Promise<void> {
+  const bin = await resolveBin();
+  console.log("[ffmpeg] spawn:", bin, args.join(" "));
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      proc.kill("SIGKILL");
+      reject(new Error("FFmpeg timeout após 50s"));
+    }, 50_000);
+
+    const proc = spawn(bin, args);
+    const stderrChunks: string[] = [];
+
+    proc.stderr.on("data", (d: Buffer) => stderrChunks.push(d.toString()));
+    proc.stdout.on("data", () => {}); // drain stdout
+
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve();
+      } else {
+        const detail = stderrChunks.join("").slice(-600);
+        console.error("[ffmpeg] exit", code, "stderr:", detail);
+        reject(new Error(`FFmpeg saiu com código ${code}: ${detail.slice(0, 200)}`));
+      }
+    });
+
+    proc.on("error", (e: Error) => {
+      clearTimeout(timer);
+      console.error("[ffmpeg] spawn error:", e.message);
+      reject(new Error(`FFmpeg spawn error: ${e.message}`));
+    });
+  });
 }
 
 /**
@@ -45,31 +114,25 @@ export async function transformVideoForAccount(
   try {
     await fs.writeFile(inPath, inputBuffer);
 
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("FFmpeg timeout após 50s")),
-        50_000,
-      );
-      Ffmpeg(inPath)
-        .setStartTime(trimSec)
-        .videoCodec("libx264")
-        .addOptions([
-          `-crf ${crf}`,
-          "-preset veryfast",
-          "-profile:v high",
-          "-level 4.0",
-          "-pix_fmt yuv420p",
-          "-movflags +faststart",
-        ])
-        .audioCodec("aac")
-        .audioFrequency(44100)
-        .audioBitrate("128k")
-        .audioFilters(`volume=${volumeDb}dB`)
-        .output(outPath)
-        .on("end", () => { clearTimeout(timer); resolve(); })
-        .on("error", (e: Error) => { clearTimeout(timer); reject(e); })
-        .run();
-    });
+    const volumeFilter = volumeDb === 0 ? [] : [`-af`, `volume=${volumeDb}dB`];
+
+    await runFfmpeg([
+      "-y",
+      "-ss", String(trimSec),
+      "-i", inPath,
+      "-c:v", "libx264",
+      "-crf", String(crf),
+      "-preset", "veryfast",
+      "-profile:v", "high",
+      "-level", "4.0",
+      "-pix_fmt", "yuv420p",
+      "-movflags", "+faststart",
+      "-c:a", "aac",
+      "-ar", "44100",
+      "-b:a", "128k",
+      ...volumeFilter,
+      outPath,
+    ]);
 
     return await fs.readFile(outPath);
   } finally {
