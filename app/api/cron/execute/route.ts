@@ -158,15 +158,6 @@ async function ensureSchema() {
 async function runCron() {
   const now = new Date();
 
-  // Guard: skip if another phase-1 invocation is actively running (started < 50s ago)
-  const activePhase1 = await prisma.scheduledPost.count({
-    where: { status: "RUNNING", containerCreationId: null, updatedAt: { gte: new Date(now.getTime() - 50_000) } },
-  }).catch(() => 0);
-  if (activePhase1 > 0) {
-    console.log("[cron] skip — concurrent invocation active (phase1:", activePhase1, ")");
-    return;
-  }
-
   console.log("[cron] start", now.toISOString());
 
   // ── Pre-flight DB resets (all guarded) ──────────────────────────────────────
@@ -283,6 +274,15 @@ async function runCron() {
   }));
 
   // ── PHASE 1: Create containers for pending posts (parallel) ──────────────────
+  // Guard: skip phase1 only if another invocation is still processing (phase2 always runs above).
+  const activePhase1Count = await prisma.scheduledPost.count({
+    where: { status: "RUNNING", containerCreationId: null, updatedAt: { gte: new Date(now.getTime() - 50_000) } },
+  }).catch(() => 0);
+  if (activePhase1Count > 0) {
+    console.log("[cron] phase1 skip — concurrent active:", activePhase1Count);
+    return;
+  }
+
   // Dedup by (accountId, cloneJobId) so every active clone gets slots regardless of scheduledAt,
   // then random-sample 20 for fair distribution across accounts and clones.
   const eligibleMinimal = await prisma.scheduledPost.findMany({
