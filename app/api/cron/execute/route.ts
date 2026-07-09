@@ -318,6 +318,13 @@ async function runCron() {
   }).catch(() => []);
 
   console.log("[cron] phase1:", pending.length, "pending to process (total eligible:", deduped.length, ")");
+  // Temporary diagnostic: show which cloneJobs got slots this tick
+  const slotsByClone = pending.reduce((acc, p) => {
+    const key = p.cloneJobId ?? "no-clone";
+    acc[key] = (acc[key] ?? 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+  console.log("[cron] slots by clone:", JSON.stringify(slotsByClone));
 
   if (pending.length === 0) {
     console.log("[cron] nothing to do");
