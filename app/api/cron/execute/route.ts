@@ -365,9 +365,10 @@ async function runCron() {
             console.warn("[cron] transform failed:", tErrMsg);
             videoUrl = post.rawVideoUrl; // default; overridden below if library fallback succeeds
 
-            // If the source URL is expired (403/404), try any library video from the same profile.
+            // On any failure for a cloned post, try to use a library video from the same profile.
+            // Use the library URL directly (no FFmpeg re-encode) so the fallback is reliable.
             let usedLibFallback = false;
-            if ((tErrMsg.includes("403") || tErrMsg.includes("404") || tErrMsg.includes("expirou")) && post.cloneJobId) {
+            if (post.cloneJobId) {
               const job = await prisma.cloneJob.findUnique({ where: { id: post.cloneJobId }, select: { sourceUsername: true } }).catch(() => null);
               if (job?.sourceUsername) {
                 const libVideos = await prisma.libraryVideo.findMany({
@@ -377,28 +378,14 @@ async function runCron() {
                 if (libVideos.length > 0) {
                   // Pick deterministically per post so different posts use different videos
                   const idx = Math.abs(post.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % libVideos.length;
-                  const libUrl = libVideos[idx].publicUrl;
-                  try {
-                    const libRes = await fetch(libUrl, { signal: AbortSignal.timeout(25_000) });
-                    if (libRes.ok) {
-                      const libBuf = Buffer.from(await libRes.arrayBuffer());
-                      const transformed = await transformVideoForAccount(libBuf, post.accountId);
-                      const uniquePath = `cloned-unique/${post.id}.mp4`;
-                      const admin2 = storageAdmin();
-                      await admin2.storage.from("library-videos").upload(uniquePath, transformed, { contentType: "video/mp4", upsert: true });
-                      const { data: pub2 } = admin2.storage.from("library-videos").getPublicUrl(uniquePath);
-                      videoUrl = pub2.publicUrl;
-                      await prisma.scheduledPost.update({ where: { id: post.id }, data: { rehostStoragePath: uniquePath } }).catch(() => {});
-                      console.log("[cron] library fallback applied @", post.account.username, "profile:", job.sourceUsername);
-                      usedLibFallback = true;
-                    }
-                  } catch { /* fall through to raw URL */ }
+                  videoUrl = libVideos[idx].publicUrl;
+                  usedLibFallback = true;
+                  console.log("[cron] library fallback (direct) @", post.account.username, "profile:", job.sourceUsername);
                 }
               }
             }
             if (!usedLibFallback) {
               console.warn("[cron] using raw URL directly (may be expired)");
-              videoUrl = post.rawVideoUrl;
             }
           }
         } else {
