@@ -171,6 +171,8 @@ interface ProcessParams {
 async function processCloneJob(p: ProcessParams) {
   try {
     // Ordem de prioridade: cache → biblioteca local → Apify (último recurso).
+    // When library videos are used, posts are created with videoId so cron skips FFmpeg entirely.
+    const urlToLibId = new Map<string, string>();
     let cachedData = await getCached(p.cleanUsername);
     if (!cachedData) {
       // Tenta biblioteca local do perfil específico antes de chamar Apify.
@@ -188,6 +190,8 @@ async function processCloneJob(p: ProcessParams) {
       }
       if (libVideos.length > 0) {
         console.log(`[clone] usando ${libVideos.length} vídeos da biblioteca (sem chamar Apify)`);
+        // Map publicUrl → library id so posts can be created with videoId (skips FFmpeg in cron)
+        libVideos.forEach(v => urlToLibId.set(v.publicUrl, v.id));
         cachedData = {
           profile: { id: "", username: p.cleanUsername, fullName: p.cleanUsername, biography: "", profilePicUrl: "", followersCount: 0 },
           reels: libVideos.map((v) => ({
@@ -344,11 +348,13 @@ async function processCloneJob(p: ProcessParams) {
           ? autoCaptionPool[autoCaptionIdx++ % autoCaptionPool.length]
           : sourceCaption || fallbackPool[autoCaptionIdx++ % fallbackPool.length];
 
+        // Prefer library videoId reference so cron can publish directly without FFmpeg.
+        const resolvedLibId = urlToLibId.get(effectiveReel.videoUrl) ?? pathToLibId.get(storagePaths[effectiveI]) ?? null;
         return [{
           userId: p.userId,
           accountId: account.id,
-          videoId: null,
-          rawVideoUrl: effectiveReel.videoUrl,
+          videoId: resolvedLibId,
+          rawVideoUrl: resolvedLibId ? null : effectiveReel.videoUrl,
           caption,
           scheduledAt: new Date(p.start.getTime() + i * p.intervalMs + accountIdx * 60_000),
           cloneJobId: p.cloneJobId,

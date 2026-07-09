@@ -283,8 +283,8 @@ async function runCron() {
   }));
 
   // ── PHASE 1: Create containers for pending posts (parallel) ──────────────────
-  // Two-phase: load minimal data for up to 2000 eligible posts, dedup by account,
-  // then random-sample 10 so all clones/accounts get fair processing (not just oldest backlog).
+  // Dedup by (accountId, cloneJobId) so every active clone gets slots regardless of scheduledAt,
+  // then random-sample 20 for fair distribution across accounts and clones.
   const eligibleMinimal = await prisma.scheduledPost.findMany({
     where: {
       status: "PENDING",
@@ -292,22 +292,24 @@ async function runCron() {
       accountId: { notIn: [...busyPhase1] },
       account: { accountStatus: "ACTIVE" },
     },
-    select: { id: true, accountId: true },
+    select: { id: true, accountId: true, cloneJobId: true },
     orderBy: { scheduledAt: "asc" },
     take: 2000,
-  }).catch(() => [] as { id: string; accountId: string }[]);
+  }).catch(() => [] as { id: string; accountId: string; cloneJobId: string | null }[]);
 
-  const seenAccounts = new Set<string>();
+  // One post per (account × clone) pair so newer clones compete fairly with old backlogs.
+  const seenAccountClone = new Set<string>();
   const deduped = eligibleMinimal.filter((p) => {
-    if (seenAccounts.has(p.accountId)) return false;
-    seenAccounts.add(p.accountId);
+    const key = `${p.accountId}:${p.cloneJobId ?? ""}`;
+    if (seenAccountClone.has(key)) return false;
+    seenAccountClone.add(key);
     return true;
   });
 
   // Random selection so all clones (old and new) get a fair share of slots
   const selectedIds = deduped
     .sort(() => Math.random() - 0.5)
-    .slice(0, 10)
+    .slice(0, 20)
     .map(p => p.id);
 
   const pending = selectedIds.length === 0 ? [] : await prisma.scheduledPost.findMany({
