@@ -56,20 +56,26 @@ async function downloadTransformAndHostVideo(
   const admin = storageAdmin();
 
   // Try to reuse the stripped base from LibraryVideo (avoids re-downloading from Apify)
+  // Search by hash suffix to handle both old (cloned/{userId}/{hash}.mp4) and
+  // new (cloned/{userId}/{username}/{hash}.mp4) path formats.
   let rawBuffer: Buffer | null = null;
   const baseLibVideo = await prisma.libraryVideo
-    .findFirst({ where: { userId, storagePath: baseStoragePath } })
+    .findFirst({ where: { userId, storagePath: { contains: urlHash } } })
     .catch(() => null);
 
   if (baseLibVideo) {
     const baseRes = await fetch(baseLibVideo.publicUrl, { signal: AbortSignal.timeout(25_000) });
-    if (baseRes.ok) rawBuffer = Buffer.from(await baseRes.arrayBuffer());
+    if (baseRes.ok) {
+      rawBuffer = Buffer.from(await baseRes.arrayBuffer());
+    } else {
+      console.warn("[cron] cache 403/erro:", baseRes.status, baseLibVideo.publicUrl.slice(0, 80));
+    }
   }
 
   if (!rawBuffer) {
-    // First account for this video: download from source + save stripped base
+    // Cache miss or expired: download from source
     const sourceRes = await fetch(rawUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!sourceRes.ok) throw new Error(`Falha ao baixar vídeo: HTTP ${sourceRes.status}`);
+    if (!sourceRes.ok) throw new Error(`Falha ao baixar vídeo fonte: HTTP ${sourceRes.status} (URL Apify provavelmente expirou)`);
     rawBuffer = stripMp4Metadata(Buffer.from(await sourceRes.arrayBuffer()));
 
     const { error: baseUpErr } = await admin.storage
@@ -223,6 +229,7 @@ async function runCron() {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
       const proxyUrl = post.account.proxyUrl ?? null;
       const containerStatus = await checkContainerStatus(post.containerCreationId!, accessToken, proxyUrl);
+      console.log("[cron] container @", post.account.username, "status:", containerStatus, "| url:", post.rawVideoUrl?.slice(0, 60) ?? "videoId");
 
       if (containerStatus === "FINISHED") {
         const pubResult = await publishMediaContainer(post.account.instagramUserId, accessToken, post.containerCreationId!, proxyUrl);
