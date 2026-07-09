@@ -353,9 +353,12 @@ async function runCron() {
       let videoUrl: string;
       if (post.rawVideoUrl) {
         if (post.cloneJobId) {
-          // Cloned post: apply per-account FFmpeg transformation to defeat Instagram fingerprinting.
-          // Each account gets a unique trim + CRF + audio volume → distinct binary fingerprint.
-          try {
+          // If rawVideoUrl is already on Supabase (library-sourced clone), use it directly.
+          // FFmpeg on Vercel Lambda times out for large videos — skip transform for Supabase URLs.
+          if (post.rawVideoUrl.includes("supabase.co/storage")) {
+            videoUrl = post.rawVideoUrl;
+          } else try {
+            // Apify/CDN URL: attempt download + per-account FFmpeg transform for uniqueness.
             const { publicUrl, uniqueStoragePath } = await downloadTransformAndHostVideo(
               post.rawVideoUrl,
               post.userId,
