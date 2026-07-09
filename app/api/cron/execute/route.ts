@@ -371,16 +371,27 @@ async function runCron() {
             if (post.cloneJobId) {
               const job = await prisma.cloneJob.findUnique({ where: { id: post.cloneJobId }, select: { sourceUsername: true } }).catch(() => null);
               if (job?.sourceUsername) {
-                const libVideos = await prisma.libraryVideo.findMany({
+                // First try: profile-specific videos for this user
+                let libVideos = await prisma.libraryVideo.findMany({
                   where: { userId: post.userId, storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
                   select: { publicUrl: true },
                 }).catch(() => [] as { publicUrl: string }[]);
+                // Cross-user fallback: any video saved for this profile by any user
+                if (libVideos.length === 0) {
+                  libVideos = await prisma.libraryVideo.findMany({
+                    where: { storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
+                    select: { publicUrl: true },
+                    take: 200,
+                  }).catch(() => [] as { publicUrl: string }[]);
+                }
                 if (libVideos.length > 0) {
                   // Pick deterministically per post so different posts use different videos
                   const idx = Math.abs(post.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % libVideos.length;
                   videoUrl = libVideos[idx].publicUrl;
                   usedLibFallback = true;
                   console.log("[cron] library fallback (direct) @", post.account.username, "profile:", job.sourceUsername);
+                } else {
+                  console.warn("[cron] no library videos for profile:", job.sourceUsername, "— will retry with raw URL");
                 }
               }
             }
