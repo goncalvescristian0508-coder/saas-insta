@@ -6,25 +6,30 @@ import { ProxyAgent } from "undici";
 
 const GRAPH = "https://graph.instagram.com/v21.0";
 
+// Per-process cache of proxy URLs that failed in this invocation.
+// Avoids wasting the proxy timeout on every post once a proxy is known-bad.
+const _proxyFailCache = new Set<string>();
+
 /**
  * fetch() wrapper that routes through a proxy when proxyUrl is provided.
- * Uses a short independent timeout for the proxy attempt so a hanging proxy
+ * Uses an independent 10s timeout for the proxy attempt so a hanging proxy
  * fails fast and the fallback direct request still has its full budget.
+ * Once a proxy fails in this Lambda invocation it is skipped for subsequent calls.
  */
 async function gFetch(
   url: string,
   init: RequestInit,
   proxyUrl?: string | null,
 ): Promise<Response> {
-  if (!proxyUrl) return fetch(url, init);
+  if (!proxyUrl || _proxyFailCache.has(proxyUrl)) return fetch(url, init);
   try {
     const dispatcher = new ProxyAgent(proxyUrl);
-    // Independent 7s timeout: enough for a live proxy, fails fast if proxy hangs.
-    // Do NOT reuse init.signal here so the fallback still has its own fresh budget.
-    return await fetch(url, { ...init, signal: AbortSignal.timeout(7_000), dispatcher } as RequestInit);
+    // Independent 10s timeout — do NOT reuse init.signal so fallback has its full budget.
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(10_000), dispatcher } as RequestInit);
   } catch (proxyErr) {
-    console.warn("[gFetch] proxy failed, retrying direct:", proxyErr instanceof Error ? proxyErr.message : String(proxyErr));
-    return fetch(url, init); // original signal/timeout still valid
+    _proxyFailCache.add(proxyUrl);
+    console.warn("[gFetch] proxy failed, switching to direct for this invocation:", proxyErr instanceof Error ? proxyErr.message : String(proxyErr));
+    return fetch(url, init);
   }
 }
 
