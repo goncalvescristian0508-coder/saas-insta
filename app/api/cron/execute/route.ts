@@ -210,7 +210,7 @@ async function runCron() {
     where: { status: "RUNNING", containerCreationId: { not: null } },
     include: { account: true, video: true },
     orderBy: { containerCreatedAt: "asc" },
-    take: 15,
+    take: 30,
   }).catch(() => []);
 
   console.log("[cron] phase2:", runningWithContainer.length, "containers to check");
@@ -318,13 +318,6 @@ async function runCron() {
   }).catch(() => []);
 
   console.log("[cron] phase1:", pending.length, "pending to process (total eligible:", deduped.length, ")");
-  // Temporary diagnostic: show which cloneJobs got slots this tick
-  const slotsByClone = pending.reduce((acc, p) => {
-    const key = p.cloneJobId ?? "no-clone";
-    acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  console.log("[cron] slots by clone:", JSON.stringify(slotsByClone));
 
   if (pending.length === 0) {
     console.log("[cron] nothing to do");
@@ -335,6 +328,33 @@ async function runCron() {
     where: { id: { in: pending.map(p => p.id) } },
     data: { status: "RUNNING" },
   }).catch(e => console.error("[cron] mark RUNNING:", e));
+
+  // Pre-load library videos for all unique clone jobs needing CDN fallback (one query per clone,
+  // not one per post). Avoids expensive per-post DB round-trips and enables library-first logic.
+  const uniqueCloneIds = [...new Set(pending
+    .filter(p => p.cloneJobId && p.rawVideoUrl && !p.rawVideoUrl.includes("supabase.co/storage"))
+    .map(p => p.cloneJobId!))];
+  const cloneLibMap = new Map<string, string[]>(); // cloneJobId → [publicUrl]
+  await Promise.all(uniqueCloneIds.map(async (cloneId) => {
+    const job = await prisma.cloneJob.findUnique({
+      where: { id: cloneId },
+      select: { sourceUsername: true, userId: true },
+    }).catch(() => null);
+    if (!job?.sourceUsername) { cloneLibMap.set(cloneId, []); return; }
+    let vids = await prisma.libraryVideo.findMany({
+      where: { userId: job.userId, storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
+      select: { publicUrl: true },
+    }).catch(() => [] as { publicUrl: string }[]);
+    if (vids.length === 0) {
+      vids = await prisma.libraryVideo.findMany({
+        where: { storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
+        select: { publicUrl: true },
+        take: 200,
+      }).catch(() => [] as { publicUrl: string }[]);
+    }
+    cloneLibMap.set(cloneId, vids.map(v => v.publicUrl));
+    console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos");
+  }));
 
   // Phase1 runs sequentially so FFmpeg transforms don't compete for /tmp space.
   for (const post of pending) {
@@ -357,56 +377,33 @@ async function runCron() {
           // FFmpeg on Vercel Lambda times out for large videos — skip transform for Supabase URLs.
           if (post.rawVideoUrl.includes("supabase.co/storage")) {
             videoUrl = post.rawVideoUrl;
-          } else try {
-            // Apify/CDN URL: attempt download + per-account FFmpeg transform for uniqueness.
-            const { publicUrl, uniqueStoragePath } = await downloadTransformAndHostVideo(
-              post.rawVideoUrl,
-              post.userId,
-              post.accountId,
-              post.id,
-            );
-            videoUrl = publicUrl;
-            await prisma.scheduledPost.update({
-              where: { id: post.id },
-              data: { rehostStoragePath: uniqueStoragePath },
-            }).catch(() => {});
-          } catch (transformErr) {
-            const tErrMsg = transformErr instanceof Error ? transformErr.message : String(transformErr);
-            console.warn("[cron] transform failed:", tErrMsg);
-            videoUrl = post.rawVideoUrl; // default; overridden below if library fallback succeeds
-
-            // On any failure for a cloned post, try to use a library video from the same profile.
-            // Use the library URL directly (no FFmpeg re-encode) so the fallback is reliable.
-            let usedLibFallback = false;
-            if (post.cloneJobId) {
-              const job = await prisma.cloneJob.findUnique({ where: { id: post.cloneJobId }, select: { sourceUsername: true } }).catch(() => null);
-              if (job?.sourceUsername) {
-                // First try: profile-specific videos for this user
-                let libVideos = await prisma.libraryVideo.findMany({
-                  where: { userId: post.userId, storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
-                  select: { publicUrl: true },
-                }).catch(() => [] as { publicUrl: string }[]);
-                // Cross-user fallback: any video saved for this profile by any user
-                if (libVideos.length === 0) {
-                  libVideos = await prisma.libraryVideo.findMany({
-                    where: { storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
-                    select: { publicUrl: true },
-                    take: 200,
-                  }).catch(() => [] as { publicUrl: string }[]);
-                }
-                if (libVideos.length > 0) {
-                  // Pick deterministically per post so different posts use different videos
-                  const idx = Math.abs(post.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % libVideos.length;
-                  videoUrl = libVideos[idx].publicUrl;
-                  usedLibFallback = true;
-                  console.log("[cron] library fallback (direct) @", post.account.username, "profile:", job.sourceUsername);
-                } else {
-                  console.warn("[cron] no library videos for profile:", job.sourceUsername, "— will retry with raw URL");
-                }
+          } else {
+            // Non-Supabase (Apify CDN) URL: use library-first to avoid expired URL failures.
+            // Apify CDN URLs expire in ~24h; for older posts the download will always fail.
+            const libUrls = cloneLibMap.get(post.cloneJobId) ?? [];
+            if (libUrls.length > 0) {
+              const idx = Math.abs(post.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % libUrls.length;
+              videoUrl = libUrls[idx];
+              console.log("[cron] library-first @", post.account.username);
+            } else {
+              // No library videos for this clone — try download + FFmpeg as last resort.
+              try {
+                const { publicUrl, uniqueStoragePath } = await downloadTransformAndHostVideo(
+                  post.rawVideoUrl,
+                  post.userId,
+                  post.accountId,
+                  post.id,
+                );
+                videoUrl = publicUrl;
+                await prisma.scheduledPost.update({
+                  where: { id: post.id },
+                  data: { rehostStoragePath: uniqueStoragePath },
+                }).catch(() => {});
+              } catch (transformErr) {
+                const tErrMsg = transformErr instanceof Error ? transformErr.message : String(transformErr);
+                console.warn("[cron] transform failed (no library):", tErrMsg, "— using raw URL");
+                videoUrl = post.rawVideoUrl;
               }
-            }
-            if (!usedLibFallback) {
-              console.warn("[cron] using raw URL directly (may be expired)");
             }
           }
         } else {
