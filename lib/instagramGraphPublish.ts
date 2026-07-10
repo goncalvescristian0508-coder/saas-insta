@@ -8,17 +8,22 @@ const GRAPH = "https://graph.instagram.com/v21.0";
 
 /**
  * fetch() wrapper that routes through a proxy when proxyUrl is provided.
- * Uses undici's ProxyAgent so it works with HTTP, HTTPS, and SOCKS proxies.
+ * If the proxy fails for any reason, falls back to a direct request so the
+ * post is not lost due to a proxy outage.
  */
-function gFetch(
+async function gFetch(
   url: string,
   init: RequestInit,
   proxyUrl?: string | null,
 ): Promise<Response> {
   if (!proxyUrl) return fetch(url, init);
-  const dispatcher = new ProxyAgent(proxyUrl);
-  // undici's fetch accepts dispatcher; cast to bypass TS type gap
-  return fetch(url, { ...init, dispatcher } as RequestInit);
+  try {
+    const dispatcher = new ProxyAgent(proxyUrl);
+    return await fetch(url, { ...init, dispatcher } as RequestInit);
+  } catch (proxyErr) {
+    console.warn("[gFetch] proxy failed, retrying direct:", proxyErr instanceof Error ? proxyErr.message : String(proxyErr));
+    return fetch(url, init);
+  }
 }
 
 function sleep(ms: number): Promise<void> {
