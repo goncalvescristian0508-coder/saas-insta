@@ -198,8 +198,10 @@ async function runCron() {
   const warmups = await prisma.accountWarmup.findMany({ where: { isActive: true } }).catch(() => []);
   const warmupMap = new Map(warmups.map((w) => [w.accountId, w]));
 
+  // Block accounts that have ANY RUNNING post (with or without container) to prevent
+  // creating multiple containers per account and avoid back-to-back publishing.
   const phase1Running = await prisma.scheduledPost.findMany({
-    where: { status: "RUNNING", containerCreationId: null },
+    where: { status: "RUNNING" },
     select: { accountId: true },
   }).catch(() => []);
   const busyPhase1 = new Set(phase1Running.map((p) => p.accountId));
@@ -215,7 +217,16 @@ async function runCron() {
 
   console.log("[cron] phase2:", runningWithContainer.length, "containers to check");
 
-  await Promise.all(runningWithContainer.map(async (post) => {
+  // One container per account per tick — prevents 2+ reels publishing simultaneously
+  // on the same account (containerCreatedAt asc ensures oldest goes first).
+  const seenAccPhase2 = new Set<string>();
+  const uniqueContainers = runningWithContainer.filter(post => {
+    if (seenAccPhase2.has(post.accountId)) return false;
+    seenAccPhase2.add(post.accountId);
+    return true;
+  });
+
+  await Promise.all(uniqueContainers.map(async (post) => {
     try {
       const accessToken = decryptAccountPassword(post.account.accessTokenEnc);
       const proxyUrl = post.account.proxyUrl ?? null;
@@ -257,6 +268,14 @@ async function runCron() {
               url: "/schedule",
             }).catch(() => {});
           }
+          // Enforce minimum 8-minute gap between posts on the same account.
+          // Reschedule the next PENDING post so it won't be picked up before the cooldown.
+          const cooldownAt = new Date(now.getTime() + 8 * 60 * 1000);
+          await prisma.scheduledPost.updateMany({
+            where: { accountId: post.accountId, status: "PENDING", scheduledAt: { lt: cooldownAt } },
+            data: { scheduledAt: cooldownAt },
+          }).catch(() => {});
+
           console.log("[cron] published @", post.account.username);
         } else {
           await failPost(post, pubResult.error ?? "Falha ao publicar container", now);
