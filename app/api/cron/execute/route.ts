@@ -652,9 +652,14 @@ async function failPost(
     msgLower.includes("user has been disabled") ||
     (msgLower.includes("disabled") && msgLower.includes("account"));
 
-  const isRestricted =
-    !isSuspended && (
-      msgLower.includes("user access is restricted") ||
+  // Permanent API restriction — Instagram blocked this account from API publishing permanently.
+  // Must be SUSPENDED (not QUARANTINE) so retry-failed/clone-fix don't re-enable it in a loop.
+  const isPermanentRestricted =
+    !isSuspended && msgLower.includes("user access is restricted");
+
+  // Temporary restriction — rate limit, checkpoint, etc. — may recover after 24h cooldown.
+  const isTemporaryRestricted =
+    !isSuspended && !isPermanentRestricted && (
       msgLower.includes("action blocked") ||
       msgLower.includes("checkpoint") ||
       msgLower.includes("restricted") ||
@@ -664,23 +669,26 @@ async function failPost(
 
   const isRateLimit = msgLower.includes("too many actions") || msgLower.includes("rate limit");
 
-  if (isSuspended) {
+  if (isSuspended || isPermanentRestricted) {
+    const suspendMsg = isSuspended ? "Conta suspensa pelo Instagram." : "Conta com acesso à API restrito pelo Instagram — reconecte ou troque de conta.";
     await prisma.instagramOAuthAccount.update({ where: { id: post.accountId }, data: { accountStatus: "SUSPENDED", lastError: msg } });
-    await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: 6, errorMsg: "Conta suspensa pelo Instagram." } });
+    await prisma.scheduledPost.update({ where: { id: post.id }, data: { retryCount: 6, errorMsg: suspendMsg } });
     await prisma.scheduledPost.updateMany({
       where: { accountId: post.accountId, status: "PENDING" },
-      data: { status: "FAILED", retryCount: 6, errorMsg: "Conta suspensa pelo Instagram." },
+      data: { status: "FAILED", retryCount: 6, errorMsg: suspendMsg },
     });
     await redistributeFailedToClone(post.accountId, now).catch(() => {});
     await sendPushToUser(post.userId, {
-      title: "⚠️ Conta suspensa",
-      body: `@${accountName} foi suspensa pelo Instagram — posts redistribuídos automaticamente.`,
+      title: isSuspended ? "⚠️ Conta suspensa" : "⚠️ Conta restrita pela API",
+      body: isSuspended
+        ? `@${accountName} foi suspensa pelo Instagram — posts redistribuídos automaticamente.`
+        : `@${accountName} está com acesso à API restrito — posts redistribuídos. Reconecte a conta.`,
       url: "/contas-off",
     }).catch(() => {});
     return;
   }
 
-  if (isRestricted) {
+  if (isTemporaryRestricted) {
     const quarantinedUntil = new Date(now.getTime() + 24 * 60 * 60 * 1000);
     await prisma.instagramOAuthAccount.update({
       where: { id: post.accountId },
@@ -693,9 +701,9 @@ async function failPost(
     `;
     await sendPushToUser(post.userId, {
       title: "🔒 Conta em quarentena",
-      body: `@${accountName} está restrita de postar. Pausada por 24h e retomará automaticamente.`,
+      body: `@${accountName} está temporariamente restrita. Pausada por 24h e retomará automaticamente.`,
       url: "/accounts",
-    });
+    }).catch(() => {});
     return;
   }
 
