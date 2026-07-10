@@ -8,8 +8,8 @@ const GRAPH = "https://graph.instagram.com/v21.0";
 
 /**
  * fetch() wrapper that routes through a proxy when proxyUrl is provided.
- * If the proxy fails for any reason, falls back to a direct request so the
- * post is not lost due to a proxy outage.
+ * Uses a short independent timeout for the proxy attempt so a hanging proxy
+ * fails fast and the fallback direct request still has its full budget.
  */
 async function gFetch(
   url: string,
@@ -19,10 +19,12 @@ async function gFetch(
   if (!proxyUrl) return fetch(url, init);
   try {
     const dispatcher = new ProxyAgent(proxyUrl);
-    return await fetch(url, { ...init, dispatcher } as RequestInit);
+    // Independent 7s timeout: enough for a live proxy, fails fast if proxy hangs.
+    // Do NOT reuse init.signal here so the fallback still has its own fresh budget.
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(7_000), dispatcher } as RequestInit);
   } catch (proxyErr) {
     console.warn("[gFetch] proxy failed, retrying direct:", proxyErr instanceof Error ? proxyErr.message : String(proxyErr));
-    return fetch(url, init);
+    return fetch(url, init); // original signal/timeout still valid
   }
 }
 
