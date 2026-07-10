@@ -53,6 +53,7 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/api/cron/") ||
     path.startsWith("/api/webhooks/") ||
     path.startsWith("/api/accounts/set-proxy") ||
+    path.startsWith("/api/admin/fix-proxies") ||
     path.startsWith("/connect/") ||
     path.startsWith("/connect-error");
 
