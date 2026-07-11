@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { burnCaptionsOnVideo } from "@/lib/videoCaptions";
 
 export const runtime = "nodejs";
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
   const body = await req.json() as { cloneId?: string; batch?: number };
   const batchSize = Math.min(body.batch ?? 5, 10);
 
-  let where: Parameters<typeof prisma.libraryVideo.findMany>[0]["where"] = {
+  let where: Prisma.LibraryVideoWhereInput = {
     captionedUrl: null,
     storagePath: { not: { contains: "/covers/" } },
   };
