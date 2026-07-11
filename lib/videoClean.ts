@@ -36,27 +36,29 @@ export async function cleanVideo(inputBuffer: Buffer): Promise<Buffer> {
   try {
     await new Promise<void>((resolve, reject) => {
       ffmpeg(inputPath)
-        // ── strip every metadata atom ──────────────────────────────
+        // strip every metadata atom
         .outputOptions("-map_metadata", "-1")
         .outputOptions("-map_chapters", "-1")
 
-        // ── video: re-encode H.264, crop 1px each side (new hash) ──
+        // map video (required) + audio (optional — tolerates video-only files)
+        .outputOptions("-map", "0:v:0")
+        .outputOptions("-map", "0:a:0?")
+
+        // video: re-encode H.264 with subtle variations for uniqueness
         .outputOptions("-c:v", "libx264")
         .outputOptions("-crf", "22")
         .outputOptions("-preset", "ultrafast")
         .outputOptions("-profile:v", "high")
         .outputOptions("-level", "4.0")
-        // crop 2px + subtle brightness/saturation variation per video
-        // so each processed copy has a unique visual signature
         .outputOptions("-vf", `crop=iw-2:ih-2:1:1,eq=brightness=${randFloat(0.03, 0.07)}:saturation=${randFloat(1.1, 1.25)}`)
 
-        // ── audio: re-encode AAC, standardize sample rate ──────────
+        // audio: re-encode AAC only when an audio stream is present (0:a:0? above)
         .outputOptions("-c:a", "aac")
         .outputOptions("-b:a", "128k")
         .outputOptions("-ar", "44100")
         .outputOptions("-ac", "2")
 
-        // ── container: web-optimized, no encoder signature ─────────
+        // container: web-optimized, no encoder signature
         .outputOptions("-movflags", "+faststart")
         .outputOptions("-fflags", "+bitexact")
         .outputOptions("-flags:v", "+bitexact")
