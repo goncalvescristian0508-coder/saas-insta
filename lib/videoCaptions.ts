@@ -55,7 +55,7 @@ interface WhisperWord { word: string; start: number; end: number; }
 async function transcribeAudio(audioPath: string): Promise<WhisperWord[]> {
   const audioBuffer = await fs.readFile(audioPath);
   const form = new FormData();
-  form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), "audio.wav");
+  form.append("file", new Blob([audioBuffer], { type: "audio/mp4" }), "audio.m4a");
   form.append("model", "whisper-1");
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "word");
@@ -163,7 +163,7 @@ export async function burnCaptionsOnVideo(
 ): Promise<string | null> {
   const uid = `${Date.now().toString(36)}_${libraryVideoId.slice(-6)}`;
   const videoPath = nodePath.join(os.tmpdir(), `cap_in_${uid}.mp4`);
-  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.wav`);
+  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.m4a`); // codec copy — sem re-encode
   const assPath   = nodePath.join(os.tmpdir(), `cap_${uid}.ass`);
   const outPath   = nodePath.join(os.tmpdir(), `cap_out_${uid}.mp4`);
 
@@ -178,13 +178,13 @@ export async function burnCaptionsOnVideo(
 
     const fontName = FONT_NAME; // Impact — bundled in public/CaptionFont.ttf
 
-    // 2. Extrair áudio (pcm_s16le) para transcrição
-    // hasAudioStream: o vídeo TEM uma faixa de áudio (mesmo que seja música sem fala)
+    // 2. Extrair áudio como M4A com codec copy (sem decodificar HE-AAC)
+    // Whisper aceita m4a direto. Evita problema com HE-AAC do Instagram.
     let hasAudioStream = true;
     try {
       await runFfmpeg([
         "-i", videoPath,
-        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        "-vn", "-c:a", "copy",
         "-y", audioPath,
       ]);
     } catch (audioErr) {
