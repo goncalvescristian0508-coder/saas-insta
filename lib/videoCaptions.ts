@@ -152,43 +152,7 @@ function generateAss(words: WhisperWord[], fontName: string): string {
   return header + "\n" + dialogues.join("\n");
 }
 
-function generateStaticAss(text: string, durationSecs: number, fontName: string): string {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return "";
-  const CHUNK = 4;
-  const groups: string[][] = [];
-  for (let i = 0; i < words.length; i += CHUNK) groups.push(words.slice(i, i + CHUNK));
-  const secPer = Math.max(1.5, durationSecs / Math.max(groups.length, 1));
-
-  const header = buildAssHeader(fontName);
-  const dialogues = groups.map((g, ci) => {
-    const start = ci * secPer;
-    const end = Math.min(start + secPer, durationSecs);
-    const accentColor = PALETTE[(ci % (PALETTE.length - 1)) + 1];
-    const text = g.map((w, wi) => {
-      const color = wi === (ci % g.length) ? accentColor : "&H00FFFFFF";
-      return `{\\1c${color}}${w.toUpperCase()}`;
-    }).join(" ");
-    return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${text}`;
-  });
-
-  return header + "\n" + dialogues.join("\n");
-}
-
-// ─── video duration helper ─────────────────────────────────────────────────────
-async function getVideoDuration(videoPath: string): Promise<number> {
-  const bin = await resolveBin();
-  return new Promise((resolve) => {
-    const proc = spawn(bin, ["-i", videoPath]);
-    const stderr: string[] = [];
-    proc.stderr.on("data", (d: Buffer) => stderr.push(d.toString()));
-    proc.on("close", () => {
-      const m = stderr.join("").match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
-      resolve(m ? parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]) : 30);
-    });
-    proc.on("error", () => resolve(30));
-  });
-}
+// ─── (fallback estático removido — sem fala = marca "none", não legenda falsa) ──
 
 // ─── main export ───────────────────────────────────────────────────────────────
 export async function burnCaptionsOnVideo(
@@ -214,8 +178,9 @@ export async function burnCaptionsOnVideo(
 
     const fontName = FONT_NAME; // Impact — bundled in public/CaptionFont.ttf
 
-    // 2. Extrair áudio (pcm_s16le — sempre disponível no ffmpeg-static)
-    let hasAudio = true;
+    // 2. Extrair áudio (pcm_s16le) para transcrição
+    // hasAudioStream: o vídeo TEM uma faixa de áudio (mesmo que seja música sem fala)
+    let hasAudioStream = true;
     try {
       await runFfmpeg([
         "-i", videoPath,
@@ -225,29 +190,28 @@ export async function burnCaptionsOnVideo(
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
       if (msg.includes("does not contain any stream") || msg.includes("Invalid argument")) {
-        hasAudio = false;
+        hasAudioStream = false;
         console.warn("[captions] sem stream de áudio em", libraryVideoId);
       } else {
         throw audioErr;
       }
     }
 
-    // 3. Transcrever / gerar ASS
+    // 3. Transcrever com Whisper — sem fala → marca "none", não adiciona legenda falsa
     let assContent = "";
-    if (hasAudio) {
+    if (hasAudioStream) {
       const words = await transcribeAudio(audioPath);
       if (words.length === 0) {
-        console.warn("[captions] sem fala detectada em", libraryVideoId);
+        console.warn("[captions] sem fala detectada em", libraryVideoId, "— pulando");
         await cleanup();
-        return null;
+        return null; // rota vai salvar "none" para não reprocessar
       }
       assContent = generateAss(words, fontName);
     } else {
-      const text = fallbackText?.trim() ||
-        "Incrível segue para mais conteúdo viral trending reels fyp brasil";
-      const duration = await getVideoDuration(videoPath);
-      assContent = generateStaticAss(text, duration, fontName);
-      if (!assContent) { await cleanup(); return null; }
+      // Sem stream de áudio alguma — também não há o que legendar
+      console.warn("[captions] vídeo sem áudio em", libraryVideoId, "— pulando");
+      await cleanup();
+      return null;
     }
 
     // 4. Gravar arquivo ASS
@@ -264,7 +228,7 @@ export async function burnCaptionsOnVideo(
       "-i", videoPath,
       "-vf", vf,
       "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
-      "-c:a", hasAudio ? "copy" : "an",
+      "-c:a", "copy", // áudio original sempre preservado (chegou aqui = hasAudioStream=true)
       "-movflags", "+faststart",
       "-y", outPath,
     ]);
