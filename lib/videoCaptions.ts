@@ -30,7 +30,7 @@ async function resolveBin(): Promise<string> {
 async function runFfmpeg(args: string[]): Promise<void> {
   const bin = await resolveBin();
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { proc.kill("SIGKILL"); reject(new Error("FFmpeg timeout 120s")); }, 120_000);
+    const timer = setTimeout(() => { proc.kill("SIGKILL"); reject(new Error("FFmpeg timeout 240s")); }, 240_000);
     const proc = spawn(bin, args);
     const stderr: string[] = [];
     proc.stderr.on("data", (d: Buffer) => stderr.push(d.toString()));
@@ -259,7 +259,7 @@ export async function burnCaptionsOnVideo(
     await runFfmpeg([
       "-i", videoPath,
       "-vf", `ass='${safeAss}'`,
-      "-c:v", "libx264", "-crf", "22", "-preset", "fast",
+      "-c:v", "libx264", "-crf", "26", "-preset", "ultrafast",
       "-c:a", hasAudio ? "copy" : "an",
       "-movflags", "+faststart",
       "-y", outPath,
