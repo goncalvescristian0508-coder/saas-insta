@@ -127,10 +127,16 @@ export async function POST(req: Request) {
         await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl } });
         return NextResponse.json({ processed: 1, ok: 1, skipped: 0, results: [{ id: vid.id, ok: true, captionedUrl }] });
       }
+      // burnCaptionsOnVideo retorna null apenas se não houve throw (legado)
       await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl: "none" } });
-      return NextResponse.json({ processed: 1, ok: 0, skipped: 1, results: [{ id: vid.id, ok: false, error: "sem fala" }] });
+      return NextResponse.json({ processed: 1, ok: 0, skipped: 1, results: [{ id: vid.id, ok: false, error: "null" }] });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // SEM_FALA / SEM_AUDIO → marca "none" e retorna 200 com erro detalhado
+      if (msg.startsWith("SEM_FALA:") || msg.startsWith("SEM_AUDIO:")) {
+        await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl: "none" } }).catch(() => {});
+        return NextResponse.json({ processed: 1, ok: 0, skipped: 1, results: [{ id: vid.id, ok: false, error: msg }] });
+      }
       return NextResponse.json({ processed: 1, ok: 0, skipped: 1, results: [{ id: vid.id, ok: false, error: msg }] }, { status: 500 });
     }
   }

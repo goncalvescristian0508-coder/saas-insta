@@ -179,39 +179,43 @@ export async function burnCaptionsOnVideo(
     const fontName = FONT_NAME; // Impact — bundled in public/CaptionFont.ttf
 
     // 2. Extrair áudio como M4A com codec copy (sem decodificar HE-AAC)
-    // Whisper aceita m4a direto. Evita problema com HE-AAC do Instagram.
     let hasAudioStream = true;
+    let audioExtractErr = "";
     try {
-      await runFfmpeg([
-        "-i", videoPath,
-        "-vn", "-c:a", "copy",
-        "-y", audioPath,
-      ]);
+      await runFfmpeg(["-i", videoPath, "-vn", "-c:a", "copy", "-y", audioPath]);
+      const stat = await fs.stat(audioPath).catch(() => null);
+      console.log("[captions] audio m4a size:", stat?.size ?? 0, "bytes");
+      if (!stat || stat.size < 500) {
+        hasAudioStream = false;
+        audioExtractErr = `áudio extraído muito pequeno: ${stat?.size ?? 0} bytes`;
+        console.warn("[captions]", audioExtractErr);
+      }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      audioExtractErr = msg.slice(0, 200);
       if (msg.includes("does not contain any stream") || msg.includes("Invalid argument")) {
         hasAudioStream = false;
-        console.warn("[captions] sem stream de áudio em", libraryVideoId);
+        console.warn("[captions] sem stream de áudio em", libraryVideoId, "—", audioExtractErr);
       } else {
         throw audioErr;
       }
     }
 
-    // 3. Transcrever com Whisper — sem fala → marca "none", não adiciona legenda falsa
+    // 3. Transcrever com Whisper
     let assContent = "";
     if (hasAudioStream) {
       const words = await transcribeAudio(audioPath);
+      console.log("[captions] whisper words:", words.length, "para", libraryVideoId);
       if (words.length === 0) {
-        console.warn("[captions] sem fala detectada em", libraryVideoId, "— pulando");
+        console.warn("[captions] 0 palavras detectadas em", libraryVideoId);
         await cleanup();
-        return null; // rota vai salvar "none" para não reprocessar
+        // Throw com detalhes para o route poder diferenciar de erro de extração
+        throw new Error(`SEM_FALA:0 palavras do Whisper`);
       }
       assContent = generateAss(words, fontName);
     } else {
-      // Sem stream de áudio alguma — também não há o que legendar
-      console.warn("[captions] vídeo sem áudio em", libraryVideoId, "— pulando");
-      await cleanup();
-      return null;
+      console.warn("[captions] sem áudio em", libraryVideoId, "—", audioExtractErr);
+      throw new Error(`SEM_AUDIO:${audioExtractErr}`);
     }
 
     // 4. Gravar arquivo ASS
