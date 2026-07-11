@@ -44,7 +44,12 @@ async function runFfmpeg(args: string[]): Promise<void> {
     proc.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`FFmpeg ${code}: ${stderr.join("").slice(-800)}`));
+      else {
+        const full = stderr.join("");
+        // Primeiros 1500 chars: metadata + streams. Últimos 400 chars: mensagem de erro.
+        const info = full.slice(0, 1500) + (full.length > 1900 ? "…" + full.slice(-400) : "");
+        reject(new Error(`FFmpeg ${code}: ${info}`));
+      }
     });
     proc.on("error", (e: Error) => { clearTimeout(timer); reject(e); });
   });
@@ -205,7 +210,7 @@ export async function burnCaptionsOnVideo(
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      audioExtractErr = msg.slice(0, 300);
+      audioExtractErr = msg.slice(0, 1800);
       // Qualquer falha na extração de áudio = sem áudio (DASH sem trilha, codec incompatível, etc.)
       hasAudioStream = false;
       console.warn("[captions] falha ao extrair áudio em", libraryVideoId, "—", audioExtractErr);
