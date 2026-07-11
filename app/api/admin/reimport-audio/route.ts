@@ -80,8 +80,11 @@ export async function POST(req: Request) {
   } else {
     // Sem datasetId: usa run-sync síncrono
     const actors = [
+      // instagram-scraper: retorna H.264+AAC (não segmento DASH VP9 sem áudio)
+      { id: "apify~instagram-scraper", input: { directUrls: [`https://www.instagram.com/${username}/`], resultsType: "posts", resultsLimit: limit } },
+      { id: "apify~instagram-scraper", input: { usernames: [username], resultsType: "posts", resultsLimit: limit } },
+      // fallback: reel-scraper (retorna VP9 DASH sem áudio — pode não funcionar)
       { id: "apify~instagram-reel-scraper", input: { username: [username], resultsLimit: limit } },
-      { id: "apify~instagram-reel-scraper", input: { usernames: [username], resultsLimit: limit } },
     ];
 
     outer: for (const token of tokens) {
@@ -114,12 +117,15 @@ export async function POST(req: Request) {
   const results = { updated: 0, skipped: 0, failed: 0, noUrl: 0 };
 
   for (const item of items) {
-    // Instagram Reel Scraper fields
+    // instagram-scraper: videoUrl (H.264) ou video_versions[0].src
+    // instagram-reel-scraper: videoUrl (VP9 DASH — sem áudio, mas tentamos)
+    const videoVersions = item.video_versions as Array<Record<string, unknown>> | undefined;
     const videoUrl = String(
       item.videoUrl ??
       item.video_url ??
+      videoVersions?.[0]?.src ??
+      videoVersions?.[0]?.url ??
       (item.video as Record<string, unknown>)?.url ??
-      item.url ??
       ""
     );
 
