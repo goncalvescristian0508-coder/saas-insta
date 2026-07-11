@@ -362,16 +362,17 @@ async function runCron() {
     if (!job?.sourceUsername) { cloneLibMap.set(cloneId, []); return; }
     let vids = await prisma.libraryVideo.findMany({
       where: { userId: job.userId, storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
-      select: { publicUrl: true },
-    }).catch(() => [] as { publicUrl: string }[]);
+      select: { publicUrl: true, captionedUrl: true },
+    }).catch(() => [] as { publicUrl: string; captionedUrl: string | null }[]);
     if (vids.length === 0) {
       vids = await prisma.libraryVideo.findMany({
         where: { storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
-        select: { publicUrl: true },
+        select: { publicUrl: true, captionedUrl: true },
         take: 200,
-      }).catch(() => [] as { publicUrl: string }[]);
+      }).catch(() => [] as { publicUrl: string; captionedUrl: string | null }[]);
     }
-    cloneLibMap.set(cloneId, vids.map(v => v.publicUrl));
+    // Prefer captionedUrl when available (and not the "none" sentinel for videos without speech)
+    cloneLibMap.set(cloneId, vids.map(v => (v.captionedUrl && v.captionedUrl !== "none") ? v.captionedUrl : v.publicUrl));
     console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos");
   }));
 

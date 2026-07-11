@@ -52,6 +52,7 @@ model LibraryVideo {
   originalName   String
   storagePath    String
   publicUrl      String
+  captionedUrl   String?
   coverUrl       String?
   sizeBytes      Int
   durationSecs   Float?

@@ -54,6 +54,7 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/api/webhooks/") ||
     path.startsWith("/api/accounts/set-proxy") ||
     path.startsWith("/api/admin/fix-proxies") ||
+    path.startsWith("/api/admin/caption-library") ||
     path.startsWith("/connect/") ||
     path.startsWith("/connect-error");
 
