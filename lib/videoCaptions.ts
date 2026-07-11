@@ -74,67 +74,12 @@ async function transcribeAudio(audioPath: string): Promise<WhisperWord[]> {
 }
 
 // ─── font management ───────────────────────────────────────────────────────────
-// Provides a fontsdir with Roboto Bold so libass can find the font.
-// Tries system fonts first, then downloads from CDN.
-let cachedFontsDir: string | undefined = undefined;
+// Uses CaptionFont.ttf (Impact) bundled in public/ — always present on Lambda.
+const FONT_NAME = "Impact";
 
-async function getFontsDir(): Promise<{ dir: string; fontName: string } | null> {
-  if (cachedFontsDir !== undefined) {
-    return cachedFontsDir ? { dir: cachedFontsDir, fontName: "Roboto" } : null;
-  }
-
-  // 1. Check system fonts (Amazon Linux 2 on Vercel Lambda)
-  const systemFonts: Array<{ path: string; name: string }> = [
-    { path: "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf", name: "DejaVu Sans" },
-    { path: "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf", name: "DejaVu Sans" },
-    { path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", name: "DejaVu Sans" },
-    { path: "/usr/share/fonts/liberation/LiberationSans-Bold.ttf", name: "Liberation Sans" },
-    { path: "/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf", name: "Liberation Sans" },
-    { path: "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", name: "Liberation Sans" },
-  ];
-  for (const { path: p, name } of systemFonts) {
-    const ok = await fs.access(p).then(() => true).catch(() => false);
-    if (ok) {
-      console.log("[captions] fonte sistema:", p);
-      cachedFontsDir = nodePath.dirname(p);
-      return { dir: cachedFontsDir, fontName: name };
-    }
-  }
-
-  // 2. Download font to /tmp/cap-fonts/
-  const fontsDir = nodePath.join(os.tmpdir(), "cap-fonts");
-  const fontPath = nodePath.join(fontsDir, "Roboto-Bold.ttf");
-  await fs.mkdir(fontsDir, { recursive: true });
-
-  const alreadyCached = await fs.access(fontPath).then(() => true).catch(() => false);
-  if (alreadyCached) {
-    cachedFontsDir = fontsDir;
-    return { dir: fontsDir, fontName: "Roboto" };
-  }
-
-  const FONT_URLS = [
-    "https://cdn.jsdelivr.net/gh/google/fonts@main/apache/roboto/static/Roboto-Bold.ttf",
-    "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Bold.ttf",
-    "https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Bold.ttf",
-  ];
-  for (const url of FONT_URLS) {
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-      if (!res.ok) { console.warn("[captions] font CDN", res.status, url); continue; }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length < 10_000) continue;
-      await fs.writeFile(fontPath, buf);
-      console.log("[captions] fonte baixada:", url, `(${(buf.length / 1024).toFixed(0)}KB)`);
-      cachedFontsDir = fontsDir;
-      return { dir: fontsDir, fontName: "Roboto" };
-    } catch (e) {
-      console.warn("[captions] font fetch error:", url, e);
-    }
-  }
-
-  console.warn("[captions] nenhuma fonte — libass usará fallback interno");
-  cachedFontsDir = "";
-  return null;
+function getFontsDir(): string {
+  // On Vercel Lambda: /var/task/public; locally: <cwd>/public
+  return nodePath.join(process.cwd(), "public");
 }
 
 // ─── ASS subtitle generation ───────────────────────────────────────────────────
@@ -262,17 +207,12 @@ export async function burnCaptionsOnVideo(
     Promise.allSettled([videoPath, audioPath, assPath, outPath].map(p => fs.unlink(p).catch(() => {})));
 
   try {
-    // 1. Download font dir + vídeo em paralelo
-    const [fontInfo] = await Promise.all([
-      getFontsDir(),
-      (async () => {
-        const res = await fetch(videoPublicUrl, { signal: AbortSignal.timeout(30_000) });
-        if (!res.ok) throw new Error(`Download falhou: ${res.status}`);
-        await fs.writeFile(videoPath, Buffer.from(await res.arrayBuffer()));
-      })(),
-    ]);
+    // 1. Download vídeo
+    const res0 = await fetch(videoPublicUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!res0.ok) throw new Error(`Download falhou: ${res0.status}`);
+    await fs.writeFile(videoPath, Buffer.from(await res0.arrayBuffer()));
 
-    const fontName = fontInfo?.fontName ?? "Arial";
+    const fontName = FONT_NAME; // Impact — bundled in public/CaptionFont.ttf
 
     // 2. Extrair áudio (pcm_s16le — sempre disponível no ffmpeg-static)
     let hasAudio = true;
@@ -313,12 +253,12 @@ export async function burnCaptionsOnVideo(
     // 4. Gravar arquivo ASS
     await fs.writeFile(assPath, assContent, "utf-8");
 
-    // 5. Queimar legendas — usa fontsdir se disponível para libass encontrar a fonte
-    // No Linux: path sem espaços, sem ':', sem '\' — sem escape necessário
+    // 5. Queimar legendas com ASS — fontsdir aponta para public/ onde está CaptionFont.ttf
     const safeAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-    const fontsDirPart = fontInfo ? `:fontsdir=${fontInfo.dir.replace(/\\/g, "/")}` : "";
-    const vf = `scale=720:-2,ass='${safeAss}'${fontsDirPart}`;
+    const fontsDir = getFontsDir().replace(/\\/g, "/");
+    const vf = `scale=720:-2,ass='${safeAss}':fontsdir='${fontsDir}'`;
     console.log("[captions] vf:", vf.slice(0, 200));
+    console.log("[captions] fontsDir:", fontsDir);
 
     await runFfmpeg([
       "-i", videoPath,
