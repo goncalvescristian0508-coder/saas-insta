@@ -12,10 +12,19 @@ function checkAuth(req: Request): boolean {
 }
 
 // GET — status: quantos vídeos pendentes vs processados por clone
+// ?setup=1 → cria a coluna captionedUrl no banco se não existir
 export async function GET(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
+
+  if (searchParams.get("setup") === "1") {
+    await prisma.$executeRawUnsafe(
+      `ALTER TABLE "LibraryVideo" ADD COLUMN IF NOT EXISTS "captionedUrl" TEXT;`
+    );
+    return NextResponse.json({ ok: true, message: "Coluna captionedUrl criada (ou já existia)." });
+  }
+
   const cloneId = searchParams.get("cloneId");
 
   if (cloneId) {
