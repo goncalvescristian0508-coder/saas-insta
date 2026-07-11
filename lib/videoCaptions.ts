@@ -53,7 +53,7 @@ interface WhisperWord {
 async function transcribeAudio(audioPath: string): Promise<WhisperWord[]> {
   const audioBuffer = await fs.readFile(audioPath);
   const form = new FormData();
-  form.append("file", new Blob([audioBuffer], { type: "audio/mpeg" }), "audio.mp3");
+  form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), "audio.wav");
   form.append("model", "whisper-1");
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "word");
@@ -130,14 +130,75 @@ function generateAss(words: WhisperWord[]): string {
   return header + "\n" + dialogues.join("\n");
 }
 
+// Generate static ASS for videos without speech — shows text chunks across video duration
+function generateStaticAss(text: string, durationSecs: number): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+
+  const CHUNK = 4;
+  const chunks: string[][] = [];
+  for (let i = 0; i < words.length; i += CHUNK) chunks.push(words.slice(i, i + CHUNK));
+
+  const secPerChunk = Math.max(1.5, durationSecs / chunks.length);
+
+  const header = [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    "PlayResX: 1080",
+    "PlayResY: 1920",
+    "WrapStyle: 0",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    "Style: Default,Arial Black,54,&H00FFFFFF,&H0000FFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0.5,0,1,4,1,2,30,30,180,1",
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+  ].join("\n");
+
+  const dialogues = chunks.map((chunk, ci) => {
+    const start = ci * secPerChunk;
+    const end   = Math.min(start + secPerChunk, durationSecs);
+    const accentColor = PALETTE[(ci % (PALETTE.length - 1)) + 1];
+    const highlightIdx = ci % chunk.length;
+    const text = chunk.map((w, wi) => {
+      const color = wi === highlightIdx ? accentColor : "&H00FFFFFF";
+      return `{\\1c${color}}${w.toUpperCase()}`;
+    }).join(" ");
+    return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${text}`;
+  });
+
+  return header + "\n" + dialogues.join("\n");
+}
+
+// Get video duration in seconds via ffmpeg stderr output
+async function getVideoDuration(videoPath: string): Promise<number> {
+  const bin = await resolveBin();
+  return new Promise((resolve) => {
+    const proc = spawn(bin, ["-i", videoPath]);
+    const stderr: string[] = [];
+    proc.stderr.on("data", (d: Buffer) => stderr.push(d.toString()));
+    proc.on("close", () => {
+      const match = stderr.join("").match(/Duration:\s*(\d+):(\d+):(\d+\.?\d*)/);
+      if (match) {
+        resolve(parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]));
+      } else {
+        resolve(30); // default 30s
+      }
+    });
+    proc.on("error", () => resolve(30));
+  });
+}
+
 export async function burnCaptionsOnVideo(
   videoPublicUrl: string,
   storagePath: string,
   libraryVideoId: string,
+  fallbackText?: string,
 ): Promise<string | null> {
   const uid = `${Date.now().toString(36)}_${libraryVideoId.slice(-6)}`;
   const videoPath = nodePath.join(os.tmpdir(), `cap_in_${uid}.mp4`);
-  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.mp3`);
+  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.wav`);
   const assPath   = nodePath.join(os.tmpdir(), `cap_${uid}.ass`);
   const outPath   = nodePath.join(os.tmpdir(), `cap_out_${uid}.mp4`);
 
@@ -150,32 +211,56 @@ export async function burnCaptionsOnVideo(
     await fs.writeFile(videoPath, Buffer.from(await res.arrayBuffer()));
 
     // 2. Extrair áudio para Whisper (MP3 mono 16kHz)
-    await runFfmpeg([
-      "-i", videoPath,
-      "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1", "-q:a", "4",
-      "-y", audioPath,
-    ]);
+    let assContent = "";
+    let hasAudio = true;
 
-    // 3. Transcrever com Whisper
-    const words = await transcribeAudio(audioPath);
-    if (words.length === 0) {
-      console.warn("[captions] sem fala detectada em", libraryVideoId);
-      await cleanup();
-      return null;
+    try {
+      await runFfmpeg([
+        "-i", videoPath,
+        "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
+        "-y", audioPath,
+      ]);
+    } catch (audioErr) {
+      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      if (msg.includes("does not contain any stream") || msg.includes("Invalid argument")) {
+        hasAudio = false;
+        console.warn("[captions] sem áudio em", libraryVideoId, "— usando texto estático");
+      } else {
+        throw audioErr;
+      }
+    }
+
+    if (hasAudio) {
+      // 3a. Transcrever com Whisper
+      const words = await transcribeAudio(audioPath);
+      if (words.length === 0) {
+        console.warn("[captions] sem fala detectada em", libraryVideoId);
+        await cleanup();
+        return null;
+      }
+      assContent = generateAss(words);
+    } else {
+      // 3b. Sem áudio → usar texto estático (legenda do post ou hashtags genéricas)
+      const text = fallbackText?.trim() ||
+        "Incrível 🔥 Segue para mais conteúdo #viral #trending #reels #fyp #brasil";
+      const duration = await getVideoDuration(videoPath);
+      assContent = generateStaticAss(text, duration);
+      if (!assContent) {
+        await cleanup();
+        return null;
+      }
     }
 
     // 4. Gerar arquivo ASS
-    const assContent = generateAss(words);
     await fs.writeFile(assPath, assContent, "utf-8");
 
     // 5. Queimar legendas no vídeo
-    // No Windows o caminho precisa de escape; no Linux/Lambda é direto
     const safeAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
     await runFfmpeg([
       "-i", videoPath,
       "-vf", `ass='${safeAss}'`,
       "-c:v", "libx264", "-crf", "22", "-preset", "fast",
-      "-c:a", "copy",
+      "-c:a", hasAudio ? "copy" : "an",
       "-movflags", "+faststart",
       "-y", outPath,
     ]);
