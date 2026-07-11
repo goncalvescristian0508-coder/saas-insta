@@ -3,7 +3,7 @@ import { createClient as createAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { getAllApifyTokens } from "@/lib/apifyRotation";
 import { createHash } from "crypto";
-import { cleanVideo } from "@/lib/videoClean";
+import { cleanVideo, muxAndCleanVideo } from "@/lib/videoClean";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -127,81 +127,56 @@ export async function POST(req: Request) {
   const admin = storage();
   const results = { updated: 0, skipped: 0, failed: 0, noUrl: 0 };
 
+  const FETCH_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+    "Referer": "https://www.instagram.com/",
+  };
+
   for (const item of items) {
     const videoVersions = item.video_versions as Array<Record<string, unknown>> | undefined;
     const dashUrl = String(item.videoUrl ?? item.video_url ?? "");
+    const audioUrl = String(item.audioUrl ?? "");
     const postUrl = String(item.url ?? item.postUrl ?? "");
-    const shortCode = postUrl.match(/\/p\/([A-Za-z0-9_-]+)/)?.[1] ?? null;
 
-    // Tenta extrair URL H.264 via página embed do Instagram (não requer autenticação)
-    let h264Url: string | null = null;
-    if (shortCode) {
-      try {
-        // /embed/captioned/ é público e contém "video_url" em JSON embutido no HTML
-        const embedRes = await fetch(`https://www.instagram.com/p/${shortCode}/embed/captioned/`, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml",
-            "Accept-Language": "en-US,en;q=0.9",
-          },
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (embedRes.ok) {
-          const html = await embedRes.text();
-          // 1) "video_url":"https://..." dentro de JSON embutido
-          const m1 = html.match(/"video_url"\s*:\s*"(https:\/\/[^"]+\.mp4[^"]*)"/);
-          if (m1) h264Url = m1[1].replace(/\\u0026/g, "&");
-          // 2) <video src="https://...mp4
-          if (!h264Url) {
-            const m2 = html.match(/<video[^>]+src="(https:\/\/[^"]+\.mp4[^"]*)"/);
-            if (m2) h264Url = m2[1].replace(/\\u0026/g, "&").replace(/&amp;/g, "&");
-          }
-          // 3) "contentUrl":"https://..." (JSON-LD)
-          if (!h264Url) {
-            const m3 = html.match(/"contentUrl"\s*:\s*"(https:\/\/[^"]+)"/);
-            if (m3) h264Url = m3[1].replace(/\\u0026/g, "&");
-          }
-          console.log(`[reimport] embed ${shortCode} ok=${embedRes.ok} found=${!!h264Url} html=${html.length}B`);
-        } else {
-          console.log(`[reimport] embed ${shortCode} status=${embedRes.status}`);
-        }
-      } catch (e) {
-        console.warn(`[reimport] embed fetch ${shortCode} falhou:`, e instanceof Error ? e.message.slice(0, 80) : e);
-      }
-    }
-
-    // Fallback: video_versions do scraper, ou dashUrl (VP9 CMAF — sem áudio)
-    const videoUrl = h264Url
-      ?? String(videoVersions?.[0]?.src ?? videoVersions?.[0]?.url ?? dashUrl);
-
+    const videoUrl = String(videoVersions?.[0]?.src ?? videoVersions?.[0]?.url ?? dashUrl);
     if (!videoUrl || !videoUrl.startsWith("http")) { results.noUrl++; continue; }
 
-    // Hash sobre a dashUrl para manter storagePath compatível com registros existentes
+    // Hash sobre dashUrl para manter storagePath compatível com registros existentes
     const hashBase = dashUrl || videoUrl;
     const urlHash = createHash("md5").update(hashBase).digest("hex");
     const storagePath = `cloned/${userId}/${username}/${urlHash}.mp4`;
 
-    console.log(`[reimport] ${shortCode ?? "?"} h264=${!!h264Url} url=${videoUrl.slice(0, 80)}`);
+    console.log(`[reimport] ${String(item.shortCode ?? "?")} videoUrl=${videoUrl.slice(0, 80)} hasAudio=${!!audioUrl}`);
 
     try {
-      const vidRes = await fetch(videoUrl, {
-        signal: AbortSignal.timeout(60_000),
-        headers: {
-          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-          "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
-          "Referer": postUrl || "https://www.instagram.com/",
-        },
-      });
+      const vidRes = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000), headers: FETCH_HEADERS });
       if (!vidRes.ok) {
-        console.warn(`[reimport] video fetch ${videoUrl.slice(0, 80)} → ${vidRes.status}`);
+        console.warn(`[reimport] video fetch → ${vidRes.status}`);
         results.failed++; continue;
       }
+      const vidBuf = Buffer.from(await vidRes.arrayBuffer());
 
-      const raw = Buffer.from(await vidRes.arrayBuffer());
-      const buffer = await cleanVideo(raw).catch((e) => {
-        console.warn("[reimport] cleanVideo falhou, usando raw:", e instanceof Error ? e.message.slice(0, 100) : e);
-        return raw;
-      });
+      let buffer: Buffer;
+      if (audioUrl && audioUrl.startsWith("http")) {
+        // Áudio separado (DASH CMAF): muxar vídeo + áudio em uma passagem FFmpeg
+        const audRes = await fetch(audioUrl, { signal: AbortSignal.timeout(30_000), headers: FETCH_HEADERS });
+        if (audRes.ok) {
+          const audBuf = Buffer.from(await audRes.arrayBuffer());
+          buffer = await muxAndCleanVideo(vidBuf, audBuf).catch((e) => {
+            console.warn("[reimport] muxAndCleanVideo falhou:", e instanceof Error ? e.message.slice(0, 100) : e);
+            return cleanVideo(vidBuf).catch(() => vidBuf);
+          });
+        } else {
+          console.warn(`[reimport] audio fetch → ${audRes.status}, usando só vídeo`);
+          buffer = await cleanVideo(vidBuf).catch(() => vidBuf);
+        }
+      } else {
+        buffer = await cleanVideo(vidBuf).catch((e) => {
+          console.warn("[reimport] cleanVideo falhou:", e instanceof Error ? e.message.slice(0, 100) : e);
+          return vidBuf;
+        });
+      }
 
       const { error: upErr } = await admin.storage
         .from("library-videos")
