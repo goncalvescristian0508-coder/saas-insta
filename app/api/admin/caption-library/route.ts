@@ -222,6 +222,10 @@ export async function POST(req: Request) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[caption-library] erro", vid.id, msg);
+      // Sem áudio / sem fala → marcar "none" para não reprocessar eternamente
+      if (msg.startsWith("SEM_AUDIO:") || msg.startsWith("SEM_FALA:")) {
+        await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl: "none" } }).catch(() => {});
+      }
       results.push({ id: vid.id, ok: false, error: msg });
     }
   }
