@@ -44,7 +44,7 @@ async function runFfmpeg(args: string[]): Promise<void> {
     proc.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve();
-      else reject(new Error(`FFmpeg ${code}: ${stderr.join("").slice(-600)}`));
+      else reject(new Error(`FFmpeg ${code}: ${stderr.join("").slice(-800)}`));
     });
     proc.on("error", (e: Error) => { clearTimeout(timer); reject(e); });
   });
@@ -74,40 +74,113 @@ async function transcribeAudio(audioPath: string): Promise<WhisperWord[]> {
 }
 
 // ─── font management ───────────────────────────────────────────────────────────
-// Uses Roboto Bold downloaded from Google Fonts on first run.
-// Falls back to FFmpeg built-in monospace if download fails.
-let cachedFontPath: string | undefined = undefined;
+// Provides a fontsdir with Roboto Bold so libass can find the font.
+// Tries system fonts first, then downloads from CDN.
+let cachedFontsDir: string | undefined = undefined;
 
-async function getFontPath(): Promise<string | null> {
-  if (cachedFontPath !== undefined) return cachedFontPath || null;
-  const fontPath = nodePath.join(os.tmpdir(), "caption-font.ttf");
-  const exists = await fs.access(fontPath).then(() => true).catch(() => false);
-  if (exists) { cachedFontPath = fontPath; return fontPath; }
-  try {
-    const res = await fetch(
-      "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Bold.ttf",
-      { signal: AbortSignal.timeout(15_000) },
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await fs.writeFile(fontPath, Buffer.from(await res.arrayBuffer()));
-    cachedFontPath = fontPath;
-    return fontPath;
-  } catch (e) {
-    console.warn("[captions] download de fonte falhou, sem fonte explícita:", e);
-    cachedFontPath = "";
-    return null;
+async function getFontsDir(): Promise<{ dir: string; fontName: string } | null> {
+  if (cachedFontsDir !== undefined) {
+    return cachedFontsDir ? { dir: cachedFontsDir, fontName: "Roboto" } : null;
   }
+
+  // 1. Check system fonts (Amazon Linux 2 on Vercel Lambda)
+  const systemFonts: Array<{ path: string; name: string }> = [
+    { path: "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf", name: "DejaVu Sans" },
+    { path: "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans-Bold.ttf", name: "DejaVu Sans" },
+    { path: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", name: "DejaVu Sans" },
+    { path: "/usr/share/fonts/liberation/LiberationSans-Bold.ttf", name: "Liberation Sans" },
+    { path: "/usr/share/fonts/liberation-fonts/LiberationSans-Bold.ttf", name: "Liberation Sans" },
+    { path: "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", name: "Liberation Sans" },
+  ];
+  for (const { path: p, name } of systemFonts) {
+    const ok = await fs.access(p).then(() => true).catch(() => false);
+    if (ok) {
+      console.log("[captions] fonte sistema:", p);
+      cachedFontsDir = nodePath.dirname(p);
+      return { dir: cachedFontsDir, fontName: name };
+    }
+  }
+
+  // 2. Download font to /tmp/cap-fonts/
+  const fontsDir = nodePath.join(os.tmpdir(), "cap-fonts");
+  const fontPath = nodePath.join(fontsDir, "Roboto-Bold.ttf");
+  await fs.mkdir(fontsDir, { recursive: true });
+
+  const alreadyCached = await fs.access(fontPath).then(() => true).catch(() => false);
+  if (alreadyCached) {
+    cachedFontsDir = fontsDir;
+    return { dir: fontsDir, fontName: "Roboto" };
+  }
+
+  const FONT_URLS = [
+    "https://cdn.jsdelivr.net/gh/google/fonts@main/apache/roboto/static/Roboto-Bold.ttf",
+    "https://raw.githubusercontent.com/google/fonts/main/apache/roboto/static/Roboto-Bold.ttf",
+    "https://github.com/google/fonts/raw/main/apache/roboto/static/Roboto-Bold.ttf",
+  ];
+  for (const url of FONT_URLS) {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) { console.warn("[captions] font CDN", res.status, url); continue; }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length < 10_000) continue;
+      await fs.writeFile(fontPath, buf);
+      console.log("[captions] fonte baixada:", url, `(${(buf.length / 1024).toFixed(0)}KB)`);
+      cachedFontsDir = fontsDir;
+      return { dir: fontsDir, fontName: "Roboto" };
+    } catch (e) {
+      console.warn("[captions] font fetch error:", url, e);
+    }
+  }
+
+  console.warn("[captions] nenhuma fonte — libass usará fallback interno");
+  cachedFontsDir = "";
+  return null;
 }
 
-// ─── subtitle chunks ───────────────────────────────────────────────────────────
+// ─── ASS subtitle generation ───────────────────────────────────────────────────
+function formatAssTime(secs: number): string {
+  const h = Math.floor(secs / 3600);
+  const m = Math.floor((secs % 3600) / 60);
+  const s = Math.floor(secs % 60);
+  const cs = Math.round((secs % 1) * 100);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+}
+
+// Colors: &HAABBGGRR in ASS
+const PALETTE = [
+  "&H00FFFFFF", // branco
+  "&H0000FFFF", // amarelo
+  "&H00FF00FF", // magenta
+  "&H00FFFF00", // ciano
+  "&H0000A5FF", // laranja
+];
+
+// PlayRes matches the actual 720p output so ASS coordinates are exact (no scaling).
+function buildAssHeader(fontName: string): string {
+  return [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    "PlayResX: 720",
+    "PlayResY: 1280",
+    "WrapStyle: 0",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    // Alignment 2 = bottom-center; MarginV 100 = 100px from bottom in 1280px height
+    `Style: Default,${fontName},48,&H00FFFFFF,&H0000FFFF,&H00000000,&HA0000000,-1,0,0,0,100,100,0,0,1,4,1,2,20,20,100,1`,
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+  ].join("\n");
+}
+
 interface Chunk { text: string; start: number; end: number; }
 
-const WORDS_PER_CHUNK = 4;
-
 function wordsToChunks(words: WhisperWord[]): Chunk[] {
+  const CHUNK = 4;
   const result: Chunk[] = [];
-  for (let i = 0; i < words.length; i += WORDS_PER_CHUNK) {
-    const slice = words.slice(i, i + WORDS_PER_CHUNK);
+  for (let i = 0; i < words.length; i += CHUNK) {
+    const slice = words.slice(i, i + CHUNK);
     result.push({
       text: slice.map(w => w.word.trim().toUpperCase()).join(" "),
       start: slice[0].start,
@@ -117,61 +190,44 @@ function wordsToChunks(words: WhisperWord[]): Chunk[] {
   return result;
 }
 
-function staticChunks(text: string, durationSecs: number): Chunk[] {
-  const words = text.trim().split(/\s+/).filter(Boolean);
-  const groups: string[][] = [];
-  for (let i = 0; i < words.length; i += WORDS_PER_CHUNK) {
-    groups.push(words.slice(i, i + WORDS_PER_CHUNK));
-  }
-  const secPer = Math.max(1.5, durationSecs / Math.max(groups.length, 1));
-  return groups.map((g, i) => ({
-    text: g.map(w => w.toUpperCase()).join(" "),
-    start: i * secPer,
-    end: Math.min((i + 1) * secPer, durationSecs),
-  }));
-}
+function generateAss(words: WhisperWord[], fontName: string): string {
+  const chunks = wordsToChunks(words);
+  const header = buildAssHeader(fontName);
 
-// ─── drawtext filter builder ───────────────────────────────────────────────────
-// Escapes a string to use as drawtext text='...' value (inside single quotes).
-// Only ' and % are special inside single-quoted drawtext text.
-function dtText(s: string): string {
-  return s
-    .replace(/\\/g, "\\\\")
-    .replace(/'/g, "’")   // curly quote — looks identical, no escape needed
-    .replace(/:/g, "∶")   // ratio colon — looks identical, no escape needed
-    .replace(/\[/g, "\\[")
-    .replace(/\]/g, "\\]")
-    .replace(/%/g, "%%");
-}
-
-// Escapes a file path for use as drawtext fontfile='...' value.
-function dtPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
-}
-
-// Colors alternate per chunk for a TikTok-style look.
-const COLORS = ["white", "yellow", "cyan", "white", "yellow", "white", "cyan"];
-
-function buildVf(chunks: Chunk[], fontPath: string | null): string {
-  if (chunks.length === 0) return "scale=720:-2";
-
-  const drawFilters = chunks.map((c, i) => {
-    const color = COLORS[i % COLORS.length];
-    const opts: string[] = [];
-    if (fontPath) opts.push(`fontfile='${dtPath(fontPath)}'`);
-    opts.push(`text='${dtText(c.text)}'`);
-    // Commas inside enable='...' are safe — single-quoted in FFmpeg filter parser.
-    opts.push(`enable='between(t,${c.start.toFixed(2)},${c.end.toFixed(2)})'`);
-    opts.push("fontsize=36");
-    opts.push(`fontcolor=${color}`);
-    opts.push("bordercolor=black@0.95");
-    opts.push("borderw=3");
-    opts.push("x=(w-text_w)/2");
-    opts.push("y=h-130");
-    return `drawtext=${opts.join(":")}`;
+  const dialogues = chunks.map((c, ci) => {
+    const highlightIdx = ci % Math.max(c.text.split(" ").length, 1);
+    const accentColor = PALETTE[(ci % (PALETTE.length - 1)) + 1];
+    const wordParts = c.text.split(" ").map((w, wi) => {
+      const color = wi === highlightIdx ? accentColor : "&H00FFFFFF";
+      return `{\\1c${color}}${w}`;
+    });
+    return `Dialogue: 0,${formatAssTime(c.start)},${formatAssTime(c.end)},Default,,0,0,0,,${wordParts.join(" ")}`;
   });
 
-  return `scale=720:-2,${drawFilters.join(",")}`;
+  return header + "\n" + dialogues.join("\n");
+}
+
+function generateStaticAss(text: string, durationSecs: number, fontName: string): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+  const CHUNK = 4;
+  const groups: string[][] = [];
+  for (let i = 0; i < words.length; i += CHUNK) groups.push(words.slice(i, i + CHUNK));
+  const secPer = Math.max(1.5, durationSecs / Math.max(groups.length, 1));
+
+  const header = buildAssHeader(fontName);
+  const dialogues = groups.map((g, ci) => {
+    const start = ci * secPer;
+    const end = Math.min(start + secPer, durationSecs);
+    const accentColor = PALETTE[(ci % (PALETTE.length - 1)) + 1];
+    const text = g.map((w, wi) => {
+      const color = wi === (ci % g.length) ? accentColor : "&H00FFFFFF";
+      return `{\\1c${color}}${w.toUpperCase()}`;
+    }).join(" ");
+    return `Dialogue: 0,${formatAssTime(start)},${formatAssTime(end)},Default,,0,0,0,,${text}`;
+  });
+
+  return header + "\n" + dialogues.join("\n");
 }
 
 // ─── video duration helper ─────────────────────────────────────────────────────
@@ -199,21 +255,24 @@ export async function burnCaptionsOnVideo(
   const uid = `${Date.now().toString(36)}_${libraryVideoId.slice(-6)}`;
   const videoPath = nodePath.join(os.tmpdir(), `cap_in_${uid}.mp4`);
   const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.wav`);
+  const assPath   = nodePath.join(os.tmpdir(), `cap_${uid}.ass`);
   const outPath   = nodePath.join(os.tmpdir(), `cap_out_${uid}.mp4`);
 
   const cleanup = () =>
-    Promise.allSettled([videoPath, audioPath, outPath].map(p => fs.unlink(p).catch(() => {})));
+    Promise.allSettled([videoPath, audioPath, assPath, outPath].map(p => fs.unlink(p).catch(() => {})));
 
   try {
-    // 1. Download font + vídeo em paralelo
-    const [fontPath] = await Promise.all([
-      getFontPath(),
+    // 1. Download font dir + vídeo em paralelo
+    const [fontInfo] = await Promise.all([
+      getFontsDir(),
       (async () => {
         const res = await fetch(videoPublicUrl, { signal: AbortSignal.timeout(30_000) });
         if (!res.ok) throw new Error(`Download falhou: ${res.status}`);
         await fs.writeFile(videoPath, Buffer.from(await res.arrayBuffer()));
       })(),
     ]);
+
+    const fontName = fontInfo?.fontName ?? "Arial";
 
     // 2. Extrair áudio (pcm_s16le — sempre disponível no ffmpeg-static)
     let hasAudio = true;
@@ -233,8 +292,8 @@ export async function burnCaptionsOnVideo(
       }
     }
 
-    // 3. Transcrever / gerar chunks
-    let chunks: Chunk[];
+    // 3. Transcrever / gerar ASS
+    let assContent = "";
     if (hasAudio) {
       const words = await transcribeAudio(audioPath);
       if (words.length === 0) {
@@ -242,18 +301,24 @@ export async function burnCaptionsOnVideo(
         await cleanup();
         return null;
       }
-      chunks = wordsToChunks(words);
+      assContent = generateAss(words, fontName);
     } else {
       const text = fallbackText?.trim() ||
         "Incrível segue para mais conteúdo viral trending reels fyp brasil";
       const duration = await getVideoDuration(videoPath);
-      chunks = staticChunks(text, duration);
-      if (chunks.length === 0) { await cleanup(); return null; }
+      assContent = generateStaticAss(text, duration, fontName);
+      if (!assContent) { await cleanup(); return null; }
     }
 
-    // 4. Queimar legendas com drawtext (sem dependência de fontes do sistema)
-    const vf = buildVf(chunks, fontPath);
-    console.log("[captions] vf filter:", vf.slice(0, 200));
+    // 4. Gravar arquivo ASS
+    await fs.writeFile(assPath, assContent, "utf-8");
+
+    // 5. Queimar legendas — usa fontsdir se disponível para libass encontrar a fonte
+    // No Linux: path sem espaços, sem ':', sem '\' — sem escape necessário
+    const safeAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+    const fontsDirPart = fontInfo ? `:fontsdir=${fontInfo.dir.replace(/\\/g, "/")}` : "";
+    const vf = `scale=720:-2,ass='${safeAss}'${fontsDirPart}`;
+    console.log("[captions] vf:", vf.slice(0, 200));
 
     await runFfmpeg([
       "-i", videoPath,
@@ -264,7 +329,7 @@ export async function burnCaptionsOnVideo(
       "-y", outPath,
     ]);
 
-    // 5. Upload Supabase
+    // 6. Upload Supabase
     const captionedPath = storagePath.replace(/\.mp4$/i, "_cap.mp4");
     const outBuf = await fs.readFile(outPath);
     const admin = storageAdmin();
