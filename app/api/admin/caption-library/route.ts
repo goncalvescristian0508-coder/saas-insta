@@ -71,11 +71,39 @@ export async function GET(req: Request) {
 }
 
 // POST — processa próximo batch de vídeos sem legenda
-// Body: { cloneId: string, batch?: number }
+// Body: { cloneId?, sourceUsername?, batch?, forceId? }
+// forceId: reprocessa um vídeo específico pelo id (ignora captionedUrl atual)
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json() as { cloneId?: string; sourceUsername?: string; batch?: number };
+  const body = await req.json() as {
+    cloneId?: string;
+    sourceUsername?: string;
+    batch?: number;
+    forceId?: string;
+  };
+
+  // Reprocessar vídeo específico para teste
+  if (body.forceId) {
+    const vid = await prisma.libraryVideo.findUnique({
+      where: { id: body.forceId },
+      select: { id: true, publicUrl: true, storagePath: true },
+    });
+    if (!vid) return NextResponse.json({ error: "Vídeo não encontrado" }, { status: 404 });
+    try {
+      const captionedUrl = await burnCaptionsOnVideo(vid.publicUrl, vid.storagePath, vid.id);
+      if (captionedUrl) {
+        await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl } });
+        return NextResponse.json({ processed: 1, ok: 1, skipped: 0, results: [{ id: vid.id, ok: true, captionedUrl }] });
+      }
+      await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl: "none" } });
+      return NextResponse.json({ processed: 1, ok: 0, skipped: 1, results: [{ id: vid.id, ok: false, error: "sem fala" }] });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return NextResponse.json({ processed: 1, ok: 0, skipped: 1, results: [{ id: vid.id, ok: false, error: msg }] }, { status: 500 });
+    }
+  }
+
   const batchSize = Math.min(body.batch ?? 5, 10);
 
   let where: Prisma.LibraryVideoWhereInput = {
