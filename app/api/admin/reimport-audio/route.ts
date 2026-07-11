@@ -67,7 +67,13 @@ export async function GET(req: Request) {
   const token = tokens[0];
   if (!token) return NextResponse.json({ error: "Sem token Apify" }, { status: 400 });
 
-  const runRes = await fetch(`${APIFY}/actor-runs/${runId}?token=${token}`, { signal: AbortSignal.timeout(10_000) });
+  let runRes: Response | null = null;
+  let activeToken = token;
+  for (const t of tokens) {
+    const res = await fetch(`${APIFY}/actor-runs/${runId}?token=${t}`, { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) { runRes = res; activeToken = t; break; }
+  }
+  if (!runRes) return NextResponse.json({ runId, error: "Run não encontrado com nenhum token" });
   const runData = await runRes.json() as { data?: { status?: string; defaultDatasetId?: string } };
   const datasetId = runData.data?.defaultDatasetId;
   const status = runData.data?.status;
@@ -75,7 +81,7 @@ export async function GET(req: Request) {
   if (!datasetId) return NextResponse.json({ runId, status, error: "Sem dataset" });
 
   const itemsRes = await fetch(
-    `${APIFY}/datasets/${datasetId}/items?token=${token}&format=json&limit=2`,
+    `${APIFY}/datasets/${datasetId}/items?token=${activeToken}&format=json&limit=2`,
     { signal: AbortSignal.timeout(15_000) }
   );
   const items = await itemsRes.json() as Record<string, unknown>[];
@@ -151,11 +157,17 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Não foi possível iniciar run Apify" }, { status: 500 });
   }
 
-  // Passo 2: verificar status do run
-  const runRes = await fetch(`${APIFY}/actor-runs/${inputRunId}?token=${token}`, {
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!runRes.ok) return NextResponse.json({ error: `Run não encontrado: ${runRes.status}` }, { status: 400 });
+  // Passo 2: verificar status do run — tenta todos os tokens (run pode ter sido criado com token diferente)
+  let activeToken = token;
+  let runRes: Response | null = null;
+  for (const t of tokens) {
+    const res = await fetch(`${APIFY}/actor-runs/${inputRunId}?token=${t}`, {
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (res.ok) { runRes = res; activeToken = t; break; }
+  }
+  if (!runRes) return NextResponse.json({ error: `Run não encontrado com nenhum token disponível` }, { status: 400 });
+
   const runData = await runRes.json() as { data?: { status?: string; defaultDatasetId?: string } };
   const runStatus = runData.data?.status;
   const datasetId = runData.data?.defaultDatasetId;
@@ -173,7 +185,7 @@ export async function POST(req: Request) {
 
   // Passo 3: buscar dataset com paginação
   const itemsRes = await fetch(
-    `${APIFY}/datasets/${datasetId}/items?token=${token}&format=json&offset=${offset}&limit=${limit}`,
+    `${APIFY}/datasets/${datasetId}/items?token=${activeToken}&format=json&offset=${offset}&limit=${limit}`,
     { signal: AbortSignal.timeout(30_000) }
   );
   if (!itemsRes.ok) return NextResponse.json({ error: `Dataset erro: ${itemsRes.status}` }, { status: 400 });
