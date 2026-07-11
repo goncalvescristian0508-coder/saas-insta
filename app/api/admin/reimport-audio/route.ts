@@ -36,9 +36,10 @@ function checkAuth(req: Request): boolean {
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json() as { username?: string; limit?: number };
-  const { username } = body;
+  const body = await req.json() as { username?: string; limit?: number; offset?: number; datasetId?: string };
+  const { username, datasetId } = body;
   const limit = Math.min(body.limit ?? 15, 20);
+  const offset = body.offset ?? 0;
 
   if (!username) return NextResponse.json({ error: "username obrigatório" }, { status: 400 });
 
@@ -50,42 +51,63 @@ export async function POST(req: Request) {
   const userId = acc?.userId;
   if (!userId) return NextResponse.json({ error: "userId não encontrado" }, { status: 400 });
 
-  // Usar run-sync que executa e retorna items na mesma chamada (sem salvar runId)
   let items: Record<string, unknown>[] = [];
   let lastError = "";
 
-  const actors = [
-    { id: "apify~instagram-reel-scraper", input: { username: [username], resultsLimit: limit } },
-    { id: "apify~instagram-reel-scraper", input: { usernames: [username], resultsLimit: limit } },
-    { id: "apify~instagram-scraper",       input: { directUrls: [`https://www.instagram.com/${username}/reels/`], resultsLimit: limit, resultsType: "posts" } },
-  ];
-
-  outer: for (const token of tokens) {
-    for (const { id, input } of actors) {
+  // Se datasetId fornecido: lê direto do dataset (ignora runId, evita problema de token)
+  if (datasetId) {
+    for (const token of tokens) {
       try {
-        const url = `${APIFY}/acts/${encodeURIComponent(id)}/run-sync-get-dataset-items?token=${token}&timeout=200&memory=1024&format=json`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-          signal: AbortSignal.timeout(220_000),
-        });
-        if (!res.ok) {
-          lastError = `${id}: HTTP ${res.status}`;
+        const url = `${APIFY}/datasets/${datasetId}/items?token=${token}&format=json&offset=${offset}&limit=${limit}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+        if (!res.ok) { lastError = `dataset HTTP ${res.status}`; continue; }
+        const data = await res.json() as Record<string, unknown>[];
+        items = data;
+        break;
+      } catch (e) { lastError = String(e); continue; }
+    }
+    // Dataset público do Apify não precisa de token
+    if (items.length === 0) {
+      try {
+        const url = `${APIFY}/datasets/${datasetId}/items?format=json&offset=${offset}&limit=${limit}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(30_000) });
+        if (res.ok) items = await res.json() as Record<string, unknown>[];
+      } catch { /* ignora */ }
+    }
+    if (items.length === 0) {
+      return NextResponse.json({ ok: false, error: `Dataset não acessível: ${lastError}` }, { status: 400 });
+    }
+  } else {
+    // Sem datasetId: usa run-sync síncrono
+    const actors = [
+      { id: "apify~instagram-reel-scraper", input: { username: [username], resultsLimit: limit } },
+      { id: "apify~instagram-reel-scraper", input: { usernames: [username], resultsLimit: limit } },
+    ];
+
+    outer: for (const token of tokens) {
+      for (const { id, input } of actors) {
+        try {
+          const url = `${APIFY}/acts/${encodeURIComponent(id)}/run-sync-get-dataset-items?token=${token}&timeout=200&memory=1024&format=json`;
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+            signal: AbortSignal.timeout(220_000),
+          });
+          if (!res.ok) { lastError = `${id}: HTTP ${res.status}`; continue; }
+          const data = await res.json() as Record<string, unknown>[];
+          if (data.length > 0) { items = data; break outer; }
+          lastError = `${id}: 0 itens`;
+        } catch (e) {
+          lastError = `${id}: ${e instanceof Error ? e.message.slice(0, 100) : e}`;
           continue;
         }
-        const data = await res.json() as Record<string, unknown>[];
-        if (data.length > 0) { items = data; break outer; }
-        lastError = `${id}: 0 itens retornados`;
-      } catch (e) {
-        lastError = `${id}: ${e instanceof Error ? e.message.slice(0, 100) : e}`;
-        continue;
       }
     }
-  }
 
-  if (items.length === 0) {
-    return NextResponse.json({ ok: false, error: `Nenhum vídeo obtido do Apify: ${lastError}` }, { status: 502 });
+    if (items.length === 0) {
+      return NextResponse.json({ ok: false, error: `Nenhum vídeo obtido: ${lastError}` }, { status: 502 });
+    }
   }
 
   const admin = storage();
