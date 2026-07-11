@@ -55,7 +55,7 @@ interface WhisperWord { word: string; start: number; end: number; }
 async function transcribeAudio(audioPath: string): Promise<WhisperWord[]> {
   const audioBuffer = await fs.readFile(audioPath);
   const form = new FormData();
-  form.append("file", new Blob([audioBuffer], { type: "audio/mp4" }), "audio.m4a");
+  form.append("file", new Blob([audioBuffer], { type: "audio/mpeg" }), "audio.mp3");
   form.append("model", "whisper-1");
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "word");
@@ -163,7 +163,7 @@ export async function burnCaptionsOnVideo(
 ): Promise<string | null> {
   const uid = `${Date.now().toString(36)}_${libraryVideoId.slice(-6)}`;
   const videoPath = nodePath.join(os.tmpdir(), `cap_in_${uid}.mp4`);
-  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.m4a`); // codec copy — sem re-encode
+  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.mp3`); // re-encode MP3 — compatível com qualquer codec de entrada
   const assPath   = nodePath.join(os.tmpdir(), `cap_${uid}.ass`);
   const outPath   = nodePath.join(os.tmpdir(), `cap_out_${uid}.mp4`);
 
@@ -178,22 +178,30 @@ export async function burnCaptionsOnVideo(
 
     const fontName = FONT_NAME; // Impact — bundled in public/CaptionFont.ttf
 
-    // 2. Extrair áudio como M4A com codec copy (sem decodificar HE-AAC)
+    // 2. Extrair áudio como MP3 (libmp3lame re-encode — aceita HE-AAC, VP9, qualquer codec)
     let hasAudioStream = true;
     let audioExtractErr = "";
     try {
-      await runFfmpeg(["-i", videoPath, "-vn", "-c:a", "copy", "-y", audioPath]);
+      await runFfmpeg([
+        "-i", videoPath,
+        "-vn",
+        "-c:a", "libmp3lame",
+        "-ar", "16000",
+        "-ac", "1",
+        "-q:a", "5",
+        "-y", audioPath,
+      ]);
       const stat = await fs.stat(audioPath).catch(() => null);
-      console.log("[captions] audio m4a size:", stat?.size ?? 0, "bytes");
+      console.log("[captions] audio mp3 size:", stat?.size ?? 0, "bytes");
       if (!stat || stat.size < 500) {
         hasAudioStream = false;
-        audioExtractErr = `áudio extraído muito pequeno: ${stat?.size ?? 0} bytes`;
+        audioExtractErr = `mp3 extraído muito pequeno: ${stat?.size ?? 0} bytes`;
         console.warn("[captions]", audioExtractErr);
       }
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      audioExtractErr = msg.slice(0, 200);
-      if (msg.includes("does not contain any stream") || msg.includes("Invalid argument")) {
+      audioExtractErr = msg.slice(0, 300);
+      if (msg.includes("does not contain any stream") || msg.includes("Invalid argument") || msg.includes("matches no streams")) {
         hasAudioStream = false;
         console.warn("[captions] sem stream de áudio em", libraryVideoId, "—", audioExtractErr);
       } else {
