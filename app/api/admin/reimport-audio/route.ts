@@ -187,9 +187,15 @@ export async function POST(req: Request) {
 
       const existing = await prisma.libraryVideo.findFirst({ where: { userId, storagePath } });
       if (existing) {
+        // Não resetar captionedUrl se o vídeo já tem legenda real (apenas re-importa o arquivo)
+        const keepCaption = existing.captionedUrl && existing.captionedUrl !== "none";
         await prisma.libraryVideo.update({
           where: { id: existing.id },
-          data: { publicUrl: pub.publicUrl, sizeBytes: buffer.length, captionedUrl: null },
+          data: {
+            publicUrl: pub.publicUrl,
+            sizeBytes: buffer.length,
+            ...(keepCaption ? {} : { captionedUrl: null }),
+          },
         });
       } else {
         const caption = String(item.caption ?? item.text ?? item.desc ?? "").slice(0, 80);
