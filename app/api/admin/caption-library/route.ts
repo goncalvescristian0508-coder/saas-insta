@@ -119,7 +119,7 @@ export async function GET(req: Request) {
     prisma.libraryVideo.count({ where: { captionedUrl: { not: null } } }),
   ]);
 
-  return NextResponse.json({ total, captioned, pending: total - captioned, build: "7472e0f" });
+  return NextResponse.json({ total, captioned, pending: total - captioned, build: "ea71d0e" });
 }
 
 // POST — processa próximo batch de vídeos sem legenda
