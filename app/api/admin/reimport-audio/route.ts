@@ -24,10 +24,19 @@ function checkAuth(req: Request): boolean {
 
 function pickVideoUrl(item: Record<string, unknown>): { dashUrl: string; audioUrl: string } {
   const videoObj = item.video as Record<string, unknown> | undefined;
+  const videoVersions = item.video_versions as Array<Record<string, unknown>> | undefined;
+
   // dashUrl: usado como chave de hash (para manter mesmo storagePath)
   const dashUrl = String(item.videoUrl ?? item.url ?? "");
-  // audioUrl: URL do vídeo com áudio (downloadAddr > playAddr > dashUrl)
+
+  // Tenta vários campos que o Instagram Reel Scraper pode retornar com áudio
   const audioUrl = String(
+    // Instagram Reel Scraper campos
+    item.videoUrl ??               // pode já ser H.264 com áudio
+    item.video_url ??
+    videoObj?.url ??
+    videoVersions?.[0]?.url ??    // primeiro item de video_versions
+    // TikTok campos (fallback)
     videoObj?.downloadAddr ??
     videoObj?.playAddr ??
     item.downloadAddr ??
@@ -47,6 +56,45 @@ function pickVideoUrl(item: Record<string, unknown>): { dashUrl: string; audioUr
  * Usa `item.video.downloadAddr` (vídeo+áudio) em vez de `item.videoUrl` (VP9 sem áudio).
  * Sobrescreve os arquivos existentes no Supabase com upsert.
  */
+// GET ?inspect=1&runId=X — mostra os campos do primeiro item do dataset (para debug)
+export async function GET(req: Request) {
+  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { searchParams } = new URL(req.url);
+  const runId = searchParams.get("runId");
+  if (!runId) return NextResponse.json({ error: "runId obrigatório" }, { status: 400 });
+
+  const tokens = await getAllApifyTokens();
+  const token = tokens[0];
+  if (!token) return NextResponse.json({ error: "Sem token Apify" }, { status: 400 });
+
+  const runRes = await fetch(`${APIFY}/actor-runs/${runId}?token=${token}`, { signal: AbortSignal.timeout(10_000) });
+  const runData = await runRes.json() as { data?: { status?: string; defaultDatasetId?: string } };
+  const datasetId = runData.data?.defaultDatasetId;
+  const status = runData.data?.status;
+
+  if (!datasetId) return NextResponse.json({ runId, status, error: "Sem dataset" });
+
+  const itemsRes = await fetch(
+    `${APIFY}/datasets/${datasetId}/items?token=${token}&format=json&limit=2`,
+    { signal: AbortSignal.timeout(15_000) }
+  );
+  const items = await itemsRes.json() as Record<string, unknown>[];
+  if (!items.length) return NextResponse.json({ runId, status, error: "Dataset vazio" });
+
+  // Retorna campos do primeiro item (sem baixar o vídeo) para inspeção
+  const firstItem = items[0];
+  const urlFields: Record<string, unknown> = {};
+  for (const key of Object.keys(firstItem)) {
+    const val = firstItem[key];
+    if (typeof val === "string" && (val.startsWith("http") || key.toLowerCase().includes("url") || key.toLowerCase().includes("video"))) {
+      urlFields[key] = val;
+    } else if (typeof val === "object" && val !== null) {
+      urlFields[key] = val;
+    }
+  }
+  return NextResponse.json({ runId, status, datasetId, totalItems: items.length, urlFields });
+}
+
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -70,8 +118,10 @@ export async function POST(req: Request) {
   // Passo 1: iniciar run se não tiver runId
   if (!inputRunId) {
     const actorAttempts = [
-      { actor: "clockworks/tiktok-scraper", input: { profiles: [username], resultsPerPage: 600 } },
-      { actor: "clockworks/free-tiktok-scraper", input: { profiles: [username], resultsPerPage: 600 } },
+      // Instagram Reel Scraper (conta Instagram)
+      { actor: "apify~instagram-reel-scraper", input: { username: [username], resultsLimit: 600 } },
+      { actor: "apify/instagram-reel-scraper",  input: { username: [username], resultsLimit: 600 } },
+      { actor: "apify~instagram-reel-scraper", input: { usernames: [username], resultsLimit: 600 } },
     ];
 
     for (const { actor, input } of actorAttempts) {
