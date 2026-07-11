@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
+import { promises as fs } from "fs";
+import * as nodePath from "path";
 import { burnCaptionsOnVideo } from "@/lib/videoCaptions";
 
 export const runtime = "nodejs";
@@ -18,6 +20,35 @@ export async function GET(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { searchParams } = new URL(req.url);
+
+  // ?fontCheck=1 → verifica se a fonte está acessível no Lambda
+  if (searchParams.get("fontCheck") === "1") {
+    const cwd = process.cwd();
+    const fontPath = nodePath.join(cwd, "public", "CaptionFont.ttf");
+    const exists = await fs.access(fontPath).then(() => true).catch(() => false);
+    let size: number | null = null;
+    if (exists) { size = (await fs.stat(fontPath)).size; }
+    return NextResponse.json({ cwd, fontPath, exists, size });
+  }
+
+  // ?resetOne=1&username=jeninovaki → reseta 1 vídeo captionado para null (para reprocessar)
+  if (searchParams.get("resetOne") === "1") {
+    const username = searchParams.get("username") ?? "jeninovaki";
+    const vid = await prisma.libraryVideo.findFirst({
+      where: {
+        AND: [
+          { captionedUrl: { not: null } },
+          { captionedUrl: { not: "none" } },
+        ],
+        storagePath: { contains: `/${username}/`, not: { contains: "/covers/" } },
+      },
+      select: { id: true, publicUrl: true, captionedUrl: true },
+      orderBy: { createdAt: "asc" },
+    });
+    if (!vid) return NextResponse.json({ error: "Nenhum vídeo captionado encontrado." });
+    await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl: null } });
+    return NextResponse.json({ reset: true, id: vid.id, wasUrl: vid.captionedUrl });
+  }
 
   if (searchParams.get("setup") === "1") {
     await prisma.$executeRawUnsafe(
