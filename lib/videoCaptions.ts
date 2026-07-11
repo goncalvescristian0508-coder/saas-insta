@@ -201,12 +201,9 @@ export async function burnCaptionsOnVideo(
     } catch (audioErr) {
       const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
       audioExtractErr = msg.slice(0, 300);
-      if (msg.includes("does not contain any stream") || msg.includes("Invalid argument") || msg.includes("matches no streams")) {
-        hasAudioStream = false;
-        console.warn("[captions] sem stream de áudio em", libraryVideoId, "—", audioExtractErr);
-      } else {
-        throw audioErr;
-      }
+      // Qualquer falha na extração de áudio = sem áudio (DASH sem trilha, codec incompatível, etc.)
+      hasAudioStream = false;
+      console.warn("[captions] falha ao extrair áudio em", libraryVideoId, "—", audioExtractErr);
     }
 
     // 3. Transcrever com Whisper

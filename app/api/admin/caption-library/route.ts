@@ -31,7 +31,7 @@ export async function GET(req: Request) {
     return NextResponse.json({ cwd, fontPath, exists, size });
   }
 
-  // ?resetOne=1&username=jeninovaki → reseta 1 vídeo captionado para null (para reprocessar)
+  // ?resetOne=1&username=jeninovaki → reseta 1 vídeo captionado (não-none) para null
   if (searchParams.get("resetOne") === "1") {
     const username = searchParams.get("username") ?? "jeninovaki";
     const vid = await prisma.libraryVideo.findFirst({
@@ -48,6 +48,27 @@ export async function GET(req: Request) {
     if (!vid) return NextResponse.json({ error: "Nenhum vídeo captionado encontrado." });
     await prisma.libraryVideo.update({ where: { id: vid.id }, data: { captionedUrl: null } });
     return NextResponse.json({ reset: true, id: vid.id, wasUrl: vid.captionedUrl });
+  }
+
+  // ?resetNone=1&username=jeninovaki → reseta 5 vídeos marcados "none" para null (reprocessar com nova lógica)
+  if (searchParams.get("resetNone") === "1") {
+    const username = searchParams.get("username") ?? "jeninovaki";
+    const count = parseInt(searchParams.get("count") ?? "5");
+    const vids = await prisma.libraryVideo.findMany({
+      where: {
+        captionedUrl: "none",
+        storagePath: { contains: `/${username}/`, not: { contains: "/covers/" } },
+      },
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+      take: Math.min(count, 20),
+    });
+    if (vids.length === 0) return NextResponse.json({ error: "Nenhum vídeo 'none' encontrado." });
+    await prisma.libraryVideo.updateMany({
+      where: { id: { in: vids.map(v => v.id) } },
+      data: { captionedUrl: null },
+    });
+    return NextResponse.json({ reset: true, count: vids.length, ids: vids.map(v => v.id) });
   }
 
   if (searchParams.get("setup") === "1") {
