@@ -55,7 +55,7 @@ interface WhisperWord { word: string; start: number; end: number; }
 async function transcribeAudio(audioPath: string): Promise<WhisperWord[]> {
   const audioBuffer = await fs.readFile(audioPath);
   const form = new FormData();
-  form.append("file", new Blob([audioBuffer], { type: "audio/mpeg" }), "audio.mp3");
+  form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), "audio.wav");
   form.append("model", "whisper-1");
   form.append("response_format", "verbose_json");
   form.append("timestamp_granularities[]", "word");
@@ -163,7 +163,7 @@ export async function burnCaptionsOnVideo(
 ): Promise<string | null> {
   const uid = `${Date.now().toString(36)}_${libraryVideoId.slice(-6)}`;
   const videoPath = nodePath.join(os.tmpdir(), `cap_in_${uid}.mp4`);
-  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.mp3`); // re-encode MP3 — compatível com qualquer codec de entrada
+  const audioPath = nodePath.join(os.tmpdir(), `cap_audio_${uid}.wav`); // PCM WAV — funciona com qualquer codec de entrada e CMAF
   const assPath   = nodePath.join(os.tmpdir(), `cap_${uid}.ass`);
   const outPath   = nodePath.join(os.tmpdir(), `cap_out_${uid}.mp4`);
 
@@ -178,24 +178,29 @@ export async function burnCaptionsOnVideo(
 
     const fontName = FONT_NAME; // Impact — bundled in public/CaptionFont.ttf
 
-    // 2. Extrair áudio como MP3 (libmp3lame re-encode — aceita HE-AAC, VP9, qualquer codec)
+    // 2. Extrair áudio como WAV PCM 16kHz mono
+    // -fflags +genpts + probesize alto: necessário para CMAF/fragmented-MP4 (formato Instagram/TikTok)
+    // pcm_s16le: sem encoder no output — compatível com qualquer codec de entrada
     let hasAudioStream = true;
     let audioExtractErr = "";
     try {
       await runFfmpeg([
+        "-fflags", "+genpts+igndts",
+        "-probesize", "50000000",
+        "-analyzeduration", "50000000",
         "-i", videoPath,
         "-vn",
-        "-c:a", "libmp3lame",
+        "-acodec", "pcm_s16le",
         "-ar", "16000",
         "-ac", "1",
-        "-q:a", "5",
+        "-f", "wav",
         "-y", audioPath,
       ]);
       const stat = await fs.stat(audioPath).catch(() => null);
-      console.log("[captions] audio mp3 size:", stat?.size ?? 0, "bytes");
-      if (!stat || stat.size < 500) {
+      console.log("[captions] audio wav size:", stat?.size ?? 0, "bytes");
+      if (!stat || stat.size < 1000) {
         hasAudioStream = false;
-        audioExtractErr = `mp3 extraído muito pequeno: ${stat?.size ?? 0} bytes`;
+        audioExtractErr = `wav extraído muito pequeno: ${stat?.size ?? 0} bytes`;
         console.warn("[captions]", audioExtractErr);
       }
     } catch (audioErr) {
