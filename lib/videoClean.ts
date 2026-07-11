@@ -4,6 +4,7 @@ import { writeFile, unlink, mkdir } from "fs/promises";
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { readFile } from "fs/promises";
+import * as os from "os";
 
 // Returns a float in [min, max] with `dec` decimal places
 function randFloat(min: number, max: number, dec = 3): number {
@@ -12,7 +13,8 @@ function randFloat(min: number, max: number, dec = 3): number {
 
 if (ffmpegPath) ffmpeg.setFfmpegPath(ffmpegPath);
 
-const TMP_DIR = join(process.cwd(), "tmp", "video-clean");
+// os.tmpdir() = /tmp no Lambda (gravável), process.cwd() = /var/task (read-only)
+const TMP_DIR = join(os.tmpdir(), "video-clean");
 
 async function ensureTmp() {
   await mkdir(TMP_DIR, { recursive: true });

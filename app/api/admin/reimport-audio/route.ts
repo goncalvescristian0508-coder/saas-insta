@@ -3,6 +3,7 @@ import { createClient as createAdmin } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
 import { getAllApifyTokens } from "@/lib/apifyRotation";
 import { createHash } from "crypto";
+import { cleanVideo } from "@/lib/videoClean";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -22,206 +23,108 @@ function checkAuth(req: Request): boolean {
   return !!secret && auth === `Bearer ${secret}`;
 }
 
-function pickVideoUrl(item: Record<string, unknown>): { dashUrl: string; audioUrl: string } {
-  const videoObj = item.video as Record<string, unknown> | undefined;
-  const videoVersions = item.video_versions as Array<Record<string, unknown>> | undefined;
-
-  // dashUrl: usado como chave de hash (para manter mesmo storagePath)
-  const dashUrl = String(item.videoUrl ?? item.url ?? "");
-
-  // Tenta vários campos que o Instagram Reel Scraper pode retornar com áudio
-  const audioUrl = String(
-    // Instagram Reel Scraper campos
-    item.videoUrl ??               // pode já ser H.264 com áudio
-    item.video_url ??
-    videoObj?.url ??
-    videoVersions?.[0]?.url ??    // primeiro item de video_versions
-    // TikTok campos (fallback)
-    videoObj?.downloadAddr ??
-    videoObj?.playAddr ??
-    item.downloadAddr ??
-    item.playAddr ??
-    dashUrl
-  );
-  return { dashUrl, audioUrl };
-}
-
 /**
  * POST /api/admin/reimport-audio
- * Body: { username: string, runId?: string, offset?: number, limit?: number }
+ * Body: { username: string, limit?: number (default 15, max 20) }
  *
- * Se runId não fornecido: inicia novo run Apify TikTok scraper e retorna runId.
- * Se runId fornecido: baixa do dataset com offset/limit e reimporta com áudio.
+ * Executa Instagram Reel Scraper de forma síncrona (run-sync) e reimporta
+ * os vídeos com audio usando cleanVideo (tmp dir corrigido para /tmp).
+ * Sobrescreve arquivos existentes no Supabase e reseta captionedUrl.
  *
- * Usa `item.video.downloadAddr` (vídeo+áudio) em vez de `item.videoUrl` (VP9 sem áudio).
- * Sobrescreve os arquivos existentes no Supabase com upsert.
+ * Processa em batches de 15 para caber em 300s. Chame múltiplas vezes.
  */
-// GET ?inspect=1&runId=X — mostra os campos do primeiro item do dataset (para debug)
-export async function GET(req: Request) {
-  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { searchParams } = new URL(req.url);
-  const runId = searchParams.get("runId");
-  if (!runId) return NextResponse.json({ error: "runId obrigatório" }, { status: 400 });
-
-  const tokens = await getAllApifyTokens();
-  const token = tokens[0];
-  if (!token) return NextResponse.json({ error: "Sem token Apify" }, { status: 400 });
-
-  let runRes: Response | null = null;
-  let activeToken = token;
-  for (const t of tokens) {
-    const res = await fetch(`${APIFY}/actor-runs/${runId}?token=${t}`, { signal: AbortSignal.timeout(10_000) });
-    if (res.ok) { runRes = res; activeToken = t; break; }
-  }
-  if (!runRes) return NextResponse.json({ runId, error: "Run não encontrado com nenhum token" });
-  const runData = await runRes.json() as { data?: { status?: string; defaultDatasetId?: string } };
-  const datasetId = runData.data?.defaultDatasetId;
-  const status = runData.data?.status;
-
-  if (!datasetId) return NextResponse.json({ runId, status, error: "Sem dataset" });
-
-  const itemsRes = await fetch(
-    `${APIFY}/datasets/${datasetId}/items?token=${activeToken}&format=json&limit=2`,
-    { signal: AbortSignal.timeout(15_000) }
-  );
-  const items = await itemsRes.json() as Record<string, unknown>[];
-  if (!items.length) return NextResponse.json({ runId, status, error: "Dataset vazio" });
-
-  // Retorna campos do primeiro item (sem baixar o vídeo) para inspeção
-  const firstItem = items[0];
-  const urlFields: Record<string, unknown> = {};
-  for (const key of Object.keys(firstItem)) {
-    const val = firstItem[key];
-    if (typeof val === "string" && (val.startsWith("http") || key.toLowerCase().includes("url") || key.toLowerCase().includes("video"))) {
-      urlFields[key] = val;
-    } else if (typeof val === "object" && val !== null) {
-      urlFields[key] = val;
-    }
-  }
-  return NextResponse.json({ runId, status, datasetId, totalItems: items.length, urlFields });
-}
-
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json() as {
-    username?: string;
-    runId?: string;
-    offset?: number;
-    limit?: number;
-  };
-
-  const { username, runId: inputRunId } = body;
-  const offset = body.offset ?? 0;
-  const limit = Math.min(body.limit ?? 20, 30);
+  const body = await req.json() as { username?: string; limit?: number };
+  const { username } = body;
+  const limit = Math.min(body.limit ?? 15, 20);
 
   if (!username) return NextResponse.json({ error: "username obrigatório" }, { status: 400 });
 
   const tokens = await getAllApifyTokens();
   if (tokens.length === 0) return NextResponse.json({ error: "Nenhum token Apify" }, { status: 400 });
-  const token = tokens[0];
 
-  // Passo 1: iniciar run se não tiver runId
-  if (!inputRunId) {
-    const actorAttempts = [
-      // Instagram Reel Scraper (conta Instagram)
-      { actor: "apify~instagram-reel-scraper", input: { username: [username], resultsLimit: 600 } },
-      { actor: "apify/instagram-reel-scraper",  input: { username: [username], resultsLimit: 600 } },
-      { actor: "apify~instagram-reel-scraper", input: { usernames: [username], resultsLimit: 600 } },
-    ];
-
-    for (const { actor, input } of actorAttempts) {
-      try {
-        const startRes = await fetch(
-          `${APIFY}/acts/${encodeURIComponent(actor)}/runs?token=${token}&memory=1024`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(input),
-            signal: AbortSignal.timeout(30_000),
-          }
-        );
-        if (!startRes.ok) continue;
-        const startData = await startRes.json() as { data?: { id?: string } };
-        const runId = startData.data?.id;
-        if (runId) {
-          return NextResponse.json({
-            ok: true,
-            step: "started",
-            runId,
-            message: `Run iniciado para @${username}. Aguarde 5-10 min e chame novamente com runId.`,
-          });
-        }
-      } catch { continue; }
-    }
-    return NextResponse.json({ error: "Não foi possível iniciar run Apify" }, { status: 500 });
-  }
-
-  // Passo 2: verificar status do run — tenta todos os tokens (run pode ter sido criado com token diferente)
-  let activeToken = token;
-  let runRes: Response | null = null;
-  for (const t of tokens) {
-    const res = await fetch(`${APIFY}/actor-runs/${inputRunId}?token=${t}`, {
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (res.ok) { runRes = res; activeToken = t; break; }
-  }
-  if (!runRes) return NextResponse.json({ error: `Run não encontrado com nenhum token disponível` }, { status: 400 });
-
-  const runData = await runRes.json() as { data?: { status?: string; defaultDatasetId?: string } };
-  const runStatus = runData.data?.status;
-  const datasetId = runData.data?.defaultDatasetId;
-
-  if (runStatus !== "SUCCEEDED") {
-    return NextResponse.json({
-      ok: false,
-      runId: inputRunId,
-      status: runStatus,
-      message: `Run ainda não concluído (status: ${runStatus}). Aguarde e tente novamente.`,
-    });
-  }
-
-  if (!datasetId) return NextResponse.json({ error: "Dataset ID não encontrado" }, { status: 400 });
-
-  // Passo 3: buscar dataset com paginação
-  const itemsRes = await fetch(
-    `${APIFY}/datasets/${datasetId}/items?token=${activeToken}&format=json&offset=${offset}&limit=${limit}`,
-    { signal: AbortSignal.timeout(30_000) }
-  );
-  if (!itemsRes.ok) return NextResponse.json({ error: `Dataset erro: ${itemsRes.status}` }, { status: 400 });
-  const items = await itemsRes.json() as Record<string, unknown>[];
-
-  if (items.length === 0) {
-    return NextResponse.json({ ok: true, done: true, message: "Todos os vídeos processados." });
-  }
-
-  const admin = storage();
-
-  // Pegar userId do primeiro InstagramOAuthAccount (admin)
+  // Pegar userId do admin
   const acc = await prisma.instagramOAuthAccount.findFirst({ orderBy: { createdAt: "asc" } });
   const userId = acc?.userId;
   if (!userId) return NextResponse.json({ error: "userId não encontrado" }, { status: 400 });
 
-  const results = { updated: 0, skipped: 0, failed: 0, noAudioUrl: 0 };
+  // Usar run-sync que executa e retorna items na mesma chamada (sem salvar runId)
+  let items: Record<string, unknown>[] = [];
+  let lastError = "";
+
+  const actors = [
+    { id: "apify~instagram-reel-scraper", input: { username: [username], resultsLimit: limit } },
+    { id: "apify~instagram-reel-scraper", input: { usernames: [username], resultsLimit: limit } },
+    { id: "apify~instagram-scraper",       input: { directUrls: [`https://www.instagram.com/${username}/reels/`], resultsLimit: limit, resultsType: "posts" } },
+  ];
+
+  outer: for (const token of tokens) {
+    for (const { id, input } of actors) {
+      try {
+        const url = `${APIFY}/acts/${encodeURIComponent(id)}/run-sync-get-dataset-items?token=${token}&timeout=200&memory=1024&format=json`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+          signal: AbortSignal.timeout(220_000),
+        });
+        if (!res.ok) {
+          lastError = `${id}: HTTP ${res.status}`;
+          continue;
+        }
+        const data = await res.json() as Record<string, unknown>[];
+        if (data.length > 0) { items = data; break outer; }
+        lastError = `${id}: 0 itens retornados`;
+      } catch (e) {
+        lastError = `${id}: ${e instanceof Error ? e.message.slice(0, 100) : e}`;
+        continue;
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    return NextResponse.json({ ok: false, error: `Nenhum vídeo obtido do Apify: ${lastError}` }, { status: 502 });
+  }
+
+  const admin = storage();
+  const results = { updated: 0, skipped: 0, failed: 0, noUrl: 0 };
 
   for (const item of items) {
-    const { dashUrl, audioUrl } = pickVideoUrl(item);
-    if (!dashUrl) { results.failed++; continue; }
+    // Instagram Reel Scraper fields
+    const videoUrl = String(
+      item.videoUrl ??
+      item.video_url ??
+      (item.video as Record<string, unknown>)?.url ??
+      item.url ??
+      ""
+    );
 
-    // Se não tem URL com áudio diferente do dashUrl, pula
-    if (audioUrl === dashUrl) { results.noAudioUrl++; continue; }
+    if (!videoUrl || !videoUrl.startsWith("http")) { results.noUrl++; continue; }
 
-    // storagePath usa hash da dashUrl para manter compatibilidade com registros existentes
-    const urlHash = createHash("md5").update(dashUrl).digest("hex");
+    // Hash sobre a URL para manter compatibilidade com storagePaths existentes
+    const urlHash = createHash("md5").update(videoUrl).digest("hex");
     const storagePath = `cloned/${userId}/${username}/${urlHash}.mp4`;
 
     try {
-      // Baixa do URL com áudio
-      const vidRes = await fetch(audioUrl, { signal: AbortSignal.timeout(60_000) });
+      const vidRes = await fetch(videoUrl, {
+        signal: AbortSignal.timeout(60_000),
+        headers: {
+          // Headers de browser para forçar CDN a retornar H.264+AAC em vez de VP9 DASH
+          "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+          "Accept": "video/mp4,video/*;q=0.9,*/*;q=0.8",
+        },
+      });
       if (!vidRes.ok) { results.failed++; continue; }
-      const buffer = Buffer.from(await vidRes.arrayBuffer());
 
-      // Sobrescreve no Supabase
+      const raw = Buffer.from(await vidRes.arrayBuffer());
+      // cleanVideo agora usa /tmp (gravável no Lambda) — re-encoda VP9→H.264+AAC
+      const buffer = await cleanVideo(raw).catch((e) => {
+        console.warn("[reimport] cleanVideo falhou, usando raw:", e instanceof Error ? e.message.slice(0, 100) : e);
+        return raw;
+      });
+
       const { error: upErr } = await admin.storage
         .from("library-videos")
         .upload(storagePath, buffer, { contentType: "video/mp4", upsert: true });
@@ -229,19 +132,14 @@ export async function POST(req: Request) {
 
       const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
 
-      // Atualiza ou cria LibraryVideo + reseta captionedUrl para reprocessar
       const existing = await prisma.libraryVideo.findFirst({ where: { userId, storagePath } });
       if (existing) {
         await prisma.libraryVideo.update({
           where: { id: existing.id },
-          data: {
-            publicUrl: pub.publicUrl,
-            sizeBytes: buffer.length,
-            captionedUrl: null, // força reprocessamento de legenda
-          },
+          data: { publicUrl: pub.publicUrl, sizeBytes: buffer.length, captionedUrl: null },
         });
       } else {
-        const caption = String(item.text ?? item.desc ?? item.caption ?? "").slice(0, 80);
+        const caption = String(item.caption ?? item.text ?? item.desc ?? "").slice(0, 80);
         await prisma.libraryVideo.create({
           data: {
             userId,
@@ -256,20 +154,12 @@ export async function POST(req: Request) {
       }
 
       results.updated++;
-      console.log(`[reimport-audio] updated ${storagePath} (${buffer.length} bytes)`);
+      console.log(`[reimport] OK ${storagePath} ${buffer.length}B`);
     } catch (e) {
-      console.error(`[reimport-audio] failed ${storagePath}:`, e instanceof Error ? e.message : e);
+      console.error(`[reimport] fail ${storagePath}:`, e instanceof Error ? e.message.slice(0, 100) : e);
       results.failed++;
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    runId: inputRunId,
-    offset,
-    limit,
-    processed: items.length,
-    nextOffset: offset + items.length,
-    ...results,
-  });
+  return NextResponse.json({ ok: true, username, scraped: items.length, ...results });
 }
