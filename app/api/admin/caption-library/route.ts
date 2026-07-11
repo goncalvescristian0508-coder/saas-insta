@@ -65,7 +65,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json() as { cloneId?: string; batch?: number };
+  const body = await req.json() as { cloneId?: string; sourceUsername?: string; batch?: number };
   const batchSize = Math.min(body.batch ?? 5, 10);
 
   let where: Prisma.LibraryVideoWhereInput = {
@@ -73,7 +73,12 @@ export async function POST(req: Request) {
     storagePath: { not: { contains: "/covers/" } },
   };
 
-  if (body.cloneId) {
+  if (body.sourceUsername) {
+    where = {
+      ...where,
+      storagePath: { contains: `/${body.sourceUsername}/`, not: { contains: "/covers/" } },
+    };
+  } else if (body.cloneId) {
     const job = await prisma.cloneJob.findUnique({
       where: { id: body.cloneId },
       select: { sourceUsername: true },
