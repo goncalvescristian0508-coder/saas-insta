@@ -256,13 +256,11 @@ export async function burnCaptionsOnVideo(
 
     // 5. Queimar legendas no vídeo
     const safeAss = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
-    // Scale to 480p, CRF 34, hard cap 38MB — keeps file under Supabase upload limit
     await runFfmpeg([
       "-i", videoPath,
-      "-vf", `scale=480:-2,ass='${safeAss}'`,
-      "-c:v", "libx264", "-crf", "34", "-preset", "ultrafast",
-      "-c:a", hasAudio ? "aac" : "an", "-b:a", "64k",
-      "-fs", "38000000",
+      "-vf", `scale=720:-2,ass='${safeAss}'`,
+      "-c:v", "libx264", "-crf", "30", "-preset", "ultrafast",
+      "-c:a", hasAudio ? "copy" : "an",
       "-movflags", "+faststart",
       "-y", outPath,
     ]);

@@ -26,6 +26,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ ok: true, message: "Coluna captionedUrl criada (ou já existia)." });
   }
 
+  if (searchParams.get("sample") === "1") {
+    const username = searchParams.get("username") ?? "jeninovaki";
+    const sample = await prisma.libraryVideo.findFirst({
+      where: { captionedUrl: { not: null }, storagePath: { contains: `/${username}/` } },
+      select: { id: true, publicUrl: true, captionedUrl: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return NextResponse.json(sample ?? { error: "Nenhum vídeo legendado ainda." });
+  }
+
   const cloneId = searchParams.get("cloneId");
 
   if (cloneId) {
