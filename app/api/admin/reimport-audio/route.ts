@@ -23,16 +23,11 @@ function checkAuth(req: Request): boolean {
   return !!secret && auth === `Bearer ${secret}`;
 }
 
-/**
- * POST /api/admin/reimport-audio
- * Body: { username: string, limit?: number (default 15, max 20) }
- *
- * Executa Instagram Reel Scraper de forma síncrona (run-sync) e reimporta
- * os vídeos com audio usando cleanVideo (tmp dir corrigido para /tmp).
- * Sobrescreve arquivos existentes no Supabase e reseta captionedUrl.
- *
- * Processa em batches de 15 para caber em 300s. Chame múltiplas vezes.
- */
+export async function GET(req: Request) {
+  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  return NextResponse.json({ ok: true, route: "reimport-audio", build: "e23883e" });
+}
+
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
