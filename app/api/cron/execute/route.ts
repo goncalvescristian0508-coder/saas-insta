@@ -270,7 +270,7 @@ async function runCron() {
           }
           // Enforce minimum 8-minute gap between posts on the same account.
           // Reschedule the next PENDING post so it won't be picked up before the cooldown.
-          const cooldownAt = new Date(now.getTime() + 8 * 60 * 1000);
+          const cooldownAt = new Date(now.getTime() + 30 * 60 * 1000);
           await prisma.scheduledPost.updateMany({
             where: { accountId: post.accountId, status: "PENDING", scheduledAt: { lt: cooldownAt } },
             data: { scheduledAt: cooldownAt },
@@ -375,6 +375,26 @@ async function runCron() {
     console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos");
   }));
 
+  // Pre-load recently used library URLs per (accountId, cloneJobId) to avoid posting
+  // the same video multiple times on the same account.
+  // Strategy: query last 60 DONE posts where rawVideoUrl was saved as a Supabase URL.
+  const usedUrlsPerAccountClone = new Map<string, Set<string>>();
+  const libFirstPairs = [...new Map(
+    pending
+      .filter(p => p.cloneJobId && p.rawVideoUrl && !p.rawVideoUrl.includes("supabase.co/storage"))
+      .map(p => [`${p.accountId}:${p.cloneJobId}`, { accountId: p.accountId, cloneJobId: p.cloneJobId! }])
+  ).values()];
+  await Promise.all(libFirstPairs.map(async ({ accountId, cloneJobId }) => {
+    const key = `${accountId}:${cloneJobId}`;
+    const recent = await prisma.scheduledPost.findMany({
+      where: { accountId, cloneJobId, status: "DONE", rawVideoUrl: { contains: "supabase.co/storage" } },
+      select: { rawVideoUrl: true },
+      orderBy: { scheduledAt: "desc" },
+      take: 60,
+    }).catch(() => [] as { rawVideoUrl: string | null }[]);
+    usedUrlsPerAccountClone.set(key, new Set(recent.map(p => p.rawVideoUrl).filter(Boolean) as string[]));
+  }));
+
   // Phase1 runs sequentially so FFmpeg transforms don't compete for /tmp space.
   for (const post of pending) {
     const warmup = warmupMap.get(post.accountId);
@@ -401,9 +421,24 @@ async function runCron() {
             // Apify CDN URLs expire in ~24h; for older posts the download will always fail.
             const libUrls = cloneLibMap.get(post.cloneJobId) ?? [];
             if (libUrls.length > 0) {
-              const idx = Math.abs(post.id.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % libUrls.length;
-              videoUrl = libUrls[idx];
-              console.log("[cron] library-first @", post.account.username);
+              const libKey = `${post.accountId}:${post.cloneJobId}`;
+              const used = usedUrlsPerAccountClone.get(libKey) ?? new Set<string>();
+              // Filter out recently used videos; fall back to full library if all used
+              const pool = libUrls.filter(u => !used.has(u));
+              const pickFrom = pool.length > 0 ? pool : libUrls;
+              // Stable offset per account so different accounts pick different videos
+              const accountOffset = Math.abs(post.accountId.split("").reduce((a, c) => a + c.charCodeAt(0), 0));
+              const idx = (accountOffset + used.size) % pickFrom.length;
+              videoUrl = pickFrom[idx];
+              // Track within tick so next post for same account gets a different video
+              used.add(videoUrl);
+              usedUrlsPerAccountClone.set(libKey, used);
+              // Persist chosen URL so future ticks can query and exclude it
+              await prisma.scheduledPost.update({
+                where: { id: post.id },
+                data: { rawVideoUrl: videoUrl },
+              }).catch(() => {});
+              console.log("[cron] library-first @", post.account.username, `pool ${pickFrom.length}/${libUrls.length}`);
             } else {
               // No library videos for this clone — try download + FFmpeg as last resort.
               try {
