@@ -25,7 +25,7 @@ function checkAuth(req: Request): boolean {
 
 export async function GET(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json({ ok: true, route: "reimport-audio", build: "e23883e" });
+  return NextResponse.json({ ok: true, route: "reimport-audio", build: "452bf76" });
 }
 
 export async function POST(req: Request) {
