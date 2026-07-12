@@ -122,6 +122,7 @@ async function ensureSchema() {
     `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "containerCreationId" TEXT`,
     `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "containerCreatedAt" TIMESTAMP(3)`,
     `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "rehostStoragePath" TEXT`,
+    `ALTER TABLE "CloneJob" ADD COLUMN IF NOT EXISTS "intervalMinutes" INTEGER NOT NULL DEFAULT 60`,
     `CREATE TABLE IF NOT EXISTS "AccountWarmup" (
       "id" TEXT NOT NULL,
       "userId" TEXT NOT NULL,
@@ -268,9 +269,13 @@ async function runCron() {
               url: "/schedule",
             }).catch(() => {});
           }
-          // Enforce minimum 8-minute gap between posts on the same account.
-          // Reschedule the next PENDING post so it won't be picked up before the cooldown.
-          const cooldownAt = new Date(now.getTime() + 30 * 60 * 1000);
+          // Enforce minimum gap between posts on the same account using the clone's interval.
+          // Clamps to [30, 240] minutes so it never goes too short or too long.
+          const cloneInterval = post.cloneJobId
+            ? await prisma.cloneJob.findUnique({ where: { id: post.cloneJobId }, select: { intervalMinutes: true } }).catch(() => null)
+            : null;
+          const cooldownMinutes = Math.max(30, Math.min(cloneInterval?.intervalMinutes ?? 60, 240));
+          const cooldownAt = new Date(now.getTime() + cooldownMinutes * 60 * 1000);
           await prisma.scheduledPost.updateMany({
             where: { accountId: post.accountId, status: "PENDING", scheduledAt: { lt: cooldownAt } },
             data: { scheduledAt: cooldownAt },
@@ -357,7 +362,7 @@ async function runCron() {
   await Promise.all(uniqueCloneIds.map(async (cloneId) => {
     const job = await prisma.cloneJob.findUnique({
       where: { id: cloneId },
-      select: { sourceUsername: true, userId: true },
+      select: { sourceUsername: true, userId: true, intervalMinutes: true },
     }).catch(() => null);
     if (!job?.sourceUsername) { cloneLibMap.set(cloneId, []); return; }
     let vids = await prisma.libraryVideo.findMany({
@@ -418,9 +423,27 @@ async function runCron() {
       if (post.rawVideoUrl) {
         if (post.cloneJobId) {
           // If rawVideoUrl is already on Supabase (library-sourced clone), use it directly.
-          // FFmpeg on Vercel Lambda times out for large videos — skip transform for Supabase URLs.
+          // But prefer captionedUrl when available — rawVideoUrl may point to un-captioned VP9.
           if (post.rawVideoUrl.includes("supabase.co/storage")) {
-            videoUrl = post.rawVideoUrl;
+            const captioned = post.video?.captionedUrl;
+            if (captioned && captioned !== "none") {
+              videoUrl = captioned;
+            } else {
+              // No captionedUrl on linked video — fall back to captioned pool to avoid VP9/silent posts
+              const libUrls = post.cloneJobId ? (cloneLibMap.get(post.cloneJobId) ?? []) : [];
+              if (libUrls.length > 0) {
+                const libKey = `${post.accountId}:${post.cloneJobId}`;
+                const used = usedUrlsPerAccountClone.get(libKey) ?? new Set<string>();
+                const pool = libUrls.filter(u => !used.has(u));
+                const pickFrom = pool.length > 0 ? pool : libUrls;
+                const accountOffset = Math.abs(post.accountId.split("").reduce((a, c) => a + c.charCodeAt(0), 0));
+                videoUrl = pickFrom[(accountOffset + used.size) % pickFrom.length];
+                used.add(videoUrl);
+                usedUrlsPerAccountClone.set(libKey, used);
+              } else {
+                videoUrl = post.rawVideoUrl;
+              }
+            }
           } else {
             // Non-Supabase (Apify CDN) URL: use library-first to avoid expired URL failures.
             // Apify CDN URLs expire in ~24h; for older posts the download will always fail.

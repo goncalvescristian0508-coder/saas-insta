@@ -484,6 +484,7 @@ export async function POST(request: Request) {
         totalReels: 0,
         clonedBio: false,
         clonedPhoto: false,
+        intervalMinutes,
       },
     });
 

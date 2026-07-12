@@ -73,6 +73,7 @@ model CloneJob {
   clonedBio        Boolean  @default(false)
   clonedPhoto      Boolean  @default(false)
   errorMsg         String?
+  intervalMinutes  Int      @default(60)
   createdAt        DateTime @default(now())
 
   posts ScheduledPost[]
