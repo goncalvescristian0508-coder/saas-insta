@@ -497,7 +497,10 @@ async function runCron() {
           }
         }
       } else if (post.video?.publicUrl) {
-        videoUrl = post.video.publicUrl;
+        // Prefer captionedUrl when available (burned-in captions version)
+        videoUrl = (post.video.captionedUrl && post.video.captionedUrl !== "none")
+          ? post.video.captionedUrl
+          : post.video.publicUrl;
       } else {
         throw new Error("Nenhuma URL de vídeo disponível para este post.");
       }
