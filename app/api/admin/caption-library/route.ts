@@ -84,8 +84,11 @@ export async function GET(req: Request) {
     const skip = parseInt(searchParams.get("skip") ?? "0");
     const samples = await prisma.libraryVideo.findMany({
       where: {
-        captionedUrl: { not: null, not: "none" },
-        storagePath: { contains: `/${username}/` },
+        AND: [
+          { captionedUrl: { not: null } },
+          { captionedUrl: { not: "none" } },
+          { storagePath: { contains: `/${username}/` } },
+        ],
       },
       select: { id: true, publicUrl: true, captionedUrl: true },
       orderBy: { createdAt: "desc" },
