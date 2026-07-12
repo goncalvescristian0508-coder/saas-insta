@@ -348,10 +348,10 @@ async function runCron() {
     data: { status: "RUNNING" },
   }).catch(e => console.error("[cron] mark RUNNING:", e));
 
-  // Pre-load library videos for all unique clone jobs needing CDN fallback (one query per clone,
-  // not one per post). Avoids expensive per-post DB round-trips and enables library-first logic.
+  // Pre-load library videos for all unique clone jobs — includes videoId posts so that
+  // posts linked to un-captioned library videos can fall back to the captioned pool.
   const uniqueCloneIds = [...new Set(pending
-    .filter(p => p.cloneJobId && p.rawVideoUrl && !p.rawVideoUrl.includes("supabase.co/storage"))
+    .filter(p => p.cloneJobId)
     .map(p => p.cloneJobId!))];
   const cloneLibMap = new Map<string, string[]>(); // cloneJobId → [publicUrl]
   await Promise.all(uniqueCloneIds.map(async (cloneId) => {
@@ -386,7 +386,7 @@ async function runCron() {
   const usedUrlsPerAccountClone = new Map<string, Set<string>>();
   const libFirstPairs = [...new Map(
     pending
-      .filter(p => p.cloneJobId && p.rawVideoUrl && !p.rawVideoUrl.includes("supabase.co/storage"))
+      .filter(p => p.cloneJobId)
       .map(p => [`${p.accountId}:${p.cloneJobId}`, { accountId: p.accountId, cloneJobId: p.cloneJobId! }])
   ).values()];
   await Promise.all(libFirstPairs.map(async ({ accountId, cloneJobId }) => {
@@ -497,10 +497,28 @@ async function runCron() {
           }
         }
       } else if (post.video?.publicUrl) {
-        // Prefer captionedUrl when available (burned-in captions version)
-        videoUrl = (post.video.captionedUrl && post.video.captionedUrl !== "none")
-          ? post.video.captionedUrl
-          : post.video.publicUrl;
+        const hasCaption = post.video.captionedUrl && post.video.captionedUrl !== "none";
+        if (hasCaption) {
+          videoUrl = post.video.captionedUrl!;
+        } else if (post.cloneJobId) {
+          // Linked video has no caption — pick from captioned pool to avoid silent/VP9 videos
+          const libUrls = cloneLibMap.get(post.cloneJobId) ?? [];
+          if (libUrls.length > 0) {
+            const libKey = `${post.accountId}:${post.cloneJobId}`;
+            const used = usedUrlsPerAccountClone.get(libKey) ?? new Set<string>();
+            const pool = libUrls.filter(u => !used.has(u));
+            const pickFrom = pool.length > 0 ? pool : libUrls;
+            const accountOffset = Math.abs(post.accountId.split("").reduce((a, c) => a + c.charCodeAt(0), 0));
+            const idx = (accountOffset + used.size) % pickFrom.length;
+            videoUrl = pickFrom[idx];
+            used.add(videoUrl);
+            usedUrlsPerAccountClone.set(libKey, used);
+          } else {
+            videoUrl = post.video.publicUrl;
+          }
+        } else {
+          videoUrl = post.video.publicUrl;
+        }
       } else {
         throw new Error("Nenhuma URL de vídeo disponível para este post.");
       }
