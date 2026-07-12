@@ -80,12 +80,20 @@ export async function GET(req: Request) {
 
   if (searchParams.get("sample") === "1") {
     const username = searchParams.get("username") ?? "jeninovaki";
-    const sample = await prisma.libraryVideo.findFirst({
-      where: { captionedUrl: { not: null }, storagePath: { contains: `/${username}/` } },
+    const count = Math.min(parseInt(searchParams.get("count") ?? "1"), 20);
+    const skip = parseInt(searchParams.get("skip") ?? "0");
+    const samples = await prisma.libraryVideo.findMany({
+      where: {
+        captionedUrl: { not: null, not: "none" },
+        storagePath: { contains: `/${username}/` },
+      },
       select: { id: true, publicUrl: true, captionedUrl: true },
       orderBy: { createdAt: "desc" },
+      take: count,
+      skip,
     });
-    return NextResponse.json(sample ?? { error: "Nenhum vídeo legendado ainda." });
+    if (samples.length === 0) return NextResponse.json({ error: "Nenhum vídeo legendado ainda." });
+    return NextResponse.json(count === 1 ? samples[0] : samples);
   }
 
   const cloneId = searchParams.get("cloneId");
