@@ -33,7 +33,8 @@ export async function GET(req: Request) {
 
   // ?resetOne=1&username=jeninovaki → reseta 1 vídeo captionado (não-none) para null
   if (searchParams.get("resetOne") === "1") {
-    const username = searchParams.get("username") ?? "jeninovaki";
+    const username = searchParams.get("username");
+    if (!username) return NextResponse.json({ error: "Parâmetro username obrigatório." }, { status: 400 });
     const vid = await prisma.libraryVideo.findFirst({
       where: {
         AND: [
@@ -52,7 +53,8 @@ export async function GET(req: Request) {
 
   // ?resetNone=1&username=jeninovaki → reseta 5 vídeos marcados "none" para null (reprocessar com nova lógica)
   if (searchParams.get("resetNone") === "1") {
-    const username = searchParams.get("username") ?? "jeninovaki";
+    const username = searchParams.get("username");
+    if (!username) return NextResponse.json({ error: "Parâmetro username obrigatório." }, { status: 400 });
     const count = parseInt(searchParams.get("count") ?? "5");
     const vids = await prisma.libraryVideo.findMany({
       where: {
@@ -71,15 +73,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ reset: true, count: vids.length, ids: vids.map(v => v.id) });
   }
 
-  if (searchParams.get("setup") === "1") {
-    await prisma.$executeRawUnsafe(
-      `ALTER TABLE "LibraryVideo" ADD COLUMN IF NOT EXISTS "captionedUrl" TEXT;`
-    );
-    return NextResponse.json({ ok: true, message: "Coluna captionedUrl criada (ou já existia)." });
-  }
-
   if (searchParams.get("sample") === "1") {
-    const username = searchParams.get("username") ?? "jeninovaki";
+    const username = searchParams.get("username");
+    if (!username) return NextResponse.json({ error: "Parâmetro username obrigatório." }, { status: 400 });
     const count = Math.min(parseInt(searchParams.get("count") ?? "1"), 20);
     const skip = parseInt(searchParams.get("skip") ?? "0");
     const samples = await prisma.libraryVideo.findMany({

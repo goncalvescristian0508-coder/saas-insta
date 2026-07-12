@@ -239,10 +239,9 @@ async function processCloneJob(p: ProcessParams) {
       .map((r) => ({
         videoUrl: String(r.videoUrl),
         caption: String(r.caption ?? ""),
-        thumbnailUrl: String(r.displayUrl ?? r.thumbnailUrl ?? r.previewUrl ?? "") || null,
+        thumbnailUrl: String(r.displayUrl ?? r.thumbnailUrl ?? "") || null,
       }))
-      .filter((r) => { if (seenUrls.has(r.videoUrl)) return false; seenUrls.add(r.videoUrl); return true; })
-      .slice(0, p.postLimit ?? undefined);
+      .filter((r) => { if (seenUrls.has(r.videoUrl)) return false; seenUrls.add(r.videoUrl); return true; });
 
     if (reelsRaw.length === 0) {
       const errorMsg = "Nenhum reel encontrado neste perfil. Verifique se o perfil é público e tem reels.";

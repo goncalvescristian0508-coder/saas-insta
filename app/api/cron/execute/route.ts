@@ -9,7 +9,7 @@ import {
   publishMediaContainer,
 } from "@/lib/instagramGraphPublish";
 import { createClient } from "@supabase/supabase-js";
-import { randomUUID, createHash } from "crypto";
+import { createHash } from "crypto";
 import { sendPushToUser } from "@/lib/sendPush";
 import { stripMp4Metadata } from "@/lib/videoUtils";
 import { shufflePool } from "@/lib/autoCaptions";
@@ -114,46 +114,21 @@ async function downloadTransformAndHostVideo(
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-async function ensureSchema() {
-  const stmts = [
-    `ALTER TABLE "InstagramOAuthAccount" ADD COLUMN IF NOT EXISTS "appKey" TEXT NOT NULL DEFAULT '1'`,
-    `ALTER TABLE "InstagramOAuthAccount" ADD COLUMN IF NOT EXISTS "lastError" TEXT`,
-    `ALTER TABLE "InstagramOAuthAccount" ADD COLUMN IF NOT EXISTS "proxyUrl" TEXT`,
-    `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "containerCreationId" TEXT`,
-    `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "containerCreatedAt" TIMESTAMP(3)`,
-    `ALTER TABLE "ScheduledPost" ADD COLUMN IF NOT EXISTS "rehostStoragePath" TEXT`,
-    `ALTER TABLE "CloneJob" ADD COLUMN IF NOT EXISTS "intervalMinutes" INTEGER NOT NULL DEFAULT 60`,
-    `CREATE TABLE IF NOT EXISTS "AccountWarmup" (
-      "id" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "accountId" TEXT NOT NULL,
-      "targetPosts" INTEGER NOT NULL DEFAULT 30,
-      "completedPosts" INTEGER NOT NULL DEFAULT 0,
-      "intervalMinutes" INTEGER NOT NULL DEFAULT 120,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "lastPostedAt" TIMESTAMP(3),
-      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "AccountWarmup_pkey" PRIMARY KEY ("id")
-    )`,
-    `CREATE UNIQUE INDEX IF NOT EXISTS "AccountWarmup_accountId_key" ON "AccountWarmup"("accountId")`,
-    `CREATE INDEX IF NOT EXISTS "AccountWarmup_userId_idx" ON "AccountWarmup"("userId")`,
-    `CREATE TABLE IF NOT EXISTS "SchedulePreset" (
-      "id" TEXT NOT NULL,
-      "userId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "description" TEXT,
-      "times" TEXT[] NOT NULL DEFAULT '{}',
-      "caption" TEXT,
-      "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      CONSTRAINT "SchedulePreset_pkey" PRIMARY KEY ("id")
-    )`,
-    `CREATE INDEX IF NOT EXISTS "SchedulePreset_userId_idx" ON "SchedulePreset"("userId")`,
-  ];
-  for (const sql of stmts) {
-    await prisma.$executeRawUnsafe(sql).catch(() => {});
-  }
+function pickFromLibPool(
+  libUrls: string[],
+  accountId: string,
+  cloneJobId: string,
+  usedMap: Map<string, Set<string>>,
+): string {
+  const libKey = `${accountId}:${cloneJobId}`;
+  const used = usedMap.get(libKey) ?? new Set<string>();
+  const pool = libUrls.filter(u => !used.has(u));
+  const pickFrom = pool.length > 0 ? pool : libUrls;
+  const accountOffset = Math.abs(accountId.split("").reduce((a: number, c: string) => a + c.charCodeAt(0), 0));
+  const url = pickFrom[(accountOffset + used.size) % pickFrom.length];
+  used.add(url);
+  usedMap.set(libKey, used);
+  return url;
 }
 
 async function runCron() {
@@ -430,43 +405,22 @@ async function runCron() {
               videoUrl = captioned;
             } else {
               // No captionedUrl on linked video — fall back to captioned pool to avoid VP9/silent posts
-              const libUrls = post.cloneJobId ? (cloneLibMap.get(post.cloneJobId) ?? []) : [];
-              if (libUrls.length > 0) {
-                const libKey = `${post.accountId}:${post.cloneJobId}`;
-                const used = usedUrlsPerAccountClone.get(libKey) ?? new Set<string>();
-                const pool = libUrls.filter(u => !used.has(u));
-                const pickFrom = pool.length > 0 ? pool : libUrls;
-                const accountOffset = Math.abs(post.accountId.split("").reduce((a, c) => a + c.charCodeAt(0), 0));
-                videoUrl = pickFrom[(accountOffset + used.size) % pickFrom.length];
-                used.add(videoUrl);
-                usedUrlsPerAccountClone.set(libKey, used);
-              } else {
-                videoUrl = post.rawVideoUrl;
-              }
+              const libUrls = cloneLibMap.get(post.cloneJobId) ?? [];
+              videoUrl = libUrls.length > 0
+                ? pickFromLibPool(libUrls, post.accountId, post.cloneJobId, usedUrlsPerAccountClone)
+                : post.rawVideoUrl;
             }
           } else {
             // Non-Supabase (Apify CDN) URL: use library-first to avoid expired URL failures.
             // Apify CDN URLs expire in ~24h; for older posts the download will always fail.
             const libUrls = cloneLibMap.get(post.cloneJobId) ?? [];
             if (libUrls.length > 0) {
-              const libKey = `${post.accountId}:${post.cloneJobId}`;
-              const used = usedUrlsPerAccountClone.get(libKey) ?? new Set<string>();
-              // Filter out recently used videos; fall back to full library if all used
-              const pool = libUrls.filter(u => !used.has(u));
-              const pickFrom = pool.length > 0 ? pool : libUrls;
-              // Stable offset per account so different accounts pick different videos
-              const accountOffset = Math.abs(post.accountId.split("").reduce((a, c) => a + c.charCodeAt(0), 0));
-              const idx = (accountOffset + used.size) % pickFrom.length;
-              videoUrl = pickFrom[idx];
-              // Track within tick so next post for same account gets a different video
-              used.add(videoUrl);
-              usedUrlsPerAccountClone.set(libKey, used);
-              // Persist chosen URL so future ticks can query and exclude it
+              videoUrl = pickFromLibPool(libUrls, post.accountId, post.cloneJobId, usedUrlsPerAccountClone);
               await prisma.scheduledPost.update({
                 where: { id: post.id },
                 data: { rawVideoUrl: videoUrl },
               }).catch(() => {});
-              console.log("[cron] library-first @", post.account.username, `pool ${pickFrom.length}/${libUrls.length}`);
+              console.log("[cron] library-first @", post.account.username, `pool ${libUrls.length}`);
             } else {
               // No library videos for this clone — try download + FFmpeg as last resort.
               try {
@@ -526,19 +480,9 @@ async function runCron() {
         } else if (post.cloneJobId) {
           // Linked video has no caption — pick from captioned pool to avoid silent/VP9 videos
           const libUrls = cloneLibMap.get(post.cloneJobId) ?? [];
-          if (libUrls.length > 0) {
-            const libKey = `${post.accountId}:${post.cloneJobId}`;
-            const used = usedUrlsPerAccountClone.get(libKey) ?? new Set<string>();
-            const pool = libUrls.filter(u => !used.has(u));
-            const pickFrom = pool.length > 0 ? pool : libUrls;
-            const accountOffset = Math.abs(post.accountId.split("").reduce((a, c) => a + c.charCodeAt(0), 0));
-            const idx = (accountOffset + used.size) % pickFrom.length;
-            videoUrl = pickFrom[idx];
-            used.add(videoUrl);
-            usedUrlsPerAccountClone.set(libKey, used);
-          } else {
-            videoUrl = post.video.publicUrl;
-          }
+          videoUrl = libUrls.length > 0
+            ? pickFromLibPool(libUrls, post.accountId, post.cloneJobId, usedUrlsPerAccountClone)
+            : post.video.publicUrl;
         } else {
           videoUrl = post.video.publicUrl;
         }

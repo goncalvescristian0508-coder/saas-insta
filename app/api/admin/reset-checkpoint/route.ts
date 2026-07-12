@@ -28,8 +28,8 @@ function isCheckpointError(msg: string | null): boolean {
 async function testToken(accessToken: string, igUserId: string): Promise<"ok" | "checkpoint" | "other_error"> {
   try {
     const res = await fetch(
-      `${GRAPH}/${igUserId}?fields=id,username&access_token=${accessToken}`,
-      { signal: AbortSignal.timeout(8_000) }
+      `${GRAPH}/${igUserId}?fields=id,username`,
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(8_000) }
     );
     const json = await res.json() as { id?: string; error?: { message?: string } };
     if (res.ok && json.id) return "ok";
@@ -63,35 +63,31 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user || !isAdmin(user.email)) {
-    return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+  const cronSecret = process.env.CRON_SECRET;
+  const bearer = request.headers.get("authorization");
+  const validBearer = !!cronSecret && bearer === `Bearer ${cronSecret}`;
+  if (!validBearer) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user || !isAdmin(user.email)) {
+      return NextResponse.json({ error: "Acesso negado" }, { status: 403 });
+    }
   }
 
   const { searchParams } = new URL(request.url);
   const batchSize = Math.min(Number(searchParams.get("batch") ?? "30"), 50);
 
-  // Fetch checkpoint-suspended accounts
-  const accounts = await prisma.instagramOAuthAccount.findMany({
+  const all = await prisma.instagramOAuthAccount.findMany({
     where: {
       accountStatus: "SUSPENDED",
-      lastError: { contains: "cannot access the app till you log in" },
+      OR: [
+        { lastError: { contains: "cannot access the app till you log in" } },
+        { lastError: { contains: "needs to complete a checkpoint" } },
+      ],
     },
     select: { id: true, username: true, instagramUserId: true, accessTokenEnc: true, lastError: true },
     take: batchSize,
   });
-
-  const also = await prisma.instagramOAuthAccount.findMany({
-    where: {
-      accountStatus: "SUSPENDED",
-      lastError: { contains: "needs to complete a checkpoint" },
-    },
-    select: { id: true, username: true, instagramUserId: true, accessTokenEnc: true, lastError: true },
-    take: batchSize,
-  });
-
-  const all = [...accounts, ...also].slice(0, batchSize);
 
   if (all.length === 0) {
     return NextResponse.json({ message: "Nenhuma conta de checkpoint para verificar.", recovered: 0, stillBlocked: 0 });
