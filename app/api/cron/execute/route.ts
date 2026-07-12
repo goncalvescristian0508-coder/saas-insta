@@ -371,9 +371,13 @@ async function runCron() {
         take: 200,
       }).catch(() => [] as { publicUrl: string; captionedUrl: string | null }[]);
     }
-    // Prefer captionedUrl when available (and not the "none" sentinel for videos without speech)
-    cloneLibMap.set(cloneId, vids.map(v => (v.captionedUrl && v.captionedUrl !== "none") ? v.captionedUrl : v.publicUrl));
-    console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos");
+    // Use only captioned videos if any exist; otherwise fall back to all videos
+    const captioned = vids.filter(v => v.captionedUrl && v.captionedUrl !== "none");
+    const pool = captioned.length > 0
+      ? captioned.map(v => v.captionedUrl!)
+      : vids.map(v => v.publicUrl);
+    cloneLibMap.set(cloneId, pool);
+    console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos,", captioned.length, "captioned");
   }));
 
   // Pre-load recently used library URLs per (accountId, cloneJobId) to avoid posting
