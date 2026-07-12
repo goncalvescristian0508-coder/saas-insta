@@ -6,11 +6,17 @@ export const runtime = "nodejs";
 
 const ADMIN_EMAIL = "goncalvescristian0508@gmail.com";
 
-export async function POST() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user || user.email !== ADMIN_EMAIL) {
-    return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+export async function POST(req: Request) {
+  const auth = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  const validBearer = !!cronSecret && auth === `Bearer ${cronSecret}`;
+
+  if (!validBearer) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user || user.email !== ADMIN_EMAIL) {
+      return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    }
   }
 
   const now = new Date();
