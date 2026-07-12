@@ -56,6 +56,9 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/api/admin/fix-proxies") ||
     path.startsWith("/api/admin/caption-library") ||
     path.startsWith("/api/admin/reimport-audio") ||
+    path.startsWith("/api/admin/retry-failed") ||
+    path.startsWith("/api/admin/reset-checkpoint") ||
+    path.startsWith("/api/admin/reset-suspended") ||
     path.startsWith("/connect/") ||
     path.startsWith("/connect-error");
 
