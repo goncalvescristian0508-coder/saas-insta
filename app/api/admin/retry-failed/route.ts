@@ -19,6 +19,25 @@ export async function POST(req: Request) {
     }
   }
 
+  const { searchParams } = new URL(req.url);
+
+  // ?purge=1 → deleta todos os posts PENDING cujo vídeo NÃO tem legenda
+  if (searchParams.get("purge") === "1") {
+    const uncaptioned = await prisma.libraryVideo.findMany({
+      where: { OR: [{ captionedUrl: null }, { captionedUrl: "none" }] },
+      select: { id: true },
+    });
+    const ids = uncaptioned.map(v => v.id);
+    const deleted = await prisma.scheduledPost.deleteMany({
+      where: { status: "PENDING", videoId: { in: ids } },
+    });
+    const failedRunning = await prisma.scheduledPost.updateMany({
+      where: { status: "RUNNING", videoId: { in: ids } },
+      data: { status: "FAILED", errorMsg: "Removido: vídeo sem legenda" },
+    });
+    return NextResponse.json({ uncaptionedVideos: ids.length, deletedPending: deleted.count, failedRunning: failedRunning.count });
+  }
+
   const now = new Date();
 
   // Reset ALL failed posts to pending, zeroing retryCount and scheduledAt so the cron picks them up immediately
