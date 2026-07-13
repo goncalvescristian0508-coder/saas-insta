@@ -21,6 +21,23 @@ export async function POST(req: Request) {
 
   const { searchParams } = new URL(req.url);
 
+  // ?migrate=1 → aplica colunas faltando no banco
+  if (searchParams.get("migrate") === "1") {
+    const stmts = [
+      `ALTER TABLE "CloneJob" ADD COLUMN IF NOT EXISTS "intervalMinutes" INTEGER NOT NULL DEFAULT 60`,
+    ];
+    const results: string[] = [];
+    for (const sql of stmts) {
+      try {
+        await prisma.$executeRawUnsafe(sql);
+        results.push(`OK: ${sql.slice(0, 60)}`);
+      } catch (e) {
+        results.push(`ERR: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    return NextResponse.json({ migrated: true, results });
+  }
+
   // ?purgeAll=1 → deleta TUDO: todos os posts e todos os LibraryVideo (limpa do zero)
   if (searchParams.get("purgeAll") === "1") {
     const deletedPosts = await prisma.scheduledPost.deleteMany({});
