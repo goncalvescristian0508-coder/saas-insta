@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { createClient } from "@supabase/supabase-js";
 import { createHash } from "crypto";
 import { cleanVideo } from "@/lib/videoClean";
+import { scrapeProfileAndReels } from "@/lib/scraper";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -20,88 +21,98 @@ function storageAdmin() {
   );
 }
 
-async function resolveCloneJobId(body: { sourceUsername?: string; cloneJobId?: string }) {
-  if (body.cloneJobId) return body.cloneJobId;
-  if (body.sourceUsername) {
-    const job = await prisma.cloneJob.findFirst({
-      where: { sourceUsername: body.sourceUsername },
-      orderBy: { createdAt: "desc" },
-      select: { id: true },
-    });
-    return job?.id ?? null;
-  }
-  return null;
+// GET — status: quantos vídeos baixados vs total no cache
+// ?username=jeninovaki
+export async function GET(req: Request) {
+  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const { searchParams } = new URL(req.url);
+  const username = searchParams.get("username");
+  if (!username) return NextResponse.json({ error: "username obrigatório" }, { status: 400 });
+
+  const inLibrary = await prisma.libraryVideo.count({
+    where: { storagePath: { contains: `/${username}/`, not: { contains: "/covers/" } } },
+  });
+
+  return NextResponse.json({ username, inLibrary });
 }
 
-// POST body: { sourceUsername?, cloneJobId?, batch? }
-// Baixa vídeos do Apify CDN → Supabase Storage e cria LibraryVideo.
-// Rodar em loop pelo VPS até remaining=0.
+// POST body: { sourceUsername, batch? }
+// Raspa vídeos do Apify (cache 6h ou scrape fresco) e baixa para Supabase Storage.
+// Rodar em loop até remaining=0.
 export async function POST(req: Request) {
   if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const body = await req.json() as { sourceUsername?: string; cloneJobId?: string; batch?: number };
+  const body = await req.json() as { sourceUsername?: string; batch?: number };
+  const sourceUsername = body.sourceUsername;
+  if (!sourceUsername) return NextResponse.json({ error: "sourceUsername obrigatório" }, { status: 400 });
+
   const batchSize = Math.min(body.batch ?? 3, 5);
-  const cloneJobId = await resolveCloneJobId(body);
-  if (!cloneJobId) return NextResponse.json({ error: "sourceUsername ou cloneJobId obrigatório" }, { status: 400 });
 
-  const jobInfo = await prisma.cloneJob.findUnique({
-    where: { id: cloneJobId },
-    select: { userId: true, sourceUsername: true },
+  // Busca userId do CloneJob mais recente desse username
+  const job = await prisma.cloneJob.findFirst({
+    where: { sourceUsername },
+    orderBy: { createdAt: "desc" },
+    select: { userId: true },
   });
-  if (!jobInfo) return NextResponse.json({ error: "Clone não encontrado" }, { status: 404 });
+  if (!job) return NextResponse.json({ error: `Nenhum CloneJob encontrado para '${sourceUsername}'` }, { status: 404 });
+  const { userId } = job;
 
-  const { userId, sourceUsername } = jobInfo;
-
-  // Posts com Apify CDN URL (não-Supabase) ainda por baixar
-  const posts = await prisma.scheduledPost.findMany({
-    where: {
-      cloneJobId,
-      status: "PENDING",
-      videoId: null,
-      rawVideoUrl: { not: null },
-    },
-    select: { id: true, rawVideoUrl: true, caption: true },
-    distinct: ["rawVideoUrl"],
-    take: batchSize,
-  });
-
-  const apifyPosts = posts.filter(p => p.rawVideoUrl && !p.rawVideoUrl.includes("supabase.co/storage"));
-
-  if (apifyPosts.length === 0) {
-    const remaining = await prisma.scheduledPost.count({
-      where: { cloneJobId, status: "PENDING", videoId: null, rawVideoUrl: { not: null } },
-    });
-    return NextResponse.json({ done: true, remaining, message: "Nenhum vídeo Apify pendente." });
+  // Raspa (usa cache de 6h ou busca fresco do Apify)
+  let reels: { videoUrl: string; shortCode: string; caption: string }[] = [];
+  try {
+    const scraped = await scrapeProfileAndReels(sourceUsername, 9999);
+    reels = scraped.reels.filter(r => r.videoUrl);
+  } catch (err) {
+    return NextResponse.json({ error: `Falha no scrape: ${err instanceof Error ? err.message : String(err)}` }, { status: 500 });
   }
 
+  if (reels.length === 0) return NextResponse.json({ error: "Nenhum vídeo encontrado no scrape." }, { status: 404 });
+
+  // Descobre quais já estão na biblioteca (por storagePath)
+  const existingPaths = await prisma.libraryVideo.findMany({
+    where: { userId, storagePath: { contains: `/${sourceUsername}/` } },
+    select: { storagePath: true },
+  }).then(rows => new Set(rows.map(r => r.storagePath)));
+
+  // Filtra os que ainda não foram baixados
+  const pending = reels.filter(r => {
+    const hash = createHash("md5").update(r.videoUrl).digest("hex");
+    const path = `cloned/${userId}/${sourceUsername}/${hash}.mp4`;
+    return !existingPaths.has(path);
+  });
+
+  if (pending.length === 0) {
+    return NextResponse.json({ done: true, remaining: 0, inLibrary: existingPaths.size });
+  }
+
+  const batch = pending.slice(0, batchSize);
   const results: { ok: boolean; error?: string }[] = [];
+  const admin = storageAdmin();
 
-  for (const post of apifyPosts) {
-    const videoUrl = post.rawVideoUrl!;
+  for (const reel of batch) {
+    const urlHash = createHash("md5").update(reel.videoUrl).digest("hex");
+    const storagePath = `cloned/${userId}/${sourceUsername}/${urlHash}.mp4`;
+
     try {
-      const urlHash = createHash("md5").update(videoUrl).digest("hex");
-      const storagePath = `cloned/${userId}/${sourceUsername}/${urlHash}.mp4`;
+      const res = await fetch(reel.videoUrl, { signal: AbortSignal.timeout(60_000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const raw = Buffer.from(await res.arrayBuffer());
+      const buffer = await cleanVideo(raw);
 
-      let existing = await prisma.libraryVideo.findFirst({ where: { userId, storagePath } });
+      const { error: upErr } = await admin.storage
+        .from("library-videos")
+        .upload(storagePath, buffer, { contentType: "video/mp4", upsert: false });
+      if (upErr && !upErr.message.includes("already exists")) throw new Error(upErr.message);
 
-      if (!existing) {
-        const res = await fetch(videoUrl, { signal: AbortSignal.timeout(60_000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const raw = Buffer.from(await res.arrayBuffer());
-        const buffer = await cleanVideo(raw);
+      const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
 
-        const admin = storageAdmin();
-        const { error: upErr } = await admin.storage
-          .from("library-videos")
-          .upload(storagePath, buffer, { contentType: "video/mp4", upsert: false });
-        if (upErr && !upErr.message.includes("already exists")) throw new Error(upErr.message);
-
-        const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
-        existing = await prisma.libraryVideo.create({
+      const alreadyInDb = await prisma.libraryVideo.findFirst({ where: { storagePath } });
+      if (!alreadyInDb) {
+        await prisma.libraryVideo.create({
           data: {
             userId,
             filename: `${urlHash}.mp4`,
-            originalName: post.caption?.slice(0, 60) || `Reel ${urlHash.slice(0, 8)}`,
+            originalName: reel.caption?.slice(0, 60) || `Reel ${urlHash.slice(0, 8)}`,
             storagePath,
             publicUrl: pub.publicUrl,
             sizeBytes: buffer.length,
@@ -110,41 +121,17 @@ export async function POST(req: Request) {
         });
       }
 
-      // Atualiza todos os posts com esse rawVideoUrl para usar videoId
-      await prisma.scheduledPost.updateMany({
-        where: { cloneJobId, rawVideoUrl: videoUrl },
-        data: { videoId: existing.id, rawVideoUrl: null },
-      });
-
       results.push({ ok: true });
     } catch (err) {
       results.push({ ok: false, error: err instanceof Error ? err.message.slice(0, 120) : String(err) });
     }
   }
 
-  const remaining = await prisma.scheduledPost.count({
-    where: { cloneJobId, status: "PENDING", videoId: null, rawVideoUrl: { not: null } },
-  });
-
   return NextResponse.json({
     processed: results.length,
     ok: results.filter(r => r.ok).length,
     failed: results.filter(r => !r.ok).length,
-    remaining,
+    remaining: pending.length - results.filter(r => r.ok).length,
+    total: reels.length,
   });
-}
-
-// GET — quantos ainda precisam ser baixados
-export async function GET(req: Request) {
-  if (!checkAuth(req)) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const { searchParams } = new URL(req.url);
-  const cloneJobId = await resolveCloneJobId({ sourceUsername: searchParams.get("username") ?? undefined });
-  if (!cloneJobId) return NextResponse.json({ error: "username obrigatório" }, { status: 400 });
-
-  const [total, withVideoId] = await Promise.all([
-    prisma.scheduledPost.count({ where: { cloneJobId, status: "PENDING" } }),
-    prisma.scheduledPost.count({ where: { cloneJobId, status: "PENDING", videoId: { not: null } } }),
-  ]);
-
-  return NextResponse.json({ total, withVideoId, needsDownload: total - withVideoId });
 }
