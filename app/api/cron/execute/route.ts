@@ -340,22 +340,25 @@ async function runCron() {
       select: { sourceUsername: true, userId: true, intervalMinutes: true },
     }).catch(() => null);
     if (!job?.sourceUsername) { cloneLibMap.set(cloneId, []); return; }
-    let vids = await prisma.libraryVideo.findMany({
-      where: { userId: job.userId, storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
-      select: { publicUrl: true, captionedUrl: true },
-    }).catch(() => [] as { publicUrl: string; captionedUrl: string | null }[]);
-    if (vids.length === 0) {
-      vids = await prisma.libraryVideo.findMany({
-        where: { storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } } },
-        select: { publicUrl: true, captionedUrl: true },
-        take: 200,
-      }).catch(() => [] as { publicUrl: string; captionedUrl: string | null }[]);
+    // Query directly for captioned videos — avoids loading uncaptioned ones into the pool
+    let captionedVids = await prisma.libraryVideo.findMany({
+      where: {
+        userId: job.userId,
+        storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } },
+        AND: [{ captionedUrl: { not: null } }, { captionedUrl: { not: "none" } }],
+      },
+      select: { captionedUrl: true },
+    }).catch(() => [] as { captionedUrl: string | null }[]);
+    if (captionedVids.length === 0) {
+      captionedVids = await prisma.libraryVideo.findMany({
+        where: {
+          storagePath: { contains: `/${job.sourceUsername}/`, not: { contains: "/covers/" } },
+          AND: [{ captionedUrl: { not: null } }, { captionedUrl: { not: "none" } }],
+        },
+        select: { captionedUrl: true },
+      }).catch(() => [] as { captionedUrl: string | null }[]);
     }
-    // Use only captioned videos if any exist; otherwise fall back to all videos
-    const captioned = vids.filter(v => v.captionedUrl && v.captionedUrl !== "none");
-    const pool = captioned.length > 0
-      ? captioned.map(v => v.captionedUrl!)
-      : vids.map(v => v.publicUrl);
+    const pool = captionedVids.map(v => v.captionedUrl!);
     cloneLibMap.set(cloneId, pool);
     console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos,", captioned.length, "captioned");
   }));
