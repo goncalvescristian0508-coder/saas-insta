@@ -133,5 +133,6 @@ export async function POST(req: Request) {
     failed: results.filter(r => !r.ok).length,
     remaining: pending.length - results.filter(r => r.ok).length,
     total: reels.length,
+    errors: results.filter(r => !r.ok).map(r => r.error),
   });
 }
