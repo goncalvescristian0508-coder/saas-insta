@@ -360,7 +360,7 @@ async function runCron() {
     }
     const pool = captionedVids.map(v => v.captionedUrl!);
     cloneLibMap.set(cloneId, pool);
-    console.log("[cron] lib cache:", job.sourceUsername, vids.length, "videos,", captioned.length, "captioned");
+    console.log("[cron] lib cache:", job.sourceUsername, captionedVids.length, "captioned");
   }));
 
   // Pre-load recently used library URLs per (accountId, cloneJobId) to avoid posting
