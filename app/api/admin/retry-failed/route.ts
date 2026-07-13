@@ -21,6 +21,13 @@ export async function POST(req: Request) {
 
   const { searchParams } = new URL(req.url);
 
+  // ?purgeAll=1 → deleta TUDO: todos os posts e todos os LibraryVideo (limpa do zero)
+  if (searchParams.get("purgeAll") === "1") {
+    const deletedPosts = await prisma.scheduledPost.deleteMany({});
+    const deletedVideos = await prisma.libraryVideo.deleteMany({});
+    return NextResponse.json({ deletedPosts: deletedPosts.count, deletedVideos: deletedVideos.count });
+  }
+
   // ?purge=1 → deleta TODOS os posts (qualquer status) que referenciam vídeo sem legenda
   //             depois deleta os próprios LibraryVideo sem legenda
   if (searchParams.get("purge") === "1") {
