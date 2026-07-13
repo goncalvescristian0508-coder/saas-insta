@@ -21,21 +21,26 @@ export async function POST(req: Request) {
 
   const { searchParams } = new URL(req.url);
 
-  // ?purge=1 → deleta todos os posts PENDING cujo vídeo NÃO tem legenda
+  // ?purge=1 → deleta TODOS os posts (qualquer status) que referenciam vídeo sem legenda
+  //             depois deleta os próprios LibraryVideo sem legenda
   if (searchParams.get("purge") === "1") {
     const uncaptioned = await prisma.libraryVideo.findMany({
       where: { OR: [{ captionedUrl: null }, { captionedUrl: "none" }] },
       select: { id: true },
     });
     const ids = uncaptioned.map(v => v.id);
-    const deleted = await prisma.scheduledPost.deleteMany({
-      where: { status: "PENDING", videoId: { in: ids } },
+    if (ids.length === 0) {
+      return NextResponse.json({ uncaptionedVideos: 0, deletedPosts: 0, deletedVideos: 0 });
+    }
+    // Deleta todos os posts que referenciam esses vídeos (cascade não basta pq alguns posts têm videoId nulo)
+    const deletedPosts = await prisma.scheduledPost.deleteMany({
+      where: { videoId: { in: ids } },
     });
-    const failedRunning = await prisma.scheduledPost.updateMany({
-      where: { status: "RUNNING", videoId: { in: ids } },
-      data: { status: "FAILED", errorMsg: "Removido: vídeo sem legenda" },
+    // Deleta os próprios vídeos sem legenda
+    const deletedVideos = await prisma.libraryVideo.deleteMany({
+      where: { id: { in: ids } },
     });
-    return NextResponse.json({ uncaptionedVideos: ids.length, deletedPending: deleted.count, failedRunning: failedRunning.count });
+    return NextResponse.json({ uncaptionedVideos: ids.length, deletedPosts: deletedPosts.count, deletedVideos: deletedVideos.count });
   }
 
   const now = new Date();
