@@ -102,7 +102,19 @@ export async function POST(req: Request) {
       const { error: upErr } = await admin.storage
         .from("library-videos")
         .upload(storagePath, buffer, { contentType: "video/mp4", upsert: false });
-      if (upErr && !upErr.message.includes("already exists")) throw new Error(upErr.message);
+      if (upErr) {
+        if (upErr.message.includes("already exists")) {
+          // ok
+        } else if (upErr.message.toLowerCase().includes("maximum allowed size") || upErr.message.includes("413")) {
+          // Vídeo muito grande — marca como "none" para não retentar
+          await prisma.libraryVideo.create({
+            data: { userId, filename: `${urlHash}.mp4`, originalName: "skip:too-large", storagePath, publicUrl: "skip:too-large", captionedUrl: "none", sizeBytes: buffer.length, mimeType: "video/mp4" },
+          }).catch(() => {});
+          throw new Error(`too-large:${buffer.length}`);
+        } else {
+          throw new Error(upErr.message);
+        }
+      }
 
       const { data: pub } = admin.storage.from("library-videos").getPublicUrl(storagePath);
 
