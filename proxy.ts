@@ -60,6 +60,7 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/api/admin/reset-checkpoint") ||
     path.startsWith("/api/admin/reset-suspended") ||
     path.startsWith("/api/admin/purge-uncaptioned") ||
+    path.startsWith("/api/admin/import-apify-run") ||
     path.startsWith("/connect/") ||
     path.startsWith("/connect-error");
 
