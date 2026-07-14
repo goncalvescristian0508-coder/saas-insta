@@ -20,7 +20,11 @@ export async function GET(req: Request) {
 
   const recentFailed = await prisma.scheduledPost.findMany({
     where: { status: "FAILED" },
-    select: { id: true, errorMsg: true, updatedAt: true },
+    select: {
+      id: true, errorMsg: true, updatedAt: true, retryCount: true,
+      videoId: true,
+      video: { select: { captionedUrl: true, publicUrl: true, storagePath: true } },
+    },
     orderBy: { updatedAt: "desc" },
     take: 5,
   });
