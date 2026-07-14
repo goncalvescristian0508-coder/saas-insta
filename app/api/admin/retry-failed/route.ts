@@ -36,7 +36,20 @@ export async function GET(req: Request) {
     take: 3,
   });
 
-  return NextResponse.json({ total, pending, published, failed, recentFailed, recentPublished });
+  const [active, quarantine, suspended] = await Promise.all([
+    prisma.instagramOAuthAccount.count({ where: { accountStatus: "ACTIVE" } }),
+    prisma.instagramOAuthAccount.count({ where: { accountStatus: "QUARANTINE" } }),
+    prisma.instagramOAuthAccount.count({ where: { accountStatus: "SUSPENDED" } }),
+  ]);
+
+  const recentErrors = await prisma.instagramOAuthAccount.findMany({
+    where: { accountStatus: { not: "ACTIVE" } },
+    select: { username: true, accountStatus: true, lastError: true, updatedAt: true },
+    orderBy: { updatedAt: "desc" },
+    take: 10,
+  });
+
+  return NextResponse.json({ total, pending, published, failed, recentFailed, recentPublished, accounts: { active, quarantine, suspended, recentErrors } });
 }
 
 export async function POST(req: Request) {
@@ -69,6 +82,14 @@ export async function POST(req: Request) {
       }
     }
     return NextResponse.json({ migrated: true, results });
+  }
+
+  // ?deleteNonClone=1 → deleta posts sem cloneJobId com rawVideoUrl (não conseguem usar a biblioteca)
+  if (searchParams.get("deleteNonClone") === "1") {
+    const deleted = await prisma.scheduledPost.deleteMany({
+      where: { cloneJobId: null, rawVideoUrl: { not: null } },
+    });
+    return NextResponse.json({ deleted: deleted.count });
   }
 
   // ?purgeAll=1 → deleta TUDO: todos os posts e todos os LibraryVideo (limpa do zero)
