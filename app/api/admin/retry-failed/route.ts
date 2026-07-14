@@ -6,6 +6,35 @@ export const runtime = "nodejs";
 
 const ADMIN_EMAIL = "goncalvescristian0508@gmail.com";
 
+export async function GET(req: Request) {
+  const auth = req.headers.get("authorization");
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret || auth !== `Bearer ${cronSecret}`) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const [pending, published, failed, total] = await Promise.all([
+    prisma.scheduledPost.count({ where: { status: "PENDING" } }),
+    prisma.scheduledPost.count({ where: { status: "DONE" } }),
+    prisma.scheduledPost.count({ where: { status: "FAILED" } }),
+    prisma.scheduledPost.count(),
+  ]);
+
+  const recentFailed = await prisma.scheduledPost.findMany({
+    where: { status: "FAILED" },
+    select: { id: true, errorMsg: true, updatedAt: true },
+    orderBy: { updatedAt: "desc" },
+    take: 5,
+  });
+
+  const recentPublished = await prisma.scheduledPost.findMany({
+    where: { status: "DONE" },
+    select: { id: true, updatedAt: true },
+    orderBy: { updatedAt: "desc" },
+    take: 3,
+  });
+
+  return NextResponse.json({ total, pending, published, failed, recentFailed, recentPublished });
+}
+
 export async function POST(req: Request) {
   const auth = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
