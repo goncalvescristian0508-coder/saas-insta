@@ -22,8 +22,8 @@ export async function GET(req: Request) {
     where: { status: "FAILED" },
     select: {
       id: true, errorMsg: true, updatedAt: true, retryCount: true,
-      videoId: true,
-      video: { select: { captionedUrl: true, publicUrl: true, storagePath: true } },
+      videoId: true, rawVideoUrl: true, cloneJobId: true,
+      video: { select: { captionedUrl: true, storagePath: true } },
     },
     orderBy: { updatedAt: "desc" },
     take: 5,
