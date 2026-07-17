@@ -84,6 +84,28 @@ export async function POST(req: Request) {
     return NextResponse.json({ migrated: true, results });
   }
 
+  // ?reactivate=user1,user2,... → reativa contas SUSPENDED específicas e reseta posts FAILED delas
+  if (searchParams.get("reactivate")) {
+    const usernames = searchParams.get("reactivate")!.split(",").map(u => u.trim()).filter(Boolean);
+    const accounts = await prisma.instagramOAuthAccount.findMany({
+      where: { username: { in: usernames } },
+      select: { id: true, username: true, accountStatus: true },
+    });
+    const ids = accounts.map(a => a.id);
+    const [acctUpdate, postsUpdate] = await Promise.all([
+      prisma.instagramOAuthAccount.updateMany({
+        where: { id: { in: ids } },
+        data: { accountStatus: "ACTIVE", lastError: null, quarantinedUntil: null },
+      }),
+      prisma.scheduledPost.updateMany({
+        where: { accountId: { in: ids }, status: "FAILED" },
+        data: { status: "PENDING", errorMsg: null, retryCount: 0, scheduledAt: new Date() },
+      }),
+    ]);
+    const notFound = usernames.filter(u => !accounts.find(a => a.username === u));
+    return NextResponse.json({ accountsReactivated: acctUpdate.count, postsReset: postsUpdate.count, notFound, accounts: accounts.map(a => a.username) });
+  }
+
   // ?deleteNonClone=1 → deleta posts sem cloneJobId com rawVideoUrl (não conseguem usar a biblioteca)
   if (searchParams.get("deleteNonClone") === "1") {
     const deleted = await prisma.scheduledPost.deleteMany({
