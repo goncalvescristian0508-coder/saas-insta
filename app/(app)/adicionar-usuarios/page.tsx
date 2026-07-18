@@ -49,6 +49,15 @@ function parseResults(raw: string | null): Record<string, JobResult> {
 
 function JobCard({ job, apps, onRefresh }: { job: Job; apps: MetaApp[]; onRefresh: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+
+  async function handleCancel() {
+    if (!confirm("Cancelar este job?")) return;
+    setCancelling(true);
+    await fetch(`/api/tester-invites?jobId=${job.id}`, { method: "DELETE" });
+    await onRefresh();
+    setCancelling(false);
+  }
   const results = parseResults(job.results);
   const app = apps.find(a => a.key === job.appKey);
   const total = job.usernames.length;
@@ -102,9 +111,18 @@ function JobCard({ job, apps, onRefresh }: { job: Job; apps: MetaApp[]; onRefres
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
           {isActive && (
-            <button onClick={onRefresh} style={{ background: "none", border: "none", color: "#666", cursor: "pointer", padding: 4, display: "flex" }}>
-              <RefreshCw size={13} />
-            </button>
+            <>
+              <button onClick={onRefresh} style={{ background: "none", border: "none", color: "#666", cursor: "pointer", padding: 4, display: "flex" }}>
+                <RefreshCw size={13} />
+              </button>
+              <button
+                onClick={handleCancel}
+                disabled={cancelling}
+                style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", padding: "2px 6px", fontSize: 11, borderRadius: 4, display: "flex", alignItems: "center" }}
+              >
+                {cancelling ? <Loader2 size={11} style={{ animation: "spin 1s linear infinite" }} /> : "Cancelar"}
+              </button>
+            </>
           )}
           <button
             onClick={() => setExpanded(v => !v)}
@@ -195,9 +213,9 @@ export default function AdicionarUsuariosPage() {
   }, [jobs, loadJobs]);
 
   const usernames = textInput
-    .split(/[\n,;]+/)
+    .split(/[\n,]+/)
     .map(u => u.trim().replace(/^@/, "").toLowerCase())
-    .filter(Boolean);
+    .filter(u => u.length > 0 && /^[\w._]+$/.test(u)); // só usernames válidos do IG
 
   const uniqueUsernames = [...new Set(usernames)];
 

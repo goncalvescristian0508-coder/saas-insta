@@ -120,6 +120,34 @@ export async function POST(req: Request) {
   return NextResponse.json({ jobId: job.id, status: updated?.status ?? "PENDING", results: updated?.results ?? null });
 }
 
+// DELETE /api/tester-invites?jobId=xxx — cancela job PENDING/RUNNING
+export async function DELETE(req: Request) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+
+  const { searchParams } = new URL(req.url);
+  const jobId = searchParams.get("jobId");
+
+  // Se jobId não informado, cancela TODOS os jobs ativos do usuário
+  if (!jobId) {
+    const result = await prisma.testerJob.updateMany({
+      where: { userId: user.id, status: { in: ["PENDING", "RUNNING"] } },
+      data: { status: "FAILED", errorMsg: "Cancelado pelo usuário", doneAt: new Date() },
+    });
+    return NextResponse.json({ cancelled: result.count });
+  }
+
+  const job = await prisma.testerJob.findFirst({ where: { id: jobId, userId: user.id }, select: { id: true, status: true } });
+  if (!job) return NextResponse.json({ error: "Job não encontrado" }, { status: 404 });
+
+  await prisma.testerJob.update({
+    where: { id: jobId },
+    data: { status: "FAILED", errorMsg: "Cancelado pelo usuário", doneAt: new Date() },
+  });
+  return NextResponse.json({ ok: true });
+}
+
 // GET /api/tester-invites — lista jobs do usuário
 export async function GET(req: Request) {
   const supabase = await createClient();
