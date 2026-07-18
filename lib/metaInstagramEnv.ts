@@ -59,3 +59,16 @@ export function listMetaApps(): Array<{ key: string; name: string; appId: string
   }
   return apps;
 }
+
+/** Lista apps do banco (sincronizados pelo Electron). Fallback para env vars se vazio. */
+export async function listMetaAppsFromDB(): Promise<Array<{ key: string; name: string; appId: string }>> {
+  try {
+    const { prisma } = await import("@/lib/prisma");
+    const setting = await prisma.appSetting.findUnique({ where: { key: "meta_apps_list" } });
+    if (setting?.value) {
+      const parsed = JSON.parse(setting.value) as Array<{ key: string; name: string; appId: string }>;
+      if (parsed.length > 0) return parsed.map(a => ({ key: a.key, name: a.name, appId: a.appId }));
+    }
+  } catch { /* fallback */ }
+  return listMetaApps();
+}

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { prisma } from "@/lib/prisma";
-import { listMetaApps } from "@/lib/metaInstagramEnv";
+import { listMetaAppsFromDB } from "@/lib/metaInstagramEnv";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -93,7 +93,7 @@ export async function POST(req: Request) {
   }
 
   // Validate appKey
-  const apps = listMetaApps();
+  const apps = await listMetaAppsFromDB();
   const appKey = body.appKey ?? apps[0]?.key;
   const app = apps.find(a => a.key === appKey);
   if (!app) {
@@ -166,7 +166,7 @@ export async function GET(req: Request) {
     select: { id: true, appKey: true, status: true, usernames: true, results: true, errorMsg: true, createdAt: true, startedAt: true, doneAt: true },
   });
 
-  const apps = listMetaApps();
+  const apps = await listMetaAppsFromDB();
   const planName = await getUserPlan(user.id);
 
   return NextResponse.json({ jobs, apps: apps.map(a => ({ key: a.key, name: a.name, appId: a.appId })), plan: { name: planName, limit: 10_000 } });
