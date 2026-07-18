@@ -224,3 +224,21 @@ model PushSubscription {
 
   @@index([userId])
 }
+
+model TesterJob {
+  id        String    @id @default(cuid())
+  userId    String
+  appKey    String
+  appId     String
+  usernames String[]
+  status    String    @default("PENDING") // PENDING, RUNNING, DONE, FAILED, PAUSED
+  results   String?   @db.Text            // JSON: {[username]: {ok, error?}}
+  errorMsg  String?
+  startedAt DateTime?
+  doneAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}

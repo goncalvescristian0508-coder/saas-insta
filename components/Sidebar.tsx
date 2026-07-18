@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard, Users, Clapperboard, CalendarClock,
   Send, LogOut, Shield, Copy, Menu, X,
-  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp, Search, GraduationCap,
+  Flame, WifiOff, Plug, BarChart2, Camera, Activity, TrendingUp, Search, GraduationCap, UserPlus,
 } from "lucide-react";
 import React, { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
@@ -37,10 +37,11 @@ const navGroups: { label?: string; items: NavItemDef[] }[] = [
   {
     label: "Ferramentas",
     items: [
-      { name: "Clonar Perfil",  href: "/clonar",      icon: Copy },
-      { name: "Clonar TikTok",  href: "/clonar-ttk",  icon: Copy },
-      { name: "Aquecimento",    href: "/aquecimento",  icon: Flame },
-      { name: "Contas Off",     href: "/contas-off",   icon: WifiOff },
+      { name: "Clonar Perfil",       href: "/clonar",               icon: Copy },
+      { name: "Clonar TikTok",       href: "/clonar-ttk",           icon: Copy },
+      { name: "Aquecimento",         href: "/aquecimento",           icon: Flame },
+      { name: "Contas Off",          href: "/contas-off",            icon: WifiOff },
+      { name: "Adicionar usuários",  href: "/adicionar-usuarios",    icon: UserPlus },
     ],
   },
   {

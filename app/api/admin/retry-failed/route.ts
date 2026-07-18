@@ -71,6 +71,23 @@ export async function POST(req: Request) {
   if (searchParams.get("migrate") === "1") {
     const stmts = [
       `ALTER TABLE "CloneJob" ADD COLUMN IF NOT EXISTS "intervalMinutes" INTEGER NOT NULL DEFAULT 60`,
+      `CREATE TABLE IF NOT EXISTS "TesterJob" (
+        "id" TEXT NOT NULL,
+        "userId" TEXT NOT NULL,
+        "appKey" TEXT NOT NULL,
+        "appId" TEXT NOT NULL,
+        "usernames" TEXT[] NOT NULL DEFAULT '{}',
+        "status" TEXT NOT NULL DEFAULT 'PENDING',
+        "results" TEXT,
+        "errorMsg" TEXT,
+        "startedAt" TIMESTAMP(3),
+        "doneAt" TIMESTAMP(3),
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "TesterJob_pkey" PRIMARY KEY ("id")
+      )`,
+      `CREATE INDEX IF NOT EXISTS "TesterJob_userId_createdAt_idx" ON "TesterJob"("userId", "createdAt")`,
+      `CREATE INDEX IF NOT EXISTS "TesterJob_status_createdAt_idx" ON "TesterJob"("status", "createdAt")`,
     ];
     const results: string[] = [];
     for (const sql of stmts) {
