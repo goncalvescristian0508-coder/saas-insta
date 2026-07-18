@@ -103,6 +103,11 @@ function JobCard({ job, apps, onRefresh }: { job: Job; apps: MetaApp[]; onRefres
               </span>
             )}
           </div>
+          {job.status === "FAILED" && job.errorMsg && (
+            <p style={{ fontSize: 11, color: "#f87171", marginTop: 4, maxWidth: 340, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {job.errorMsg}
+            </p>
+          )}
           {processed > 0 && job.status === "RUNNING" && (
             <div style={{ marginTop: 6, height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2, overflow: "hidden" }}>
               <div style={{ height: 3, width: `${(processed / total) * 100}%`, background: "#60a5fa", borderRadius: 2, transition: "width 0.4s" }} />

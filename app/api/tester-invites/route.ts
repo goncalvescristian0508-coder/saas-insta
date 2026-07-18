@@ -38,12 +38,17 @@ async function processJobNow(jobId: string, appKey: string, usernames: string[])
       signal: AbortSignal.timeout(270_000),
     });
 
-    const data = await res.json() as {
-      results?: TesterResult[];
-      ok?: number;
-      errors?: number;
-      error?: string;
-    };
+    const rawText = await res.text();
+    let data: { results?: TesterResult[]; ok?: number; errors?: number; error?: string } = {};
+    try {
+      data = JSON.parse(rawText);
+    } catch {
+      await prisma.testerJob.update({
+        where: { id: jobId },
+        data: { status: "FAILED", errorMsg: `HTTP ${res.status}: ${rawText.slice(0, 300)}`, doneAt: new Date() },
+      });
+      return;
+    }
 
     if (!res.ok || data.error) {
       await prisma.testerJob.update({
