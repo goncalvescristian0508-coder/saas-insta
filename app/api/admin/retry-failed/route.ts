@@ -123,6 +123,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ accountsReactivated: acctUpdate.count, postsReset: postsUpdate.count, notFound, accounts: accounts.map(a => a.username) });
   }
 
+  // ?resetJobs=1 → reseta TesterJobs RUNNING para PENDING
+  if (searchParams.get("resetJobs") === "1") {
+    const result = await prisma.testerJob.updateMany({
+      where: { status: { in: ["RUNNING", "PENDING"] } },
+      data: { status: "PENDING", startedAt: null },
+    });
+    return NextResponse.json({ resetJobs: result.count });
+  }
+
   // ?deleteNonClone=1 → deleta posts sem cloneJobId com rawVideoUrl (não conseguem usar a biblioteca)
   if (searchParams.get("deleteNonClone") === "1") {
     const deleted = await prisma.scheduledPost.deleteMany({
