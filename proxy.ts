@@ -62,6 +62,9 @@ export async function proxy(request: NextRequest) {
     path.startsWith("/api/admin/purge-uncaptioned") ||
     path.startsWith("/api/admin/import-apify-run") ||
     path.startsWith("/api/admin/download-library") ||
+    path.startsWith("/api/admin/add-instagram-tester") ||
+    path.startsWith("/api/admin/add-tester-all-apps") ||
+    path.startsWith("/api/integration/") ||
     path.startsWith("/connect/") ||
     path.startsWith("/connect-error");
 
