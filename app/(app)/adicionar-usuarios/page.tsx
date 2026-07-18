@@ -214,12 +214,13 @@ export default function AdicionarUsuariosPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ usernames: uniqueUsernames, appKey: selectedApp }),
       });
-      const d = await r.json() as { jobId?: string; error?: string; limit?: number };
+      const d = await r.json() as { jobId?: string; status?: string; error?: string };
       if (!r.ok) {
         setError(d.error ?? "Erro ao criar job");
         return;
       }
-      setSuccess(`Job criado! ${uniqueUsernames.length} usuário(s) serão adicionados como testers.`);
+      const statusMsg = d.status === "DONE" ? "Concluído!" : d.status === "FAILED" ? "Falhou — veja o histórico." : "Em processamento...";
+      setSuccess(`${statusMsg} ${uniqueUsernames.length} usuário(s) processados.`);
       setTextInput("");
       await loadJobs();
     } catch {
@@ -315,7 +316,7 @@ export default function AdicionarUsuariosPage() {
             style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}
           >
             {submitting
-              ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Criando job...</>
+              ? <><Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Adicionando usuários... aguarde</>
               : <><UserPlus size={14} /> Adicionar {uniqueUsernames.length > 0 ? `${uniqueUsernames.length} usuário${uniqueUsernames.length > 1 ? "s" : ""}` : "usuários"}</>
             }
           </button>

@@ -286,13 +286,19 @@ async function sendTesterInvite(
 
 /* ─── Main handler ─── */
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+  // Aceita Bearer CRON_SECRET para chamadas internas (tester-invites)
+  const cronSecret = (process.env.CRON_SECRET || "").trim();
+  const authHeader = request.headers.get("authorization") ?? "";
+  const isBearerAuth = cronSecret && authHeader === `Bearer ${cronSecret}`;
 
-  const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
-  if (user.email !== adminEmail) {
-    return NextResponse.json({ error: "Não autorizado" }, { status: 403 });
+  if (!isBearerAuth) {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Não autorizado" }, { status: 401 });
+    const adminEmail = process.env.ADMIN_EMAIL ?? "goncalvescristian0508@gmail.com";
+    if (user.email !== adminEmail) {
+      return NextResponse.json({ error: "Não autorizado" }, { status: 403 });
+    }
   }
 
   const body = await request.json() as {
