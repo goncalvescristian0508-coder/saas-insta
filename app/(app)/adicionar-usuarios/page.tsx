@@ -242,8 +242,7 @@ export default function AdicionarUsuariosPage() {
         setError(d.error ?? "Erro ao criar job");
         return;
       }
-      const statusMsg = d.status === "DONE" ? "Concluído!" : d.status === "FAILED" ? "Falhou — veja o histórico." : "Em processamento...";
-      setSuccess(`${statusMsg} ${uniqueUsernames.length} usuário(s) processados.`);
+      setSuccess(`Job criado! ${uniqueUsernames.length} usuário(s) aguardando processamento pelo app.`);
       setTextInput("");
       await loadJobs();
     } catch {

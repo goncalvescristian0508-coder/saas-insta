@@ -113,12 +113,7 @@ export async function POST(req: Request) {
     data: { userId: user.id, appKey, appId: app.appId, usernames, status: "PENDING" },
   });
 
-  // Processa imediatamente (síncrono, aguarda resposta)
-  await processJobNow(job.id, appKey, usernames);
-
-  // Retorna o job atualizado
-  const updated = await prisma.testerJob.findUnique({ where: { id: job.id } });
-  return NextResponse.json({ jobId: job.id, status: updated?.status ?? "PENDING", results: updated?.results ?? null });
+  return NextResponse.json({ jobId: job.id, status: "PENDING", usernames: usernames.length });
 }
 
 // DELETE /api/tester-invites?jobId=xxx — cancela job PENDING/RUNNING
