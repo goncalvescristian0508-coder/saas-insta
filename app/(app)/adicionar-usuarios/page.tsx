@@ -229,8 +229,7 @@ export default function AdicionarUsuariosPage() {
     }
   }
 
-  const limitPct = Math.min((uniqueUsernames.length / plan.limit) * 100, 100);
-  const overLimit = uniqueUsernames.length > plan.limit;
+  const overLimit = false;
 
   return (
     <div>
@@ -289,24 +288,14 @@ export default function AdicionarUsuariosPage() {
             />
           </div>
 
-          {/* Limit bar */}
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          {/* Username count */}
+          {uniqueUsernames.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
               <span style={{ fontSize: 11, color: "#555" }}>
-                {uniqueUsernames.length} / {plan.limit} usuários (plano {plan.name ?? "basic"})
+                {uniqueUsernames.length} usuário{uniqueUsernames.length !== 1 ? "s" : ""}
               </span>
-              {overLimit && (
-                <span style={{ fontSize: 11, color: "#f87171" }}>limite excedido</span>
-              )}
             </div>
-            <div style={{ height: 3, background: "rgba(255,255,255,0.06)", borderRadius: 2, overflow: "hidden" }}>
-              <div style={{
-                height: 3, width: `${limitPct}%`, borderRadius: 2,
-                background: overLimit ? "#f87171" : "#FFB800",
-                transition: "width 0.2s",
-              }} />
-            </div>
-          </div>
+          )}
 
           {error && (
             <div style={{ display: "flex", gap: 6, alignItems: "center", color: "#f87171", fontSize: 13, marginBottom: 10 }}>

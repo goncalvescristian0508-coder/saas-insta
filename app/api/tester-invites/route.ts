@@ -5,18 +5,8 @@ import { listMetaApps } from "@/lib/metaInstagramEnv";
 
 export const runtime = "nodejs";
 
-const PLAN_LIMITS: Record<string, number> = {
-  basic: 50,
-  pro: 200,
-  premium: 1000,
-};
-
-function getPlanLimit(planName: string | null | undefined): number {
-  if (!planName) return 50;
-  const lower = planName.toLowerCase();
-  if (lower.includes("premium")) return PLAN_LIMITS.premium;
-  if (lower.includes("pro")) return PLAN_LIMITS.pro;
-  return PLAN_LIMITS.basic;
+function getPlanLimit(_planName: string | null | undefined): number {
+  return 10_000; // ilimitado por enquanto
 }
 
 async function getUserPlan(userId: string): Promise<string | null> {
