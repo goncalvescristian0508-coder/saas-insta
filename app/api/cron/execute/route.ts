@@ -163,7 +163,7 @@ async function runCron() {
       updatedAt: { lte: twoHoursAgo },
       account: { accountStatus: "ACTIVE" },
     },
-    data: { status: "PENDING", retryCount: 0, scheduledAt: now, errorMsg: null, containerCreationId: null, containerCreatedAt: null },
+    data: { status: "PENDING", retryCount: 0, errorMsg: null, containerCreationId: null, containerCreatedAt: null },
   }).catch(e => console.error("[cron] auto-reset exhausted:", e));
 
   await prisma.instagramOAuthAccount.updateMany({

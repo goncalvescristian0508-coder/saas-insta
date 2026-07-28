@@ -183,7 +183,7 @@ export async function POST(req: Request) {
   // Reset ALL failed posts to pending, zeroing retryCount and scheduledAt so the cron picks them up immediately
   const result = await prisma.scheduledPost.updateMany({
     where: { status: "FAILED" },
-    data: { status: "PENDING", errorMsg: null, retryCount: 0, scheduledAt: now, containerCreationId: null, containerCreatedAt: null },
+    data: { status: "PENDING", errorMsg: null, retryCount: 0, containerCreationId: null, containerCreatedAt: null },
   });
 
   // Reativa contas em quarentena (podem ter sido colocadas em quarentena durante o downtime do banco)
