@@ -8,17 +8,39 @@ import { createHash } from "crypto";
 /**
  * Deterministic per-account FFmpeg params derived from accountId.
  * Same account → same transform for every video it posts.
+ * Uses three independent hash values for maximum combination spread.
  */
 export function accountTransformParams(accountId: string): {
   trimSec: number;
+  speed: number;
+  cropOffX: number;
+  cropOffY: number;
+  cropTotalW: number;
+  cropTotalH: number;
+  hue: number;
+  saturation: number;
   crf: number;
   volumeDb: number;
 } {
-  const h = Math.abs(accountId.split("").reduce((s, c) => s + c.charCodeAt(0), 0));
+  const bytes = Buffer.from(accountId, "utf8");
+  let h1 = 0, h2 = 0, h3 = 0;
+  for (let i = 0; i < bytes.length; i++) {
+    h1 = ((h1 + bytes[i] * (i + 1)) >>> 0);
+    h2 = ((h2 ^ (bytes[i] << (i % 8))) >>> 0);
+    h3 = ((h3 * 31 + bytes[i]) >>> 0);
+  }
+
   return {
-    trimSec:  ((h % 3) + 1) * 0.1,   // 0.1 | 0.2 | 0.3 s removed from start
-    crf:       22 + (h % 5),           // 22 | 23 | 24 | 25 | 26
-    volumeDb: ((h % 5) - 2) * 0.5,    // −1.0 | −0.5 | 0.0 | +0.5 | +1.0 dB
+    trimSec:    parseFloat((((h2 % 5) + 1) * 0.1).toFixed(1)),        // 0.1–0.5 s
+    speed:      parseFloat((0.990 + (h1 % 21) * 0.001).toFixed(3)),   // 0.990–1.010x  ← quebra phash por frame
+    cropOffX:   h2 % 4,                                                 // 0–3 px da esquerda
+    cropOffY:   (h2 >> 4) % 4,                                         // 0–3 px do topo
+    cropTotalW: 2 + h3 % 3,                                            // 2–4 px removidos na largura
+    cropTotalH: 2 + (h3 >> 3) % 3,                                    // 2–4 px removidos na altura
+    hue:        (h1 % 9) - 4,                                          // −4° a +4°
+    saturation: parseFloat((0.96 + (h2 % 9) * 0.01).toFixed(2)),      // 0.96–1.04
+    crf:        22 + h3 % 7,                                           // 22–28
+    volumeDb:   parseFloat((((h1 % 7) - 3) * 0.5).toFixed(1)),        // −1.5 a +1.5 dB
   };
 }
 
@@ -103,7 +125,7 @@ export async function transformVideoForAccount(
   inputBuffer: Buffer,
   accountId: string,
 ): Promise<Buffer> {
-  const { trimSec, crf, volumeDb } = accountTransformParams(accountId);
+  const { trimSec, speed, cropOffX, cropOffY, cropTotalW, cropTotalH, hue, saturation, crf, volumeDb } = accountTransformParams(accountId);
   const id = createHash("md5")
     .update(accountId + String(Date.now()))
     .digest("hex")
@@ -114,12 +136,25 @@ export async function transformVideoForAccount(
   try {
     await fs.writeFile(inPath, inputBuffer);
 
-    const volumeFilter = volumeDb === 0 ? [] : [`-af`, `volume=${volumeDb}dB`];
+    // Video: crop (remove border pixels, scale back to original size) + hue/saturation + speed
+    // Audio: speed (atempo) + optional volume
+    // Speed variation quebra o phash por frame — mais eficaz que CRF sozinho
+    const audioFilters = [`atempo=${speed}`, ...(volumeDb !== 0 ? [`volume=${volumeDb}dB`] : [])];
+    const filterComplex = [
+      `[0:v]crop=iw-${cropTotalW}:ih-${cropTotalH}:${cropOffX}:${cropOffY}`,
+      `scale=iw+${cropTotalW}:ih+${cropTotalH}`,
+      `hue=h=${hue}:s=${saturation}`,
+      `setpts=PTS/${speed}[v]`,
+      `;[0:a]${audioFilters.join(",")}[a]`,
+    ].join(",");
 
     await runFfmpeg([
       "-y",
       "-ss", String(trimSec),
       "-i", inPath,
+      "-filter_complex", filterComplex,
+      "-map", "[v]",
+      "-map", "[a]",
       "-c:v", "libx264",
       "-crf", String(crf),
       "-preset", "veryfast",
@@ -130,7 +165,6 @@ export async function transformVideoForAccount(
       "-c:a", "aac",
       "-ar", "44100",
       "-b:a", "128k",
-      ...volumeFilter,
       outPath,
     ]);
 

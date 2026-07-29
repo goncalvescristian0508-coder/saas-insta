@@ -22,6 +22,40 @@ function storageAdmin() {
   );
 }
 
+/**
+ * Retorna a URL de um vídeo transformado especificamente para esta conta.
+ * Cacheia em cloned-unique/{accountId}/{md5(sourceUrl)}.mp4 — só processa uma vez.
+ * Quebra o phash do Instagram: speed variation + crop + hue + volume.
+ */
+async function getOrCreateUniqueVideoForAccount(
+  sourceUrl: string,
+  accountId: string,
+): Promise<string> {
+  const admin = storageAdmin();
+  const urlHash = createHash("md5").update(sourceUrl).digest("hex");
+  const cachedPath = `cloned-unique/${accountId}/${urlHash}.mp4`;
+  const { data: pub } = admin.storage.from("library-videos").getPublicUrl(cachedPath);
+
+  // Cache hit: usa versão já transformada
+  const head = await fetch(pub.publicUrl, { method: "HEAD", signal: AbortSignal.timeout(5_000) }).catch(() => null);
+  if (head?.ok) return pub.publicUrl;
+
+  // Cache miss: baixa, transforma, sobe
+  const srcRes = await fetch(sourceUrl, { signal: AbortSignal.timeout(30_000) });
+  if (!srcRes.ok) return sourceUrl;
+  const rawBuffer = Buffer.from(await srcRes.arrayBuffer());
+
+  const transformed = await transformVideoForAccount(rawBuffer, accountId);
+
+  const { error } = await admin.storage.from("library-videos").upload(cachedPath, transformed, {
+    contentType: "video/mp4",
+    upsert: true,
+  });
+  if (error) return sourceUrl;
+
+  return pub.publicUrl;
+}
+
 async function downloadAndStripVideo(rawUrl: string, userId: string): Promise<{ publicUrl: string; storagePath: string }> {
   const urlHash = createHash("md5").update(rawUrl).digest("hex");
   const storagePath = `cloned/${userId}/${urlHash}.mp4`;
@@ -491,6 +525,19 @@ async function runCron() {
         }
       } else {
         throw new Error("Nenhuma URL de vídeo disponível para este post.");
+      }
+
+      // Aplica transform per-account para clone posts: quebra pDNA/phash do Instagram.
+      // Só processa URLs de biblioteca Supabase (não CDN externo já transformado ou cache).
+      if (
+        post.cloneJobId &&
+        videoUrl.includes("supabase.co/storage") &&
+        !videoUrl.includes("/cloned-unique/")
+      ) {
+        videoUrl = await getOrCreateUniqueVideoForAccount(videoUrl, post.accountId).catch((e) => {
+          console.warn("[cron] transform skip (fallback to original):", e instanceof Error ? e.message : e);
+          return videoUrl;
+        });
       }
 
       console.log("[cron] creating container @", post.account.username);
