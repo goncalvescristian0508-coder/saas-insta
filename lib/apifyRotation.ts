@@ -152,6 +152,26 @@ async function apifyGetRunStatus(
   };
 }
 
+/** Carrega cookies de sessão do Instagram do DB (para scraping de perfis restritos). */
+async function loadInstagramCookies(): Promise<Array<{ name: string; value: string; domain: string; path: string }> | undefined> {
+  try {
+    const row = await withTimeout(
+      prisma.appSetting.findUnique({ where: { key: "instagram_scrape_cookies" } }),
+      3000,
+    );
+    if (!row?.value) return undefined;
+    const raw = row.value; // formato: "name=value;name2=value2;..."
+    return raw.split(";").map(part => {
+      const eqIdx = part.indexOf("=");
+      const name = part.slice(0, eqIdx).trim();
+      const value = decodeURIComponent(part.slice(eqIdx + 1).trim());
+      return { name, value, domain: ".instagram.com", path: "/" };
+    }).filter(c => c.name && c.value);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Inicia os dois actors e retorna os run IDs imediatamente (sem aguardar). */
 export async function apifyStartScrapeRuns(
   username: string,
@@ -164,11 +184,17 @@ export async function apifyStartScrapeRuns(
   if (available.length === 0) throw new ApifyAllTokensExhaustedError();
   const token = available[0];
 
+  const loginCookies = await loadInstagramCookies();
+
   const [profileRunId, reelRunId] = await Promise.all([
-    apifyStartRun(token, "apify~instagram-profile-scraper", { usernames: [username] }),
+    apifyStartRun(token, "apify~instagram-profile-scraper", {
+      usernames: [username],
+      ...(loginCookies ? { loginCookies } : {}),
+    }),
     apifyStartRun(token, "apify~instagram-reel-scraper", {
       username: [username],
       resultsLimit: limit,
+      ...(loginCookies ? { loginCookies } : {}),
     }),
   ]);
 

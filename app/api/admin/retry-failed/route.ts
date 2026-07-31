@@ -123,6 +123,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ accountsReactivated: acctUpdate.count, postsReset: postsUpdate.count, notFound, accounts: accounts.map(a => a.username) });
   }
 
+  // ?saveIgCookies=1 (body: {cookies:"..."}) → salva cookies de sessão do Instagram para scraping restrito
+  if (searchParams.get("saveIgCookies") === "1") {
+    let body: { cookies?: string } = {};
+    try { body = await req.json(); } catch { /* sem body */ }
+    const cookies = body.cookies?.trim();
+    if (!cookies) return NextResponse.json({ error: "body.cookies obrigatório" }, { status: 400 });
+    await prisma.appSetting.upsert({
+      where: { key: "instagram_scrape_cookies" },
+      create: { key: "instagram_scrape_cookies", value: cookies },
+      update: { value: cookies },
+    });
+    const count = cookies.split(";").filter(p => p.includes("=")).length;
+    return NextResponse.json({ saved: true, cookieCount: count });
+  }
+
   // ?addApifyToken=TOKEN → insere token Apify no DB como sistema (fallback quando env var não funciona)
   const apifyTokenToAdd = searchParams.get("addApifyToken");
   if (apifyTokenToAdd?.startsWith("apify_")) {
