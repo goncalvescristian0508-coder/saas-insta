@@ -74,7 +74,7 @@ export default function ClonarPage() {
   const [cloneStories, setCloneStories] = useState(false);
   const [cloneHighlights, setCloneHighlights] = useState(false);
   const [autoCaptions, setAutoCaptions] = useState(false);
-  const [captionTheme, setCaptionTheme] = useState<"mundo" | "tops" | "complexas">("mundo");
+  const [captionTheme, setCaptionTheme] = useState<"mundo" | "tops" | "complexas" | "biblia">("mundo");
   const [alternateSequence, setAlternateSequence] = useState(false);
   const [groupSize, setGroupSize] = useState(5);
   const [startDate, setStartDate] = useState("");
@@ -714,7 +714,8 @@ export default function ClonarPage() {
                     { v: "mundo", label: "🌍 Curiosidades do mundo" },
                     { v: "tops", label: "🏆 Curiosidades tops" },
                     { v: "complexas", label: "🔬 Fatos complexos" },
-                  ] as { v: "mundo" | "tops" | "complexas"; label: string }[]).map(({ v, label }) => (
+                    { v: "biblia", label: "✝️ Bíblicas (Jesus)" },
+                  ] as { v: "mundo" | "tops" | "complexas" | "biblia"; label: string }[]).map(({ v, label }) => (
                     <button
                       key={v}
                       onClick={() => setCaptionTheme(v)}
