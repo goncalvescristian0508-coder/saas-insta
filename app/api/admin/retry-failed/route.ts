@@ -132,6 +132,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ added: true, id: r.id });
   }
 
+  // ?importRun=profileRunId,reelRunId&username=X → importa resultado de runs Apify já completos
+  const importRun = searchParams.get("importRun");
+  const importUsername = searchParams.get("username");
+  if (importRun && importUsername) {
+    const [profileRunId, reelRunId] = importRun.split(",").map(s => s.trim());
+    if (!profileRunId || !reelRunId) return NextResponse.json({ error: "Formato: importRun=profileRunId,reelRunId" }, { status: 400 });
+    const { apifyPollScrapeRuns } = await import("@/lib/apifyRotation");
+    const { saveScraperCache } = await import("@/lib/scraper");
+    const result = await apifyPollScrapeRuns(profileRunId, reelRunId, importUsername, 9999);
+    if (!result.done) return NextResponse.json({ pending: true, runStatus: result.runStatus });
+    await saveScraperCache(importUsername, result.profile, result.reels);
+    return NextResponse.json({ imported: true, username: importUsername, reels: result.reels.length });
+  }
+
   // ?diagJobs=1 → mostra últimos TesterJobs
   if (searchParams.get("diagJobs") === "1") {
     const jobs = await prisma.$queryRawUnsafe<Array<{id:string;status:string;errorMsg:string|null;startedAt:Date|null;createdAt:Date;usernames:string[]}>>(`
