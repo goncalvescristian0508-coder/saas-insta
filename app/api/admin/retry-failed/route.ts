@@ -123,6 +123,15 @@ export async function POST(req: Request) {
     return NextResponse.json({ accountsReactivated: acctUpdate.count, postsReset: postsUpdate.count, notFound, accounts: accounts.map(a => a.username) });
   }
 
+  // ?addApifyToken=TOKEN → insere token Apify no DB como sistema (fallback quando env var não funciona)
+  const apifyTokenToAdd = searchParams.get("addApifyToken");
+  if (apifyTokenToAdd?.startsWith("apify_")) {
+    const exists = await prisma.userApifyToken.findFirst({ where: { token: apifyTokenToAdd } });
+    if (exists) return NextResponse.json({ added: false, reason: "já existe", id: exists.id });
+    const r = await prisma.userApifyToken.create({ data: { userId: "system", token: apifyTokenToAdd, isActive: true } });
+    return NextResponse.json({ added: true, id: r.id });
+  }
+
   // ?diagJobs=1 → mostra últimos TesterJobs
   if (searchParams.get("diagJobs") === "1") {
     const jobs = await prisma.$queryRawUnsafe<Array<{id:string;status:string;errorMsg:string|null;startedAt:Date|null;createdAt:Date;usernames:string[]}>>(`

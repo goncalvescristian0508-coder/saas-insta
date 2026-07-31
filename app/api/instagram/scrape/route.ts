@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCached, saveScraperCache } from "@/lib/scraper";
-import { apifyStartScrapeRuns, getApifyTokensFromEnv } from "@/lib/apifyRotation";
+import { apifyStartScrapeRuns, getAllApifyTokens } from "@/lib/apifyRotation";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     }
 
     // 2. Cache miss → inicia runs no Apify e retorna IDs para polling assíncrono
-    const tokens = getApifyTokensFromEnv();
+    const tokens = await getAllApifyTokens();
     if (tokens.length === 0) {
       return NextResponse.json({ error: "Apify: APIFY_TOKENS não configurado" }, { status: 503 });
     }
