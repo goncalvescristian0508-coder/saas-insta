@@ -53,7 +53,7 @@ export async function POST(request: Request) {
     }
 
     try {
-      const { profileRunId, reelRunId } = await apifyStartScrapeRuns(cleanUsername, 9999);
+      const { profileRunId, reelRunId } = await apifyStartScrapeRuns(cleanUsername, 100);
       return NextResponse.json({ pending: true, profileRunId, reelRunId, username: cleanUsername });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
