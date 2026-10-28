@@ -52,3 +52,10 @@ next-env.d.ts
 
 .vercel
 .env*.local
+
+# app MarketPulse (projeto independente em marketpulse/)
+/marketpulse/node_modules
+/marketpulse/.next
+
+# dados pessoais gerados pelas skills trader-* (portfólio, chaves, estado)
+/trader/
