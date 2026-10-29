@@ -1,5 +1,29 @@
 # Vídeo: Limite em dobro (MAIS Card)
 
+## v2 (atual): horizontal 16:9, voz feminina, 47 s
+
+| Arquivo | Uso |
+|---|---|
+| `mais-card-limite-em-dobro-16x9.mp4` | H.264 + AAC, 1920x1080, 30 fps, 47 s. |
+| `mais-card-limite-em-dobro-16x9.webm` | VP9 + Opus, mais leve. Use como primeira `<source>`. |
+| `poster-16x9.png` | Frame final para o atributo `poster`. |
+| `contact-sheet-16x9.png` | Um frame a cada 2,35 s, para revisão. |
+| `roteiro-v2.md` | Roteiro aprovado, com tempos e narração. |
+
+Diferenças para a v1: formato horizontal, voz feminina (modelo Kokoro, voz "Dora",
+offline), "MAIS Card" falado "Mais Cárdi", sem a palavra "bônus", ritmo mais rápido
+(cortes a cada 1,5 a 2 s, zoom nos toques, telas deslizando), e o fluxo completo:
+cadastro em 3 telas, conta em análise, notificação de aprovação, investimento de
+R$ 500 via Pix, 7 dias, limite em dobro e resgate do saldo investido.
+
+Fontes da v2 em `src/`: `comp16.html` (animação), `render16.js`, `encode16.sh`,
+`synth2.js` (trilha a 122 BPM e efeitos), `capture3.js` (telas de documento, selfie e
+"cadastro enviado"), `narracao-v2.json`, `make_lexicon.py` (gera o léxico pt-BR com
+espeak para o Kokoro) e `kokoro_tts.py` (síntese; precisa do modelo
+`kokoro-multi-lang-v1_0` do sherpa-onnx, voz id 42).
+
+## v1: vertical 9:16, voz masculina, 32,5 s
+
 Vídeo para a landing page da promoção "limite em dobro": guarde até R$ 500 na
 Caixinha Garantia, deixe 7 dias e libere R$ 1.000 de limite. Resgate antes dos
 7 dias cancela o bônus.
