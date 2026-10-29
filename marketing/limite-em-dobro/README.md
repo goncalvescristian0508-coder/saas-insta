@@ -10,8 +10,9 @@
 | `contact-sheet-16x9.png` | Um frame a cada 2,35 s, para revisão. |
 | `roteiro-v2.md` | Roteiro aprovado, com tempos e narração. |
 
-Diferenças para a v1: formato horizontal, voz feminina (modelo Kokoro, voz "Dora",
-offline), "MAIS Card" falado "Mais Cárdi", sem a palavra "bônus", ritmo mais rápido
+Diferenças para a v1: formato horizontal, voz feminina com sotaque brasileiro (voz
+masculina pt-BR do Piper convertida para feminina com o "Change gender" do Praat,
+ver `src/fem.py`; a voz Kokoro "Dora" foi descartada por soar portuguesa), "MAIS Card" falado "Mais Cárdi", sem a palavra "bônus", ritmo mais rápido
 (cortes a cada 1,5 a 2 s, zoom nos toques, telas deslizando), e o fluxo completo:
 cadastro em 3 telas, conta em análise, notificação de aprovação, investimento de
 R$ 500 via Pix, 7 dias, limite em dobro e resgate do saldo investido.
